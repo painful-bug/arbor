@@ -1,0 +1,98 @@
+/* Design tokens from DESIGN.md (Figma editorial system) as CSS custom properties.
+ * ponytail: figmaSans/figmaMono aren't shipped — map to the macOS system stack
+ * (San Francisco), which is native, free, and exactly the Apple feel we want. */
+:root {
+	/* color */
+	--c-primary: #000000;
+	--c-on-primary: #ffffff;
+	--c-ink: #000000;
+	--c-canvas: #ffffff;
+	--c-inverse-canvas: #000000;
+	--c-inverse-ink: #ffffff;
+	--c-hairline: #e6e6e6;
+	--c-hairline-soft: #f1f1f1;
+	--c-surface-soft: #f7f7f5;
+	--c-accent-magenta: #ff3d8b;
+	--c-success: #1ea64a;
+
+	/* pastel sticky-card blocks */
+	--block-lime: #dceeb1;
+	--block-lilac: #c5b0f4;
+	--block-cream: #f4ecd6;
+	--block-pink: #efd4d4;
+	--block-mint: #c8e6cd;
+	--block-coral: #f3c9b6;
+	--block-navy: #1f1d3d;
+
+	/* type */
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+	/* radii */
+	--r-xs: 2px;
+	--r-sm: 6px;
+	--r-md: 8px;
+	--r-lg: 24px;
+	--r-xl: 32px;
+	--r-pill: 50px;
+	--r-full: 9999px;
+
+	/* spacing */
+	--s-hair: 1px;
+	--s-xxs: 4px;
+	--s-xs: 8px;
+	--s-sm: 12px;
+	--s-md: 16px;
+	--s-lg: 24px;
+	--s-xl: 32px;
+	--s-xxl: 48px;
+
+	/* elevation (DESIGN.md: shadow-light; color blocks carry depth) */
+	--elev-2: 0 4px 16px rgba(0, 0, 0, 0.06);
+	--elev-float: 0 8px 30px rgba(0, 0, 0, 0.12);
+
+	/* motion — Apple Liquid Glass: bouncy, purposeful springs */
+	--spring-snappy: 320ms cubic-bezier(0.22, 1, 0.36, 1);
+	--spring-bouncy: 480ms cubic-bezier(0.34, 1.56, 0.64, 1);
+	--ease-glass: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Liquid Glass material — translucent chrome (toolbar, panel, prompt bubble). */
+.glass {
+	background: rgba(255, 255, 255, 0.62);
+	backdrop-filter: saturate(180%) blur(20px);
+	-webkit-backdrop-filter: saturate(180%) blur(20px);
+	border: 1px solid rgba(255, 255, 255, 0.7);
+	box-shadow: var(--elev-float);
+}
+
+/* Accessibility: honor system settings (Apple HIG ties these to the material). */
+@media (prefers-reduced-transparency: reduce) {
+	.glass {
+		background: var(--c-canvas);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+}
+@media (prefers-contrast: more) {
+	.glass {
+		border-color: var(--c-ink);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	* {
+		animation-duration: 0.001ms !important;
+		transition-duration: 0.001ms !important;
+	}
+}
+
+html,
+body {
+	margin: 0;
+	height: 100%;
+	font-family: var(--font-sans);
+	color: var(--c-ink);
+	background: var(--c-canvas);
+	-webkit-font-smoothing: antialiased;
+}
