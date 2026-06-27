@@ -10,10 +10,11 @@ import { canvasRoutes } from "./routes/canvases.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { blobRoutes } from "./routes/blobs.ts";
 import { keyRoutes } from "./routes/keys.ts";
-import { ragRoutes } from "./routes/rag.ts";
+import { kbRoutes } from "./routes/kb.ts";
 import { agentRoutes } from "./routes/agent.ts";
 import { fileRoutes } from "./routes/files.ts";
 import { importLegacyIfNeeded } from "./store/import-legacy.ts";
+import { startGraphiti, stopGraphiti } from "./kb/server-process.ts";
 import { LOOM_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
 
 const HOST = "127.0.0.1";
@@ -45,7 +46,7 @@ export function createApp(token: string) {
 	app.route("/api/canvases", canvasRoutes);
 	app.route("/api/settings", settingsRoutes);
 	app.route("/api/blobs", blobRoutes);
-	app.route("/api/rag", ragRoutes);
+	app.route("/api/kb", kbRoutes);
 	app.route("/api/agent", agentRoutes);
 	app.route("/api/files", fileRoutes);
 	app.route("/api", keyRoutes); // /api/keys/* and /api/providers/*
@@ -87,4 +88,12 @@ if (import.meta.main) {
 
 	// Handshake line — the Tauri shell parses exactly this prefix.
 	console.log(`LOOM_BACKEND ${JSON.stringify({ port, token })}`);
+
+	// Start the Graphiti knowledge-base runtime (FalkorDB + MCP) in the background.
+	// Not awaited — it can take up to ~90s and must not delay the handshake. A
+	// failure degrades the KB but never crashes Loom.
+	void startGraphiti();
+	for (const sig of ["SIGINT", "SIGTERM", "exit"] as const) {
+		process.on(sig, () => void stopGraphiti());
+	}
 }

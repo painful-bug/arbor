@@ -36,7 +36,8 @@
 	import FilePanel from './FilePanel.svelte';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
-	import { ragAdd, DEFAULT_CANVAS } from '$lib/ai/client';
+	import { kbAdd } from '$lib/ai/client';
+	import { currentCanvasId } from './store.svelte';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
@@ -356,7 +357,7 @@
 							const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
 							putFileBlob(id, bytes, mime, name);
 							extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
-							await ragAdd(DEFAULT_CANVAS, name, mime, bytes);
+							await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
 							setFileStatus(id, 'ready');
 						} catch (err) {
 							console.error('tauri file drop read failed', err);
@@ -424,10 +425,10 @@
 				extractText(buf, kind)
 					.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
 					.catch(() => {});
-				await ragAdd(DEFAULT_CANVAS, file.name, file.type, buf);
+				await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
 				setFileStatus(id, 'ready');
 			} catch (err) {
-				console.error('rag index failed', err);
+				console.error('kb index failed', err);
 				setFileStatus(id, 'error');
 			}
 		}

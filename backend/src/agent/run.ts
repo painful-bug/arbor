@@ -9,9 +9,9 @@ import {
 	webSearchTool,
 	scholarSearchTool,
 	researchPlanTool,
-	ragSearchTool
+	knowledgeBaseSearchTool
 } from "./tools.ts";
-import { search as ragSearch } from "../rag/index.ts";
+import { search as kbSearch, addChat } from "../kb/index.ts";
 
 const SERVICE = "app.loom.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
@@ -41,7 +41,7 @@ export interface PromptRequest {
 	bash?: boolean;
 	websearch?: boolean;
 	websearchBackend?: "duckduckgo" | "tavily";
-	canvas?: string; // which canvas's RAG index to search; defaults to "default"
+	canvas?: string; // which canvas's KB group to search; defaults to "default"
 }
 
 // Condense a tool result into a one-line timeline detail.
@@ -89,7 +89,7 @@ export async function handlePrompt(
 	emit: (e: AgentEvent) => void
 ): Promise<void> {
 	const { cardId } = req;
-	const canvas = req.canvas ?? "default";
+	const canvas = req.canvas || "default";
 
 	try {
 		const apiKey = await key(req.provider);
@@ -108,8 +108,8 @@ export async function handlePrompt(
 			tools.push(webSearchTool(req.websearchBackend ?? "duckduckgo", tavilyKey));
 		}
 		tools.push(scholarSearchTool(), researchPlanTool());
-		// ragSearch is now in-process — no stdio, no HTTP bridge.
-		tools.push(ragSearchTool((query) => ragSearch(canvas, query)));
+		// KB search is in-process via Graphiti MCP client.
+		tools.push(knowledgeBaseSearchTool((query) => kbSearch(canvas, query)));
 
 		const agent = new Agent({
 			streamFn: streamSimple,
@@ -125,14 +125,21 @@ export async function handlePrompt(
 
 		runs.set(cardId, agent);
 
+		// Accumulate the response text so we can ingest the turn into the KB.
+		let answerText = "";
+
 		agent.subscribe((ev: PiEvent) => {
 			switch (ev.type) {
 				case "message_update": {
 					const a = ev.assistantMessageEvent;
-					if (a.type === "text_delta") emit({ type: "text_delta", id: cardId, delta: a.delta });
-					else if (a.type === "thinking_delta") emit({ type: "thinking_delta", id: cardId, delta: a.delta });
-					else if (a.type === "error")
+					if (a.type === "text_delta") {
+						answerText += a.delta ?? "";
+						emit({ type: "text_delta", id: cardId, delta: a.delta });
+					} else if (a.type === "thinking_delta") {
+						emit({ type: "thinking_delta", id: cardId, delta: a.delta });
+					} else if (a.type === "error") {
 						emit({ type: "error", id: cardId, message: a.error?.errorMessage ?? a.reason ?? "stream error" });
+					}
 					break;
 				}
 				case "tool_execution_start":
@@ -146,8 +153,14 @@ export async function handlePrompt(
 
 		await agent.continue();
 		const err = agent.state.errorMessage;
-		if (err) emit({ type: "error", id: cardId, message: err });
-		else emit({ type: "done", id: cardId });
+		if (err) {
+			emit({ type: "error", id: cardId, message: err });
+		} else {
+			emit({ type: "done", id: cardId });
+			// Ingest this conversation turn into the canvas KB (fire-and-forget).
+			const userPrompt = [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+			if (userPrompt && answerText) void addChat(canvas, cardId, userPrompt, answerText);
+		}
 	} catch (err) {
 		emit({ type: "error", id: cardId, message: String((err as Error)?.message ?? err) });
 	} finally {

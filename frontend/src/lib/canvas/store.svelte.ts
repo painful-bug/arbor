@@ -289,12 +289,33 @@ export const DEFAULT_MODELS = Object.fromEntries(
 
 const VALID_PROVIDERS = new Set(PROVIDERS.map((p) => p.id));
 
+// Knowledge-base (Graphiti) config. Mirrors the backend GraphitiSettings shape.
+// Default is fully local (Ollama LLM + embedder) — no key, no rate limits.
+export interface GraphitiSettings {
+	llmProvider: 'ollama' | 'groq' | 'gemini' | 'custom';
+	llmModel: string;
+	llmApiBase: string;
+	embedder: 'ollama' | 'gemini';
+	embedderModel: string;
+	ollamaUrl: string;
+}
+
+const GRAPHITI_DEFAULTS: GraphitiSettings = {
+	llmProvider: 'ollama',
+	llmModel: 'llama3.2:3b',
+	llmApiBase: '',
+	embedder: 'ollama',
+	embedderModel: 'nomic-embed-text',
+	ollamaUrl: 'http://localhost:11434/v1'
+};
+
 interface Settings {
 	provider: Provider;
 	models: Record<Provider, string>;
 	workflow: string;
 	bashEnabled: boolean;
 	websearch: { enabled: boolean; backend: 'duckduckgo' | 'tavily' };
+	graphiti: GraphitiSettings;
 }
 
 const FALLBACK_SETTINGS: Settings = {
@@ -302,10 +323,15 @@ const FALLBACK_SETTINGS: Settings = {
 	models: { ...DEFAULT_MODELS },
 	workflow: 'general',
 	bashEnabled: false,
-	websearch: { enabled: false, backend: 'duckduckgo' }
+	websearch: { enabled: false, backend: 'duckduckgo' },
+	graphiti: { ...GRAPHITI_DEFAULTS }
 };
 
-export const settings = $state<Settings>({ ...FALLBACK_SETTINGS, models: { ...DEFAULT_MODELS } });
+export const settings = $state<Settings>({
+	...FALLBACK_SETTINGS,
+	models: { ...DEFAULT_MODELS },
+	graphiti: { ...GRAPHITI_DEFAULTS }
+});
 
 async function loadSettingsAsync(): Promise<void> {
 	let p: Record<string, unknown> | null = null;
@@ -328,6 +354,9 @@ async function loadSettingsAsync(): Promise<void> {
 			if (typeof ws.enabled === 'boolean') settings.websearch.enabled = ws.enabled;
 			if (ws.backend === 'duckduckgo' || ws.backend === 'tavily') settings.websearch.backend = ws.backend;
 		}
+		if (p.graphiti && typeof p.graphiti === 'object') {
+			settings.graphiti = { ...GRAPHITI_DEFAULTS, ...(p.graphiti as Partial<GraphitiSettings>) };
+		}
 	} catch {}
 }
 
@@ -337,7 +366,8 @@ export function persistSettings(): void {
 		models: settings.models,
 		workflow: settings.workflow,
 		bashEnabled: settings.bashEnabled,
-		websearch: settings.websearch
+		websearch: settings.websearch,
+		graphiti: settings.graphiti
 	});
 }
 
@@ -586,7 +616,8 @@ export async function runModel(id: string): Promise<void> {
 			workflow,
 			bash: settings.bashEnabled,
 			websearch: settings.websearch.enabled,
-			websearchBackend: settings.websearch.backend
+			websearchBackend: settings.websearch.backend,
+			canvas: currentId
 		},
 		(e) => {
 			switch (e.type) {
@@ -623,7 +654,8 @@ async function generateTitle(id: string, prompt: string, answer: string): Promis
 		messages,
 		{
 			provider: settings.provider,
-			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider]
+			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider],
+			canvas: currentId
 		},
 		(e) => {
 			if (e.type === 'text_delta') title += e.delta ?? '';

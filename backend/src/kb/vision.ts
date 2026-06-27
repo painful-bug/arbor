@@ -122,7 +122,7 @@ export async function ocrImage(pngBytes: Uint8Array): Promise<string> {
 	if (googleKey) return ocrGoogle(pngBytes, googleKey);
 	if (openrouterKey) return ocrOpenRouter(pngBytes, openrouterKey);
 
-	console.warn("[RAG] No vision provider key found — scanned PDF/image will not be indexed.");
+	console.warn("[KB] No vision provider key found — scanned PDF/image will not be indexed.");
 	return "";
 }
 
