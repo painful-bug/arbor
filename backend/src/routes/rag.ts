@@ -1,6 +1,6 @@
 // RAG routes: index a file, vector search, clear canvas.
 import { Hono } from "hono";
-import { addFile, search, clearCanvas } from "../rag/index.ts";
+import { addFile, search, clearCanvas, removeFile } from "../rag/index.ts";
 
 export const ragRoutes = new Hono();
 
@@ -27,6 +27,13 @@ ragRoutes.get("/:canvas/search", async (c) => {
 	if (!q) return c.json({ results: [] });
 	const results = await search(canvas, q, k);
 	return c.json({ results });
+});
+
+// Remove one file's chunks from a canvas index.
+ragRoutes.delete("/:canvas/files/:filename", async (c) => {
+	const filename = decodeURIComponent(c.req.param("filename"));
+	await removeFile(c.req.param("canvas"), filename);
+	return c.json({ ok: true });
 });
 
 // Clear all indexed content for a canvas (e.g. canvas deleted).

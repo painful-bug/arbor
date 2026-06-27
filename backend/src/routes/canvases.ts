@@ -55,7 +55,7 @@ canvasRoutes.put("/", async (c) => {
 canvasRoutes.get("/:id", (c) => {
 	const row = db.select().from(canvases).where(eq(canvases.id, c.req.param("id"))).get();
 	if (!row) return c.json({ error: "not found" }, 404);
-	const doc = JSON.parse(row.doc) as { nodes: unknown[]; edges: unknown[] };
+	const doc = JSON.parse(row.doc) as { nodes: unknown[]; edges: unknown[]; session?: unknown[] };
 	return c.json({
 		id: row.id,
 		name: row.name,
@@ -63,6 +63,7 @@ canvasRoutes.get("/:id", (c) => {
 		updatedAt: row.updatedAt,
 		nodes: doc.nodes,
 		edges: doc.edges,
+		session: doc.session ?? [],
 	});
 });
 
@@ -75,8 +76,9 @@ canvasRoutes.put("/:id", async (c) => {
 		updatedAt: number;
 		nodes: unknown[];
 		edges: unknown[];
+		session?: unknown[];
 	};
-	const doc = JSON.stringify({ nodes: b.nodes ?? [], edges: b.edges ?? [] });
+	const doc = JSON.stringify({ nodes: b.nodes ?? [], edges: b.edges ?? [], session: b.session ?? [] });
 	db.insert(canvases)
 		.values({ id, name: b.name, createdAt: b.createdAt, updatedAt: b.updatedAt, doc })
 		.onConflictDoUpdate({

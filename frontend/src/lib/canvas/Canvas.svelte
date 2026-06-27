@@ -6,8 +6,7 @@
 	import FileCard from './FileCard.svelte';
 	import WebCard from './WebCard.svelte';
 	import UserTextCard from './UserTextCard.svelte';
-	import TextView from './TextView.svelte';
-	import CanvasToolbar from './CanvasToolbar.svelte';
+		import CanvasToolbar from './CanvasToolbar.svelte';
 	import PromptBubble from './PromptBubble.svelte';
 	import CardExpand from './CardExpand.svelte';
 	import CardChatPanel from './CardChatPanel.svelte';
@@ -23,6 +22,8 @@
 		setFilePreview,
 		cycleCardBlock,
 		duplicateNode,
+		duplicateSelected,
+		deleteSelected,
 		addManualEdge,
 		runModel,
 		continueCard,
@@ -36,8 +37,9 @@
 	import FilePanel from './FilePanel.svelte';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
-	import { ragAdd, DEFAULT_CANVAS } from '$lib/ai/client';
-	import { backOut } from 'svelte/easing';
+	import { ragAdd, ragRemove, DEFAULT_CANVAS } from '$lib/ai/client';
+	import { scale } from 'svelte/transition';
+import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
 	// Swoop: spring scale + drop. Out = canvas falls away to the Library; in = a
@@ -77,7 +79,6 @@
 	}
 
 	let expandId = $state<string | null>(null);
-	let viewTextId = $state<string | null>(null);
 	let lastBranchAt = 0;
 
 	// Pending branch: set when user selects text; confirmed on button click or Enter.
@@ -112,19 +113,24 @@
 		};
 	}
 
-	// Pane click: text tool places a note card.
+	// Pane click: text tool places a note card; otherwise deselect.
 	function onPaneClick({ event }: { event: MouseEvent }) {
-		if (tool.active !== 'text') return;
-		const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-		const id = addTextCard(pos);
-		flow.selected = id;
-		// Open editor immediately; revert to hand tool.
-		window.dispatchEvent(new CustomEvent('loom:openfile', { detail: { fileId: id } }));
-		tool.active = 'hand';
+		if (tool.active === 'text') {
+			const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+			const id = addTextCard(pos);
+			flow.selected = id;
+			window.dispatchEvent(new CustomEvent('loom:openfile', { detail: { fileId: id } }));
+			tool.active = 'hand';
+		} else {
+			flow.selected = null;
+		}
 	}
+
+	const selectedNodes = $derived(flow.nodes.filter((n) => n.selected));
 
 	// Node click: duplicate / color / connect tool dispatch.
 	function onNodeClick(node: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }) {
+		if (tool.active === 'select') return; // let SvelteFlow handle selection
 		if (tool.active === 'duplicate') {
 			const newId = duplicateNode(node.id);
 			if (newId) flow.selected = newId;
@@ -145,10 +151,6 @@
 				tool.connectFrom = null;
 			}
 		}
-	}
-
-	function onViewTextEvent(e: Event) {
-		viewTextId = (e as CustomEvent).detail.cardId;
 	}
 
 	function onBranchEvent(e: Event) {
@@ -224,6 +226,15 @@
 		return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
 	}
 
+	function onNodesDelete({ nodes }: { nodes: { id: string; type?: string; data: unknown }[] }) {
+		for (const node of nodes) {
+			if (node.type === 'file') {
+				const filename = (node.data as { filename?: string }).filename;
+				if (filename) void ragRemove(DEFAULT_CANVAS, filename);
+			}
+		}
+	}
+
 	function onNodeDragStop({ nodes }: { targetNode: unknown; nodes: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }[]; event: MouseEvent | TouchEvent }) {
 		const movedIds = new Set<string>(nodes.map((n) => n.id));
 		flow.edges = flow.edges.map((edge) => {
@@ -277,12 +288,17 @@
 
 		if (!inInput) {
 			if (e.key === 'Enter' && pendingBranch) { e.preventDefault(); confirmBranch(); return; }
+			// Backspace/Delete: delete selected nodes (also prevents browser back-nav in Tauri).
+			if (e.key === 'Backspace' || e.key === 'Delete') {
+				e.preventDefault();
+				if (selectedNodes.length) deleteSelected();
+				return;
+			}
 
 			// Escape: close panels/modals in priority order; last resort → reset to hand.
 			if (e.key === 'Escape') {
 				if (pendingBranch) { dismissBranch(); e.preventDefault(); return; }
 				if (openFileId) { openFileId = null; e.preventDefault(); return; }
-				if (viewTextId) { viewTextId = null; e.preventDefault(); return; }
 				if (expandId) { expandId = null; e.preventDefault(); return; }
 				if (tool.active !== 'hand' || tool.connectFrom) {
 					tool.active = 'hand';
@@ -294,8 +310,12 @@
 			// Tool hotkeys (no modifier).
 			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
 				if (e.key === 'h' || e.key === 'H') { tool.active = 'hand'; tool.connectFrom = null; e.preventDefault(); }
+				else if (e.key === 'v' || e.key === 'V') { tool.active = 'select'; e.preventDefault(); }
 				else if (e.key === 't' || e.key === 'T') { tool.active = 'text'; e.preventDefault(); }
-				else if (e.key === 'd' || e.key === 'D') { tool.active = 'duplicate'; e.preventDefault(); }
+				else if (e.key === 'd' || e.key === 'D') {
+					if (tool.active === 'select' && selectedNodes.length) { duplicateSelected(); e.preventDefault(); }
+					else { tool.active = 'duplicate'; e.preventDefault(); }
+				}
 				else if (e.key === 'c' || e.key === 'C') { tool.active = 'connect'; e.preventDefault(); }
 				else if (e.key === 'u' || e.key === 'U') { undo(); e.preventDefault(); }
 				else if (e.key === 'f' || e.key === 'F') { doFitView(); e.preventDefault(); }
@@ -325,7 +345,6 @@
 		window.addEventListener('loom:branch', onBranchEvent);
 		window.addEventListener('loom:continue', onContinueEvent);
 		window.addEventListener('loom:expand', onExpandEvent);
-		window.addEventListener('loom:viewtext', onViewTextEvent);
 		window.addEventListener('loom:weburl', onWebUrlEvent);
 		window.addEventListener('loom:openfile', onOpenFileEvent);
 		window.addEventListener('keydown', onKeydown);
@@ -371,7 +390,6 @@
 			window.removeEventListener('loom:branch', onBranchEvent);
 			window.removeEventListener('loom:continue', onContinueEvent);
 			window.removeEventListener('loom:expand', onExpandEvent);
-			window.removeEventListener('loom:viewtext', onViewTextEvent);
 			window.removeEventListener('loom:weburl', onWebUrlEvent);
 			window.removeEventListener('loom:openfile', onOpenFileEvent);
 			window.removeEventListener('keydown', onKeydown);
@@ -470,6 +488,7 @@
 					class:cursor-text={tool.active === 'text'}
 					class:cursor-copy={tool.active === 'duplicate'}
 					class:cursor-crosshair={tool.active === 'connect' || tool.active === 'color'}
+					class:cursor-default={tool.active === 'select'}
 					ondblclickcapture={onDblClick}
 					ondrop={onDrop}
 					ondragover={(e) => e.preventDefault()}
@@ -482,7 +501,10 @@
 						{nodeTypes}
 						zoomOnDoubleClick={false}
 						proOptions={{ hideAttribution: true }}
+						selectionOnDrag={tool.active === 'select'}
+						panOnDrag={tool.active !== 'select'}
 						onnodedragstop={onNodeDragStop}
+					onnodesdelete={onNodesDelete}
 						onpaneclick={onPaneClick}
 						onnodeclick={({ node }) => onNodeClick(node)}
 					>
@@ -520,6 +542,14 @@
 						<div class="connect-hint">Click another card to connect · Esc to cancel</div>
 					{/if}
 
+					{#if tool.active === 'select' && selectedNodes.length > 0}
+						<div class="selection-bar">
+							<span class="sel-count">{selectedNodes.length} selected</span>
+							<button class="sel-btn" onclick={duplicateSelected} title="Duplicate (D)">⧉ Duplicate</button>
+							<button class="sel-btn sel-btn--danger" onclick={deleteSelected} title="Delete (⌫)">⌫ Delete</button>
+						</div>
+					{/if}
+
 					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} />
 				</div>
 
@@ -533,10 +563,6 @@
 
 			{#if expandId}
 				<CardExpand cardId={expandId} onclose={() => (expandId = null)} />
-			{/if}
-
-			{#if viewTextId}
-				<TextView cardId={viewTextId} onclose={() => (viewTextId = null)} />
 			{/if}
 		</div>
 	{/if}
@@ -623,4 +649,42 @@
 	.wrap.cursor-text :global(.svelte-flow__pane) { cursor: text; }
 	.wrap.cursor-copy :global(.svelte-flow__pane) { cursor: copy; }
 	.wrap.cursor-crosshair :global(.svelte-flow__pane) { cursor: crosshair; }
+	.wrap.cursor-default :global(.svelte-flow__pane) { cursor: default; }
+
+	.selection-bar {
+		position: absolute;
+		bottom: 20px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 40;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 10px;
+		border-radius: var(--r-pill, 999px);
+		background: var(--c-ink);
+		color: var(--c-on-primary, #fff);
+		font-size: 12px;
+		box-shadow: var(--elev-2);
+		white-space: nowrap;
+	}
+	.sel-count {
+		opacity: 0.65;
+		font-family: var(--font-mono);
+		padding-right: 4px;
+	}
+	.sel-btn {
+		border: none;
+		background: rgba(255,255,255,0.12);
+		color: inherit;
+		font-size: 12px;
+		font-family: var(--font-sans);
+		font-weight: 500;
+		padding: 3px 10px;
+		border-radius: var(--r-pill, 999px);
+		cursor: pointer;
+		transition: background 0.1s;
+	}
+	.sel-btn:hover { background: rgba(255,255,255,0.22); }
+	.sel-btn--danger:hover { background: rgba(255, 80, 80, 0.5); }
 </style>

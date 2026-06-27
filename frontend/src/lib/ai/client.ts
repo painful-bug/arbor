@@ -39,6 +39,7 @@ export interface AgentOptions {
 	bash?: boolean;
 	websearch?: boolean;
 	websearchBackend?: 'duckduckgo' | 'tavily';
+	canvasTools?: boolean;
 }
 
 // Run an agent turn. `onEvent` fires for every streamed event until `done`/`error`.
@@ -68,7 +69,8 @@ export async function runAgent(
 				workflow: opts.workflow,
 				bash: opts.bash ?? false,
 				websearch: opts.websearch ?? false,
-				websearchBackend: opts.websearchBackend ?? 'duckduckgo'
+				websearchBackend: opts.websearchBackend ?? 'duckduckgo',
+				canvasTools: opts.canvasTools ?? false
 			})
 		});
 	} catch {
@@ -165,5 +167,14 @@ export async function ragAdd(
 	} catch (err) {
 		if (err instanceof Error && err.message.startsWith('RAG index')) throw err;
 		return 0; // network unreachable — fail silently
+	}
+}
+
+export async function ragRemove(canvas: string, filename: string): Promise<void> {
+	const { apiFetch } = await import('$lib/api');
+	try {
+		await apiFetch(`/api/rag/${encodeURIComponent(canvas)}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+	} catch {
+		// fail silently — stale chunks in the index are harmless
 	}
 }

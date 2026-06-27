@@ -18,7 +18,7 @@ agentRoutes.post("/prompt", async (c) => {
 	};
 
 	// Run agent concurrently; close the SSE stream when it finishes.
-	handlePrompt(req, emit).finally(() => writer.close());
+	handlePrompt(req, emit).finally(() => writer.close().catch(() => {}));
 
 	return new Response(readable, {
 		headers: {

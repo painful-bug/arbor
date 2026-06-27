@@ -2,14 +2,16 @@
 	// Right side-split pane: open a file card into a full viewer/editor.
 	//  - PDF  → pdf.js render + text layer, drag-select to highlight (view + highlight only)
 	//  - md/text/docx → contenteditable rich edit (bold/italic/underline)
-	//  - "Open file" → OS default app (desktop)
-	// Markdown/text edits save back to disk on desktop; docx is in-app only (Open file
-	// is the canonical edit path for .docx — no in-app .docx writer).
+	//  - text node → MarkdownBody view with highlights + textarea edit toggle
+	// Markdown/text edits save back to disk on desktop; docx is in-app only.
 	import { tick } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { flow, setFilePreview, setCardText, type FileData, type TextData } from './store.svelte';
 	import { getFileBlob, canUseFs, readFile, writeFile, openPath } from '$lib/files';
 	import { renderMarkdown } from '$lib/markdown';
+	import { loadHL, saveHL } from './highlights';
+	import MarkdownBody from './MarkdownBody.svelte';
+	import { resizable } from '$lib/actions/resizable';
 
 	let { fileId, onclose }: { fileId: string; onclose: () => void } = $props();
 
@@ -27,18 +29,23 @@
 	let width = $state(Math.min(720, Math.round(window.innerWidth * 0.5)));
 	let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-	// ── Drag-resize the split from its left edge ────────────────────────────────
-	function startResize(e: PointerEvent) {
-		e.preventDefault();
-		const move = (ev: PointerEvent) =>
-			(width = Math.max(360, Math.min(window.innerWidth - 120, window.innerWidth - ev.clientX)));
-		const up = () => {
-			window.removeEventListener('pointermove', move);
-			window.removeEventListener('pointerup', up);
-		};
-		window.addEventListener('pointermove', move);
-		window.addEventListener('pointerup', up);
+	// ── Text note: view ↔ edit toggle + persisted highlights ──────────────────
+	// Panel opens in view mode (rendered markdown + highlights), matching the
+	// old TextView modal. "Edit ✎" switches to the raw textarea.
+	let textEditing = $state(false);
+	let noteHL = $state<string[]>([]);
+	$effect(() => { noteHL = loadHL<string>(`loom.highlights.${fileId}`); });
+
+	function saveNoteHL(updated: string[]) {
+		noteHL = updated;
+		saveHL(`loom.highlights.${fileId}`, updated);
 	}
+
+	function clearNoteHL() {
+		noteHL = [];
+		saveHL(`loom.highlights.${fileId}`, []);
+	}
+
 
 	// ── Rich text edit (markdown / text / docx) ─────────────────────────────────
 	let editor = $state<HTMLDivElement>();
@@ -106,22 +113,12 @@
 		h: number;
 	}
 	let pages = $state<number[]>([]);
-	let highlights = $state<HL[]>(loadHighlights());
+	let highlights = $state<HL[]>([]);
+	$effect(() => { if (!isText) highlights = loadHL<HL>(`loom.highlights.${fileId}`); });
 	let pagesEl = $state<HTMLDivElement>();
 
-	function loadHighlights(): HL[] {
-		try {
-			return JSON.parse(localStorage.getItem(`loom.highlights.${fileId}`) || '[]');
-		} catch {
-			return [];
-		}
-	}
 	function saveHighlights() {
-		try {
-			localStorage.setItem(`loom.highlights.${fileId}`, JSON.stringify(highlights));
-		} catch {
-			/* ignore */
-		}
+		saveHL(`loom.highlights.${fileId}`, highlights);
 	}
 
 	async function renderPdf(container: HTMLDivElement) {
@@ -200,11 +197,18 @@
 </script>
 
 <aside class="panel" style="width: {width}px" transition:slide={{ axis: 'x', duration: 220 }}>
-	<div class="grip" onpointerdown={startResize} role="separator" aria-label="Resize" tabindex="-1"></div>
+	<div class="grip" use:resizable={{ min: 360, max: () => window.innerWidth - 120, getWidth: () => width, onwidth: (w) => (width = w) }} role="separator" aria-label="Resize" tabindex="-1"></div>
 	<header>
 		<span class="title" title={panelTitle}>{panelTitle}</span>
 		<div class="actions">
-			{#if !isText}
+			{#if isText}
+				<button onclick={() => (textEditing = !textEditing)}>
+					{textEditing ? 'Preview' : 'Edit ✎'}
+				</button>
+				{#if !textEditing && noteHL.length}
+					<button onclick={clearNoteHL}>Clear marks</button>
+				{/if}
+			{:else}
 				{#if editable && file?.kind !== 'docx'}
 					<button onclick={save} class="save">
 						{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Save (desktop)' : 'Save'}
@@ -220,14 +224,27 @@
 	</header>
 
 	{#if isText}
-		<div class="text-editor-hint">Markdown — renders live on the card</div>
-		<textarea
-			class="text-editor"
-			value={textData?.text ?? ''}
-			oninput={(e) => setCardText(fileId, (e.target as HTMLTextAreaElement).value)}
-			placeholder="Write your note in markdown…"
-			spellcheck="false"
-		></textarea>
+		{#if textEditing}
+			<div class="text-editor-hint">Markdown — renders live on the card</div>
+			<textarea
+				class="text-editor"
+				value={textData?.text ?? ''}
+				oninput={(e) => setCardText(fileId, (e.target as HTMLTextAreaElement).value)}
+				placeholder="Write your note in markdown…"
+				spellcheck="false"
+			></textarea>
+		{:else}
+			{#if !textData?.text?.trim()}
+				<div class="empty">Empty note — click <strong>Edit ✎</strong> to add content.</div>
+			{:else}
+				<div class="note-hint">Select text to highlight</div>
+				<MarkdownBody
+					text={textData?.text ?? ''}
+					bind:highlights={noteHL}
+					onhighlight={saveNoteHL}
+				/>
+			{/if}
+		{/if}
 	{:else if !blob && file?.kind !== 'markdown'}
 		<div class="empty">File bytes not loaded — re-drop "{file?.filename}" to view. (Bytes aren't persisted across reloads.)</div>
 	{:else if file?.kind === 'pdf'}
@@ -416,6 +433,13 @@
 		padding: var(--s-xl);
 		font-size: 13px;
 		color: rgba(0, 0, 0, 0.5);
+	}
+	.note-hint {
+		padding: 4px var(--s-md);
+		font-size: 11px;
+		color: rgba(0, 0, 0, 0.4);
+		border-bottom: 1px solid var(--c-hairline);
+		flex: none;
 	}
 	.text-editor-hint {
 		padding: 4px var(--s-md);

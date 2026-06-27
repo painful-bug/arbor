@@ -6,6 +6,7 @@
 	import { flow, continueCard } from './store.svelte';
 	import type { CardData } from './store.svelte';
 	import ThreadView from './ThreadView.svelte';
+	import Composer from './Composer.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
 	let { cardId, onclose }: { cardId: string; onclose: () => void } = $props();
@@ -13,8 +14,7 @@
 	const node = $derived(flow.nodes.find((n) => n.id === cardId));
 	const card = $derived(node?.data as CardData | undefined);
 
-	let draft = $state('');
-	let composer = $state<HTMLTextAreaElement>();
+	let composer = $state<ReturnType<typeof Composer>>();
 	let bodyEl = $state<HTMLElement>();
 
 	$effect(() => {
@@ -27,18 +27,9 @@
 		if (card?.streaming && bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight;
 	});
 
-	function send() {
-		const t = draft.trim();
-		if (!t || card?.streaming) return;
-		continueCard(cardId, t);
-		draft = '';
-	}
-
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
-			e.preventDefault();
-			send();
-		}
+	function send(text: string) {
+		if (card?.streaming) return;
+		continueCard(cardId, text);
 	}
 
 	// Esc closes too.
@@ -76,15 +67,12 @@
 			</div>
 
 			<div class="composer">
-				<textarea
+				<Composer
 					bind:this={composer}
-					bind:value={draft}
-					{onkeydown}
-					rows="1"
 					placeholder={card.streaming ? 'Thinking…' : 'Reply to this thread…'}
 					disabled={card.streaming}
-				></textarea>
-				<button class="send" onclick={send} disabled={!draft.trim() || card.streaming}>↵</button>
+					onsend={send}
+				/>
 			</div>
 		{/if}
 	</div>
@@ -187,39 +175,10 @@
 		border-top: 1px solid var(--c-hairline);
 		background: var(--c-surface-soft);
 	}
-	textarea {
-		flex: 1;
-		border: none;
-		outline: none;
-		resize: none;
-		background: transparent;
-		font-family: var(--font-sans);
-		font-size: 15px;
-		line-height: 1.4;
-		max-height: 120px;
-		padding: 8px 0;
-		color: var(--c-ink);
-	}
-	textarea:disabled {
-		opacity: 0.5;
-	}
-	.send {
-		flex: none;
-		width: 38px;
-		height: 38px;
-		border-radius: var(--r-full);
-		border: none;
-		background: var(--c-primary);
-		color: var(--c-on-primary);
-		font-size: 16px;
-		cursor: pointer;
-		transition: transform var(--ease-glass);
-	}
-	.send:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
-	.send:not(:disabled):active {
-		transform: scale(0.9);
+	/* Expand uses slightly larger composer than the default 14px/36px. */
+	.composer {
+		--composer-font-size: 15px;
+		--composer-btn-size: 38px;
+		--composer-max-height: 120px;
 	}
 </style>

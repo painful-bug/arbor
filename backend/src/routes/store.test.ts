@@ -1,5 +1,5 @@
 // Phase 1 routes: canvases, settings, blobs, keys. Runs against a temp LOOM_DIR
-// (set by the test script) so the real ~/.loom is never touched.
+// set by bunfig.toml preload (test-setup.ts) so the real ~/.loom is never touched.
 import { afterAll, describe, expect, test } from "bun:test";
 import { createApp } from "../server.ts";
 
@@ -27,7 +27,7 @@ describe("canvases", () => {
 		expect(list.list[0]).not.toHaveProperty("doc"); // metas only, no doc payload
 
 		const doc = await (await app.request("/api/canvases/ca", { headers: auth })).json();
-		expect(doc).toEqual({ id: "ca", name: "A", createdAt: 1, updatedAt: 1, nodes: [{ id: "n1" }], edges: [] });
+		expect(doc).toEqual({ id: "ca", name: "A", createdAt: 1, updatedAt: 1, nodes: [{ id: "n1" }], edges: [], session: [] });
 
 		expect((await app.request("/api/canvases/ca", { method: "DELETE", headers: auth })).status).toBe(200);
 		expect((await app.request("/api/canvases/ca", { headers: auth })).status).toBe(404);
