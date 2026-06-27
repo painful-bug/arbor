@@ -131,7 +131,7 @@
 	<AgentTimeline events={turn?.events ?? []} streaming={card.streaming} />
 	<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by DOMPurify -->
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-	<div class="answer nodrag" onclick={onAnswerClick}>
+	<div class="answer nodrag nowheel" onclick={onAnswerClick}>
 		{@html answerHtml}{#if card.streaming}<span class="caret"></span>{/if}
 	</div>
 </div>
