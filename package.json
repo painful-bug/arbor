@@ -1,38 +1,17 @@
 {
-	"name": "ai-chat-interface",
+	"name": "loom",
 	"private": true,
-	"version": "0.0.1",
-	"type": "module",
+	"description": "Loom — spatial research canvas. frontend/ = UI + thin Tauri shell, backend/ = all processing behind a local HTTP/SSE API.",
 	"scripts": {
-		"dev": "vite dev",
-		"sidecar:build": "cd sidecar && bun build ./agent.ts --compile --outfile dist/pi-sidecar && cd .. && cp sidecar/dist/pi-sidecar \"src-tauri/binaries/pi-sidecar-$(rustc -Vv | grep host | cut -d' ' -f2)\"",
-		"dev:tauri": "npm run sidecar:build && vite dev",
-		"build": "vite build",
-		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"test:unit": "vitest",
-		"test": "npm run test:unit -- --run"
-	},
-	"devDependencies": {
-		"@sveltejs/adapter-static": "^3.0.10",
-		"@sveltejs/kit": "^2.63.0",
-		"@sveltejs/vite-plugin-svelte": "^7.1.2",
-		"@tauri-apps/cli": "^2.11.3",
-		"svelte": "^5.56.1",
-		"svelte-check": "^4.6.0",
-		"typescript": "^6.0.3",
-		"vite": "^8.0.16",
-		"vitest": "^4.1.8"
+		"dev": "cd frontend && npx tauri dev",
+		"dev:web": "cd frontend && npm run dev",
+		"dev:backend": "cd backend && bun run dev",
+		"build": "cd frontend && npx tauri build",
+		"test": "cd backend && bun test && cd ../frontend && npm test",
+		"test:backend": "cd backend && bun test",
+		"test:frontend": "cd frontend && npm test"
 	},
 	"dependencies": {
-		"@tauri-apps/api": "^2.11.1",
-		"@xyflow/svelte": "^1.6.1",
-		"dompurify": "^3.4.11",
-		"katex": "^0.17.0",
-		"mammoth": "^1.12.0",
-		"marked": "^18.0.5",
-		"pdfjs-dist": "^6.0.227"
+		"fallow": "^2.102.0"
 	}
 }
