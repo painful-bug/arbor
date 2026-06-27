@@ -10,8 +10,13 @@ ragRoutes.post("/:canvas/files", async (c) => {
 	const bytes = new Uint8Array(await c.req.arrayBuffer());
 	const mime = c.req.header("Content-Type") ?? "application/octet-stream";
 	const filename = decodeURIComponent(c.req.header("X-Filename") ?? "file");
-	const chunks = await addFile(canvas, filename, mime, bytes);
-	return c.json({ chunks });
+	try {
+		const chunks = await addFile(canvas, filename, mime, bytes);
+		return c.json({ chunks });
+	} catch (err) {
+		console.error(`RAG addFile error [${filename}]:`, err);
+		return c.json({ error: String((err as Error)?.message ?? err) }, 500);
+	}
 });
 
 // Vector search for a canvas.

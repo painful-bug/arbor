@@ -156,10 +156,14 @@ export async function ragAdd(
 			},
 			body: bytes
 		});
-		if (!res.ok) return 0;
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({} as { error?: string }));
+			throw new Error((body as { error?: string }).error ?? `RAG index failed (${res.status})`);
+		}
 		const data = (await res.json()) as { chunks?: number };
 		return data.chunks ?? 0;
-	} catch {
-		return 0;
+	} catch (err) {
+		if (err instanceof Error && err.message.startsWith('RAG index')) throw err;
+		return 0; // network unreachable — fail silently
 	}
 }

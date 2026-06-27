@@ -83,13 +83,13 @@
 			{#if streaming}<span class="pulse"></span>{/if}
 		</button>
 		{#if open}
-			<ul class="rows" transition:slideIn>
+			<ul class="rows nowheel" transition:slideIn>
 				{#each items as it, i (i)}
 					{#if it.kind === 'thinking'}
 						<li class="row thinking">
 							<span class="dot think"></span>
 							<span class="label">Thinking</span>
-							<p class="think-text">{it.text}</p>
+							<p class="think-text nowheel">{it.text}</p>
 						</li>
 					{:else}
 						<li class="row">
@@ -107,7 +107,7 @@
 								{it.label}
 							</button>
 							{#if expanded[i] && it.detail}
-								<pre class="detail" transition:slideIn>{it.detail}</pre>
+								<pre class="detail nowheel" transition:slideIn>{it.detail}</pre>
 							{/if}
 						</li>
 					{/if}
