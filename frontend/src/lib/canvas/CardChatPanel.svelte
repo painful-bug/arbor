@@ -1,9 +1,11 @@
 <script lang="ts">
 	// Right collapsible sidebar in the tiled split layout: canvas | FilePanel | ChatPanel.
 	// Bound `open` is lifted to Canvas.svelte so the parent controls the flex column.
-	import { flow, continueCard } from './store.svelte';
+	import { flow, continueCard, session, runSession } from './store.svelte';
+	import { resizable } from '$lib/actions/resizable';
 	import type { CardData } from './store.svelte';
 	import ThreadView from './ThreadView.svelte';
+	import Composer from './Composer.svelte';
 
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -25,22 +27,14 @@
 		return null;
 	});
 
-	let draft = $state('');
 	let scroller = $state<HTMLDivElement>();
 
-	function send() {
-		const t = draft.trim();
-		if (!t || !cardId || card?.streaming) return;
-		continueCard(cardId, t);
-		draft = '';
+	function send(text: string) {
+		if (!cardId || card?.streaming) return;
+		continueCard(cardId, text);
 	}
 
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
-			e.preventDefault();
-			send();
-		}
-	}
+	let hubScroller = $state<HTMLDivElement>();
 
 	$effect(() => {
 		card?.turns?.length;
@@ -48,20 +42,12 @@
 		if (scroller) scroller.scrollTop = scroller.scrollHeight;
 	});
 
-	// Drag-resize from the left grip.
-	function startResize(e: PointerEvent) {
-		e.preventDefault();
-		const startX = e.clientX;
-		const startW = chatWidth;
-		const move = (ev: PointerEvent) =>
-			(chatWidth = Math.max(260, Math.min(640, startW + startX - ev.clientX)));
-		const up = () => {
-			window.removeEventListener('pointermove', move);
-			window.removeEventListener('pointerup', up);
-		};
-		window.addEventListener('pointermove', move);
-		window.addEventListener('pointerup', up);
-	}
+	$effect(() => {
+		session.turns.length;
+		session.turns[session.turns.length - 1]?.answer;
+		if (hubScroller) hubScroller.scrollTop = hubScroller.scrollHeight;
+	});
+
 </script>
 
 <!-- pull-tab always visible; panel slides in when open -->
@@ -73,7 +59,7 @@
 
 	{#if open}
 		<aside class="panel" style="width: {chatWidth}px">
-			<div class="grip" onpointerdown={startResize} role="separator" aria-label="Resize panel" tabindex="-1"></div>
+			<div class="grip" use:resizable={{ min: 260, max: 640, getWidth: () => chatWidth, onwidth: (w) => (chatWidth = w) }} role="separator" aria-label="Resize panel" tabindex="-1"></div>
 
 			{#if card && cardId}
 				<header>
@@ -94,17 +80,33 @@
 					<ThreadView turns={card.turns} streaming={card.streaming} />
 				</div>
 				<div class="composer">
-					<textarea
-						bind:value={draft}
-						{onkeydown}
-						rows="1"
+					<Composer
 						placeholder={card.streaming ? 'Thinking…' : 'Message this card…'}
 						disabled={card.streaming}
-					></textarea>
-					<button class="send" onclick={send} disabled={!draft.trim() || card.streaming}>↵</button>
+						onsend={send}
+					/>
 				</div>
 			{:else}
-				<div class="empty">Select a card to chat with it.</div>
+				<header>
+					<span class="dot" style="background: var(--c-ink)"></span>
+					<h3>Canvas</h3>
+				</header>
+				<div class="body" bind:this={hubScroller}>
+					{#if session.turns.length === 0}
+						<div class="hub-empty">
+							<p>Ask anything about this canvas, or say <em>"save as a card"</em> to create one.</p>
+						</div>
+					{:else}
+						<ThreadView turns={session.turns} streaming={session.streaming} />
+					{/if}
+				</div>
+				<div class="composer">
+					<Composer
+						placeholder={session.streaming ? 'Thinking…' : 'Message the canvas…'}
+						disabled={session.streaming}
+						onsend={(text) => runSession(text)}
+					/>
+				</div>
 			{/if}
 		</aside>
 	{/if}
@@ -243,39 +245,11 @@
 		background: var(--c-surface-soft);
 		flex: none;
 	}
-	textarea {
-		flex: 1;
-		border: none;
-		outline: none;
-		resize: none;
-		background: transparent;
-		font-family: var(--font-sans);
-		font-size: 14px;
-		line-height: 1.4;
-		max-height: 110px;
-		padding: 8px 0;
-		color: var(--c-ink);
+	.hub-empty {
+		padding: var(--s-lg);
+		font-size: 13px;
+		color: rgba(0, 0, 0, 0.45);
+		line-height: 1.5;
 	}
-	textarea:disabled {
-		opacity: 0.5;
-	}
-	.send {
-		flex: none;
-		width: 36px;
-		height: 36px;
-		border-radius: var(--r-full);
-		border: none;
-		background: var(--c-primary);
-		color: var(--c-on-primary);
-		font-size: 15px;
-		cursor: pointer;
-		transition: transform var(--ease-glass);
-	}
-	.send:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
-	.send:not(:disabled):active {
-		transform: scale(0.9);
-	}
+	/* Composer defaults (14px, 36px btn) match CardChatPanel — no overrides needed. */
 </style>

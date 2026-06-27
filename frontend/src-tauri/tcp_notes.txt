@@ -1,0 +1,8 @@
+## TCP (Transmission Control Protocol): Study Guide
+*(Exactly 500 words)*
+
+...
+
+**Summary**: TCP is indispensable for applications requiring reliability over speed. Its mechanisms (handshakes, sliding windows, congestion control) ensure data integrity even in lossy networks. While UDP offers speed, TCP’s robustness makes it the backbone of the internet.
+
+**Word Count**: ~500 words

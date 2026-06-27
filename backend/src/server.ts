@@ -13,6 +13,7 @@ import { keyRoutes } from "./routes/keys.ts";
 import { ragRoutes } from "./routes/rag.ts";
 import { agentRoutes } from "./routes/agent.ts";
 import { fileRoutes } from "./routes/files.ts";
+import { ollamaRoutes } from "./routes/ollama.ts";
 import { importLegacyIfNeeded } from "./store/import-legacy.ts";
 import { LOOM_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
 
@@ -49,6 +50,7 @@ export function createApp(token: string) {
 	app.route("/api/agent", agentRoutes);
 	app.route("/api/files", fileRoutes);
 	app.route("/api", keyRoutes); // /api/keys/* and /api/providers/*
+	app.route("/api/ollama", ollamaRoutes);
 
 	return app;
 }
@@ -61,7 +63,7 @@ export function serveOnFreePort(
 ) {
 	for (let port = first; port < first + 50; port++) {
 		try {
-			const server = Bun.serve({ hostname: HOST, port, fetch });
+			const server = Bun.serve({ hostname: HOST, port, fetch, idleTimeout: 0 });
 			return { server, port };
 		} catch (e) {
 			const code = (e as { code?: string }).code;

@@ -80,6 +80,15 @@ export async function search(canvas: string, query: string, k = 4): Promise<stri
 	return results.map((r: any) => r.text as string);
 }
 
+export async function removeFile(canvas: string, filename: string): Promise<void> {
+	const db = await getDb();
+	const name = tname(canvas);
+	const tables = await db.tableNames();
+	if (!tables.includes(name)) return;
+	const tbl = await db.openTable(name);
+	await tbl.delete(`source = '${filename.replace(/'/g, "''")}'`);
+}
+
 export async function clearCanvas(canvas: string): Promise<void> {
 	const db = await getDb();
 	const name = tname(canvas);

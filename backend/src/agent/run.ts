@@ -9,7 +9,9 @@ import {
 	webSearchTool,
 	scholarSearchTool,
 	researchPlanTool,
-	ragSearchTool
+	ragSearchTool,
+	createCardTool,
+	updateCardTool
 } from "./tools.ts";
 import { search as ragSearch } from "../rag/index.ts";
 
@@ -42,6 +44,7 @@ export interface PromptRequest {
 	websearch?: boolean;
 	websearchBackend?: "duckduckgo" | "tavily";
 	canvas?: string; // which canvas's RAG index to search; defaults to "default"
+	canvasTools?: boolean; // enable create_card / update_card (hub session only)
 }
 
 // Condense a tool result into a one-line timeline detail.
@@ -97,6 +100,8 @@ export async function handlePrompt(
 			emit({ type: "error", id: cardId, message: `No API key saved for '${req.provider}'. Add it in Settings.` });
 			return;
 		}
+		// pi-ai rejects empty-string keys even for local providers; pass a dummy value.
+		const effectiveKey = apiKey ?? "ollama";
 
 		const tavilyKey = (await key("tavily")) ?? undefined;
 		const model = buildModel(req.provider, req.model);
@@ -110,10 +115,11 @@ export async function handlePrompt(
 		tools.push(scholarSearchTool(), researchPlanTool());
 		// ragSearch is now in-process — no stdio, no HTTP bridge.
 		tools.push(ragSearchTool((query) => ragSearch(canvas, query)));
+		if (req.canvasTools) tools.push(createCardTool(), updateCardTool());
 
 		const agent = new Agent({
 			streamFn: streamSimple,
-			getApiKey: () => apiKey ?? "",
+			getApiKey: () => effectiveKey,
 			convertToLlm: (messages) => messages as Message[],
 			initialState: {
 				systemPrompt: req.systemPrompt ?? "",

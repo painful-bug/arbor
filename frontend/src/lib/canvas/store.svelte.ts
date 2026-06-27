@@ -34,7 +34,7 @@ export const BLOCKS = ['lime', 'lilac', 'cream', 'pink', 'mint', 'coral'];
 let blockIdx = 0;
 
 // ── Tool state (shared by toolbar + canvas) ──────────────────────────────────
-export type Tool = 'hand' | 'text' | 'duplicate' | 'connect' | 'color';
+export type Tool = 'hand' | 'select' | 'text' | 'duplicate' | 'connect' | 'color';
 export const tool = $state<{ active: Tool; connectFrom: string | null }>({
 	active: 'hand',
 	connectFrom: null
@@ -46,6 +46,12 @@ export const flow = $state<{ nodes: Node[]; edges: Edge[]; selected: string | nu
 	nodes: [],
 	edges: [],
 	selected: null
+});
+
+// Hub session: canvas-wide agent chat (active when no card is selected).
+export const session = $state<{ turns: Turn[]; streaming: boolean }>({
+	turns: [],
+	streaming: false
 });
 
 // ── Multi-canvas persistence ────────────────────────────────────────────────
@@ -61,6 +67,7 @@ interface CanvasMeta {
 interface CanvasDoc extends CanvasMeta {
 	nodes: Node[];
 	edges: Edge[];
+	session?: Turn[];
 }
 interface CanvasIndex {
 	current: string;
@@ -142,6 +149,8 @@ function applyDoc(doc: CanvasDoc | null): void {
 	flow.nodes = nodes;
 	flow.edges = doc?.edges ?? [];
 	flow.selected = null;
+	session.turns = doc?.session ?? [];
+	session.streaming = false;
 	idCounter = 0;
 	for (const n of nodes) {
 		const num = parseInt(String(n.id).replace(/\D/g, ''), 10);
@@ -185,13 +194,13 @@ export async function init(): Promise<void> {
 	await loadSettingsAsync();
 }
 
-// Persist the active canvas's current nodes/edges + bump its updatedAt.
+// Persist the active canvas's current nodes/edges/session + bump its updatedAt.
 export function saveCanvas(): void {
 	if (!currentId) return;
 	const meta = library.list.find((c) => c.id === currentId);
 	if (!meta) return;
 	const now = Date.now();
-	writeDoc({ ...meta, updatedAt: now, nodes: flow.nodes, edges: flow.edges });
+	writeDoc({ ...meta, updatedAt: now, nodes: flow.nodes, edges: flow.edges, session: session.turns });
 	library.list = library.list.map((c) => (c.id === currentId ? { ...c, updatedAt: now } : c));
 	writeIndex(currentId, library.list);
 }
@@ -305,40 +314,59 @@ const FALLBACK_SETTINGS: Settings = {
 	websearch: { enabled: false, backend: 'duckduckgo' }
 };
 
+const LS_KEY = 'loom:settings';
+
 export const settings = $state<Settings>({ ...FALLBACK_SETTINGS, models: { ...DEFAULT_MODELS } });
+
+function applySettings(p: Record<string, unknown>): void {
+	if (typeof p.provider === 'string' && VALID_PROVIDERS.has(p.provider as Provider)) {
+		settings.provider = p.provider as Provider;
+	}
+	if (p.models && typeof p.models === 'object') {
+		const m = p.models as Record<string, string>;
+		for (const k of Object.keys(m)) {
+			if (VALID_PROVIDERS.has(k as Provider)) settings.models[k as Provider] = m[k];
+		}
+	}
+	if (typeof p.workflow === 'string') settings.workflow = p.workflow;
+	if (typeof p.bashEnabled === 'boolean') settings.bashEnabled = p.bashEnabled;
+	if (p.websearch && typeof p.websearch === 'object') {
+		const ws = p.websearch as Record<string, unknown>;
+		if (typeof ws.enabled === 'boolean') settings.websearch.enabled = ws.enabled;
+		if (ws.backend === 'duckduckgo' || ws.backend === 'tavily') settings.websearch.backend = ws.backend;
+	}
+}
+
+// Apply any localStorage-cached settings immediately (synchronous, before backend responds).
+try {
+	const raw = typeof localStorage !== 'undefined' && localStorage.getItem(LS_KEY);
+	if (raw) applySettings(JSON.parse(raw) as Record<string, unknown>);
+} catch {}
 
 async function loadSettingsAsync(): Promise<void> {
 	let p: Record<string, unknown> | null = null;
 	try { p = await apiJson<Record<string, unknown> | null>('/api/settings'); } catch { return; }
 	if (!p) return; // none saved yet — keep defaults
 	try {
-		if (typeof p.provider === 'string' && VALID_PROVIDERS.has(p.provider as Provider)) {
-			settings.provider = p.provider as Provider;
-		}
-		if (p.models && typeof p.models === 'object') {
-			const m = p.models as Record<string, string>;
-			for (const k of Object.keys(m)) {
-				if (VALID_PROVIDERS.has(k as Provider)) settings.models[k as Provider] = m[k];
-			}
-		}
-		if (typeof p.workflow === 'string') settings.workflow = p.workflow;
-		if (typeof p.bashEnabled === 'boolean') settings.bashEnabled = p.bashEnabled;
-		if (p.websearch && typeof p.websearch === 'object') {
-			const ws = p.websearch as Record<string, unknown>;
-			if (typeof ws.enabled === 'boolean') settings.websearch.enabled = ws.enabled;
-			if (ws.backend === 'duckduckgo' || ws.backend === 'tavily') settings.websearch.backend = ws.backend;
-		}
+		applySettings(p);
+		// Keep localStorage in sync with backend's authoritative copy.
+		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(p));
 	} catch {}
 }
 
 export function persistSettings(): void {
-	void apiPut('/api/settings', {
+	const payload = {
 		provider: settings.provider,
-		models: settings.models,
+		models: { ...settings.models },
 		workflow: settings.workflow,
 		bashEnabled: settings.bashEnabled,
-		websearch: settings.websearch
-	});
+		websearch: { ...settings.websearch }
+	};
+	// Write localStorage first — survives even if backend request fails.
+	try {
+		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));
+	} catch {}
+	void apiPut('/api/settings', payload);
 }
 
 // ── Canvas actions ───────────────────────────────────────────────────────────
@@ -514,6 +542,35 @@ export function duplicateNode(id: string): string {
 	return newId;
 }
 
+export function duplicateSelected(): void {
+	const selected = flow.nodes.filter((n) => n.selected);
+	if (!selected.length) return;
+	const newNodes: Node[] = selected.map((src) => {
+		const newId = nextId();
+		const data = JSON.parse(JSON.stringify(src.data)) as Record<string, unknown>;
+		if ('streaming' in data) data.streaming = false;
+		const srcW = (src as Node & { measured?: { width?: number } }).measured?.width ?? src.width ?? 400;
+		const node: Node = {
+			id: newId,
+			type: src.type ?? 'card',
+			position: { x: src.position.x + srcW + 40, y: src.position.y },
+			data,
+			width: src.width,
+			selected: true
+		};
+		if (src.height != null) node.height = src.height;
+		return node;
+	});
+	flow.nodes = [...flow.nodes.map((n) => ({ ...n, selected: false })), ...newNodes];
+}
+
+export function deleteSelected(): void {
+	const toDelete = new Set(flow.nodes.filter((n) => n.selected).map((n) => n.id));
+	if (!toDelete.size) return;
+	flow.edges = flow.edges.filter((e) => !toDelete.has(e.source) && !toDelete.has(e.target));
+	flow.nodes = flow.nodes.filter((n) => !toDelete.has(n.id));
+}
+
 export function addManualEdge(
 	source: string,
 	target: string,
@@ -586,7 +643,8 @@ export async function runModel(id: string): Promise<void> {
 			workflow,
 			bash: settings.bashEnabled,
 			websearch: settings.websearch.enabled,
-			websearchBackend: settings.websearch.backend
+			websearchBackend: settings.websearch.backend,
+			canvasTools: true
 		},
 		(e) => {
 			switch (e.type) {
@@ -594,8 +652,11 @@ export async function runModel(id: string): Promise<void> {
 					answer += e.delta ?? '';
 					setTurnAnswer(id, answer, true);
 					break;
-				case 'thinking_delta':
 				case 'tool_start':
+					applyCanvasTool(e);
+					pushEvent(id, e);
+					break;
+				case 'thinking_delta':
 				case 'tool_end':
 					pushEvent(id, e);
 					break;
@@ -605,7 +666,10 @@ export async function runModel(id: string): Promise<void> {
 					break;
 				case 'done':
 					setTurnAnswer(id, answer, false);
-					if (turns.length === 1) void generateTitle(id, active.prompt, answer);
+					if (turns.length === 1) {
+						void generateTitle(id, active.prompt, answer);
+						void generateCanvasTitle();
+					}
 					break;
 			}
 		}
@@ -639,11 +703,206 @@ async function generateTitle(id: string, prompt: string, answer: string): Promis
 	);
 }
 
+async function generateCanvasTitle(): Promise<void> {
+	const meta = library.list.find((c) => c.id === currentId);
+	if (!meta || !/^Canvas \d+$/.test(meta.name)) return;
+	const parts: string[] = [];
+	for (const n of flow.nodes) {
+		if (n.type === 'card') parts.push(((n.data as CardData).title || lastTurn(n.data as CardData)?.prompt || '').trim());
+		else if (n.type === 'file') parts.push(((n.data as { filename: string }).filename || '').trim());
+	}
+	const content = parts.filter(Boolean).join(', ');
+	if (!content) return;
+	const messages: ChatMessage[] = [{
+		role: 'user',
+		content: `Write a short descriptive title (5 words max, no quotes, no trailing punctuation) for a research canvas containing: ${content}`
+	}];
+	let title = '';
+	await runAgent(
+		'__canvas_title__',
+		messages,
+		{ provider: settings.provider, model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider] },
+		(e) => {
+			if (e.type === 'text_delta') title += e.delta ?? '';
+			else if (e.type === 'done' && title.trim()) {
+				const clean = title.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/[.!?]+$/, '').trim();
+				if (clean) void renameCanvas(currentId, clean);
+			}
+		}
+	);
+}
+
 export function renameCard(id: string, title: string): void {
 	const t = title.trim();
 	if (!t) return;
 	flow.nodes = flow.nodes.map((n) =>
 		n.id === id ? { ...n, data: { ...n.data, title: t } } : n
+	);
+}
+
+// ── Hub session (canvas-wide agent chat) ────────────────────────────────────
+
+// Create a finished Q&A card from agent output — no streaming, placed to the right
+// of the rightmost existing node.
+export function createCardFromAgent(title: string, content: string): string {
+	const id = nextId();
+	const block = BLOCKS[blockIdx++ % BLOCKS.length];
+	const maxX = flow.nodes.reduce((m, n) => Math.max(m, n.position.x + (n.width ?? 400)), 0);
+	const position = { x: maxX > 0 ? maxX + 40 : 80, y: 80 };
+	const data: CardData = {
+		title,
+		turns: [{ prompt: title, answer: content, events: [] }],
+		streaming: false,
+		block
+	};
+	flow.nodes = [...flow.nodes, { id, type: 'card', position, data, width: 400 }];
+	saveCanvas();
+	return id;
+}
+
+// Replace an existing card's content. ref = node id OR case-insensitive title match.
+// Q&A card → overwrites last turn's answer. Text card → overwrites body.
+export function updateCardContent(ref: string, content: string): boolean {
+	const node =
+		flow.nodes.find((n) => n.id === ref) ??
+		flow.nodes.find((n) => {
+			const d = n.data as Record<string, unknown>;
+			return (
+				typeof d.title === 'string' &&
+				d.title.toLowerCase() === ref.toLowerCase()
+			);
+		});
+	if (!node) return false;
+	if (node.type === 'text') {
+		setCardText(node.id, content);
+	} else {
+		// Q&A card: replace last turn's answer (replace, not append — per user choice).
+		flow.nodes = flow.nodes.map((n) => {
+			if (n.id !== node.id) return n;
+			const turns = [...(n.data.turns as Turn[])];
+			turns[turns.length - 1] = { ...turns[turns.length - 1], answer: content };
+			return { ...n, data: { ...n.data, turns, streaming: false } };
+		});
+	}
+	saveCanvas();
+	return true;
+}
+
+// Canvas digest that includes node ids — needed so the agent can reference cards by id.
+// Full card content is included (capped at 6000 chars each) so the agent can reason over it.
+function canvasDigestWithIds(): string {
+	const cards = flow.nodes
+		.filter((n) => n.type === 'card' || n.type === 'text')
+		.map((n) => {
+			const d = n.data as CardData & { text?: string };
+			const title = (d.title ?? d.text ?? '').trim();
+			const content = n.type === 'card' ? (lastTurn(d)?.answer ?? '') : (d.text ?? '');
+			return { id: n.id, title, content };
+		})
+		.filter((c) => c.title);
+	if (!cards.length) return '';
+	const sections = cards.map((c) => {
+		const body = c.content.trim().slice(0, 6000);
+		return body
+			? `### [${c.id}] ${c.title}\n${body}`
+			: `### [${c.id}] ${c.title}\n(no content yet)`;
+	});
+	return `## Canvas cards (use ids with create_card / update_card)\n\n${sections.join('\n\n')}`;
+}
+
+function setSessionAnswer(answer: string, streaming: boolean): void {
+	const turns = [...session.turns];
+	if (!turns.length) return;
+	turns[turns.length - 1] = { ...turns[turns.length - 1], answer };
+	session.turns = turns;
+	session.streaming = streaming;
+}
+
+function pushSessionEvent(ev: AgentEvent): void {
+	const turns = [...session.turns];
+	if (!turns.length) return;
+	const last = turns[turns.length - 1];
+	turns[turns.length - 1] = { ...last, events: [...last.events, ev] };
+	session.turns = turns;
+}
+
+// Apply a canvas tool invocation from a tool_start SSE event.
+function applyCanvasTool(ev: AgentEvent): void {
+	const args = ev.args as Record<string, string> | undefined;
+	if (!args) return;
+	if (ev.name === 'create_card') {
+		createCardFromAgent(args.title ?? '', args.content ?? '');
+	} else if (ev.name === 'update_card') {
+		updateCardContent(args.card ?? '', args.content ?? '');
+	}
+}
+
+// Run a hub session turn. Mirrors runModel but targets session state + uses canvasTools.
+export async function runSession(prompt: string): Promise<void> {
+	session.turns = [...session.turns, { prompt, answer: '', events: [] }];
+	session.streaming = true;
+	saveCanvas();
+
+	const messages: ChatMessage[] = [];
+	for (const t of session.turns.slice(0, -1)) {
+		if (t.prompt) messages.push({ role: 'user', content: t.prompt });
+		if (t.answer) messages.push({ role: 'assistant', content: t.answer });
+	}
+	messages.push({ role: 'user', content: prompt });
+
+	const workflow = settings.workflow;
+	const digest = canvasDigestWithIds();
+	const toolHint =
+		'\n\n## Hub Session Rules\n' +
+		'You are the canvas-level assistant. The full content of every canvas card is provided IN THIS SYSTEM PROMPT in the "Canvas cards" section below — read it directly to answer questions about card contents. ' +
+		'DO NOT call rag_search to find card content; rag_search only works for files the user has explicitly uploaded (PDFs, docx, images, etc.), not for canvas cards.\n\n' +
+		'**Bias toward action over clarification.** If the user\'s intent is clear enough to attempt, execute it immediately without asking questions. ' +
+		'Call create_card once per card you want to create — do not batch them into one card. ' +
+		'Ask a question only if you genuinely cannot proceed without the answer.\n\n' +
+		'## Canvas Tools\n' +
+		'- create_card(title, content): creates a new card on the canvas. Call this once per card — multiple calls = multiple cards.\n' +
+		'- update_card(card, content): replaces an existing card\'s content (use card id when available).';
+	const systemPrompt = workflowSystemPrompt(workflow) + toolHint + (digest ? '\n\n' + digest : '');
+
+	let answer = '';
+	await runAgent(
+		'__session__',
+		messages,
+		{
+			provider: settings.provider,
+			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider],
+			systemPrompt,
+			workflow,
+			bash: false,
+			websearch: settings.websearch.enabled,
+			websearchBackend: settings.websearch.backend,
+			canvasTools: true
+		},
+		(e) => {
+			switch (e.type) {
+				case 'text_delta':
+					answer += e.delta ?? '';
+					setSessionAnswer(answer, true);
+					break;
+				case 'tool_start':
+					applyCanvasTool(e);
+					pushSessionEvent(e);
+					break;
+				case 'thinking_delta':
+				case 'tool_end':
+					pushSessionEvent(e);
+					break;
+				case 'error':
+					answer += `\n\n_[error: ${e.message}]_`;
+					setSessionAnswer(answer, false);
+					saveCanvas();
+					break;
+				case 'done':
+					setSessionAnswer(answer, false);
+					saveCanvas();
+					break;
+			}
+		}
 	);
 }
 

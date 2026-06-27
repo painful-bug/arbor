@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/svelte';
+	import { NodeResizer, type NodeProps } from '@xyflow/svelte';
+import CardHandles from './CardHandles.svelte';
 	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { flow, lastTurn, renameCard } from './store.svelte';
@@ -93,24 +94,7 @@
 	onkeydown={(e) => e.key === 'Enter' && (flow.selected = id)}
 >
 	<NodeResizer minWidth={280} minHeight={80} isVisible={selected} />
-	<!-- Side handles (center of each edge) -->
-	<Handle type="source" position={Position.Top} id="top-s" />
-	<Handle type="target" position={Position.Top} id="top-t" />
-	<Handle type="source" position={Position.Right} id="right-s" />
-	<Handle type="target" position={Position.Right} id="right-t" />
-	<Handle type="source" position={Position.Bottom} id="bottom-s" />
-	<Handle type="target" position={Position.Bottom} id="bottom-t" />
-	<Handle type="source" position={Position.Left} id="left-s" />
-	<Handle type="target" position={Position.Left} id="left-t" />
-	<!-- Corner handles -->
-	<Handle type="source" position={Position.Top} id="tl-s" style="left: 0%" />
-	<Handle type="target" position={Position.Top} id="tl-t" style="left: 0%" />
-	<Handle type="source" position={Position.Top} id="tr-s" style="left: 100%" />
-	<Handle type="target" position={Position.Top} id="tr-t" style="left: 100%" />
-	<Handle type="source" position={Position.Bottom} id="bl-s" style="left: 0%" />
-	<Handle type="target" position={Position.Bottom} id="bl-t" style="left: 0%" />
-	<Handle type="source" position={Position.Bottom} id="br-s" style="left: 100%" />
-	<Handle type="target" position={Position.Bottom} id="br-t" style="left: 100%" />
+	<CardHandles corners />
 	{#if card.quote}
 		<p class="quote nodrag">{card.quote}</p>
 	{/if}
@@ -153,19 +137,6 @@
 		transition:
 			transform var(--ease-glass),
 			box-shadow var(--ease-glass);
-	}
-	/* Connection handles: hidden by default, revealed on hover/select/connect */
-	:global(.svelte-flow__handle) {
-		opacity: 0;
-		transition: opacity 0.15s;
-		width: 10px;
-		height: 10px;
-	}
-	:global(.svelte-flow__node:hover .svelte-flow__handle),
-	:global(.svelte-flow__node.selected .svelte-flow__handle),
-	:global(.svelte-flow__handle.svelte-flow__handle-valid),
-	:global(.svelte-flow__handle.svelte-flow__handle-connecting) {
-		opacity: 1;
 	}
 	.card:hover {
 		transform: translateY(-2px);

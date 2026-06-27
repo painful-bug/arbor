@@ -2,7 +2,8 @@
 	// Interactive web embed node. Poster-first: iframe only loads when user clicks "Load".
 	// Drag handle = bar background (non-button areas) + frame area when not interactive.
 	// Click frame once to "activate" iframe interaction; click outside to release drag.
-	import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/svelte';
+	import { NodeResizer, type NodeProps } from '@xyflow/svelte';
+import CardHandles from './CardHandles.svelte';
 	import { faviconFor, labelFor, toEmbedUrl, isMediaEmbed, youtubeThumb } from '$lib/url';
 	import { popOutWindow, openExternal } from '$lib/web';
 
@@ -81,15 +82,7 @@
 	}
 </script>
 
-<!-- Side handles — same IDs as CardNode so onNodeDragStop remaps them correctly -->
-<Handle type="source" position={Position.Top} id="top-s" />
-<Handle type="target" position={Position.Top} id="top-t" />
-<Handle type="source" position={Position.Right} id="right-s" />
-<Handle type="target" position={Position.Right} id="right-t" />
-<Handle type="source" position={Position.Bottom} id="bottom-s" />
-<Handle type="target" position={Position.Bottom} id="bottom-t" />
-<Handle type="source" position={Position.Left} id="left-s" />
-<Handle type="target" position={Position.Left} id="left-t" />
+<CardHandles />
 <!-- bind:this needed for outside-click detection -->
 <div class="web" class:selected bind:this={host}>
 	<NodeResizer minWidth={320} minHeight={240} isVisible={selected} />

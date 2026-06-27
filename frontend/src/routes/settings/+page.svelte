@@ -74,9 +74,73 @@
 	function onModelInput() {
 		persistSettings();
 	}
-	function selectProvider(p: Provider) {
-		settings.provider = p;
-		persistSettings();
+	// ── Ollama ────────────────────────────────────────────────────────────────
+	let ollamaModels = $state<string[]>([]);
+	let ollamaPullModel = $state('');
+	type PullStatus = 'idle' | 'pulling' | 'done' | 'error';
+	let pullStatus = $state<PullStatus>('idle');
+	let pullProgress = $state('');
+
+	$effect(() => {
+		(async () => {
+			try {
+				const data = await apiJson<{ models: string[] }>('/api/ollama/models');
+				ollamaModels = data.models ?? [];
+				if (ollamaModels.length && !settings.models['ollama']) {
+					settings.models['ollama'] = ollamaModels[0];
+					persistSettings();
+				}
+			} catch {
+				/* ollama not running — leave empty */
+			}
+		})();
+	});
+
+	async function pullModel() {
+		if (!ollamaPullModel.trim() || pullStatus === 'pulling') return;
+		pullStatus = 'pulling';
+		pullProgress = '';
+		const { apiFetch } = await import('$lib/api');
+		try {
+			const res = await apiFetch('/api/ollama/pull', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ model: ollamaPullModel.trim() })
+			});
+			if (!res || !res.body) { pullStatus = 'error'; pullProgress = 'Backend unreachable'; return; }
+			const reader = res.body.getReader();
+			const dec = new TextDecoder();
+			let buf = '';
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				buf += dec.decode(value, { stream: true });
+				const parts = buf.split('\n\n');
+				buf = parts.pop()!;
+				for (const part of parts) {
+					const line = part.replace(/^data: /, '').trim();
+					if (!line) continue;
+					const ev = JSON.parse(line) as { type: string; text?: string; message?: string };
+					if (ev.type === 'progress' && ev.text) pullProgress = ev.text;
+					else if (ev.type === 'done') {
+						pullStatus = 'done';
+						pullProgress = 'Download complete!';
+						// Refresh model list.
+						const data = await apiJson<{ models: string[] }>('/api/ollama/models');
+						ollamaModels = data.models ?? [];
+						setTimeout(() => { pullStatus = 'idle'; ollamaPullModel = ''; }, 3000);
+						return;
+					} else if (ev.type === 'error') {
+						pullStatus = 'error';
+						pullProgress = ev.message ?? 'Pull failed';
+						return;
+					}
+				}
+			}
+		} catch (err) {
+			pullStatus = 'error';
+			pullProgress = String(err);
+		}
 	}
 </script>
 
@@ -98,26 +162,60 @@
 
 	<section>
 		<h2>AI Model Provider</h2>
-		<p class="sub">Provider + model for new cards. All inference runs through the pi agent.</p>
-
-		<div class="provider-grid">
+		<p class="sub">Provider used for all new cards.</p>
+		<select class="select" bind:value={settings.provider} onchange={persistSettings}>
 			{#each providers as p (p.id)}
-				<button
-					class="provider-card"
-					class:active={settings.provider === p.id}
-					style="--bg: var(--block-{p.block})"
-					onclick={() => selectProvider(p.id)}
-				>
-					<div class="p-header">
-						<span class="p-name">{p.name}</span>
-						{#if settings.provider === p.id}
-							<span class="badge">Active</span>
-						{/if}
-					</div>
-					<p class="p-desc">{p.requiresKey ? 'API key required' : 'Local — no key needed'}</p>
-				</button>
+				<option value={p.id}>{p.name}{p.requiresKey ? '' : ' (local)'}</option>
 			{/each}
+		</select>
+	</section>
+
+	<section>
+		<h2>Ollama (Local)</h2>
+		<p class="sub">Run models locally via Ollama. Requires <code>ollama</code> running on your Mac.</p>
+
+		{#if ollamaModels.length > 0}
+			<label for="ollama-model-select">Active model</label>
+			<select
+				id="ollama-model-select"
+				class="select"
+				bind:value={settings.models['ollama']}
+				onchange={persistSettings}
+			>
+				{#each ollamaModels as m (m)}
+					<option value={m}>{m}</option>
+				{/each}
+			</select>
+		{:else}
+			<p class="sub warn-muted">No models found — is Ollama running?</p>
+		{/if}
+
+		<label for="ollama-pull-input">Download a model</label>
+		<div class="key-input-wrap">
+			<input
+				id="ollama-pull-input"
+				type="text"
+				placeholder="e.g. llama3.2, mistral, gemma3"
+				bind:value={ollamaPullModel}
+				autocomplete="off"
+				spellcheck="false"
+				onkeydown={(e) => e.key === 'Enter' && pullModel()}
+			/>
+			<button
+				class="save-btn"
+				onclick={pullModel}
+				disabled={!ollamaPullModel.trim() || pullStatus === 'pulling'}
+				class:pulling={pullStatus === 'pulling'}
+				class:done={pullStatus === 'done'}
+				class:error={pullStatus === 'error'}
+			>
+				{pullStatus === 'pulling' ? 'Pulling…' : pullStatus === 'done' ? 'Done ✓' : pullStatus === 'error' ? 'Error' : 'Download'}
+			</button>
 		</div>
+
+		{#if pullProgress}
+			<p class="pull-progress" class:pull-error={pullStatus === 'error'}>{pullProgress}</p>
+		{/if}
 	</section>
 
 	<section>
@@ -301,57 +399,6 @@
 		margin: 0;
 	}
 
-	/* provider cards */
-	.provider-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--s-md);
-	}
-	.provider-card {
-		text-align: left;
-		background: var(--c-surface-soft);
-		border: 1.5px solid transparent;
-		border-radius: var(--r-lg);
-		padding: var(--s-md);
-		cursor: pointer;
-		transition:
-			border-color var(--ease-glass),
-			box-shadow var(--ease-glass),
-			background var(--ease-glass);
-	}
-	.provider-card:hover {
-		background: var(--bg);
-		box-shadow: var(--elev-2);
-	}
-	.provider-card.active {
-		background: var(--bg);
-		border-color: var(--c-ink);
-	}
-	.p-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: var(--s-xs);
-	}
-	.p-name {
-		font-size: 15px;
-		font-weight: 600;
-	}
-	.badge {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		background: var(--c-ink);
-		color: var(--c-on-primary);
-		padding: 2px 8px;
-		border-radius: var(--r-full);
-	}
-	.p-desc {
-		font-size: 13px;
-		color: rgba(0, 0, 0, 0.6);
-		margin: 0;
-		line-height: 1.4;
-	}
-
 	/* api keys + models */
 	.key-list {
 		display: flex;
@@ -474,6 +521,37 @@
 		line-height: 1.4;
 		color: #a05a00;
 		margin: 0;
+	}
+	.warn-muted {
+		color: rgba(0, 0, 0, 0.4);
+	}
+	.pull-progress {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		line-height: 1.4;
+		color: rgba(0, 0, 0, 0.55);
+		margin: 0;
+		word-break: break-all;
+	}
+	.pull-progress.pull-error {
+		color: #a02020;
+	}
+	.save-btn.done {
+		background: var(--block-mint);
+		color: var(--c-ink);
+		border-color: var(--c-ink);
+	}
+	.save-btn.error {
+		background: var(--block-coral);
+		color: var(--c-ink);
+		border-color: var(--c-ink);
+	}
+	code {
+		font-family: var(--font-mono);
+		font-size: 12px;
+		background: var(--c-hairline);
+		padding: 1px 5px;
+		border-radius: 3px;
 	}
 	.save-btn {
 		height: 40px;
