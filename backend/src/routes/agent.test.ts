@@ -1,19 +1,9 @@
 // Agent route tests. These don't hit a real LLM — they verify the SSE plumbing
 // and graceful-degradation path (no key saved → error event, not a 500).
 import { describe, it, expect } from "bun:test";
-import { createApp } from "../server.ts";
+import { makeTestApp } from "./test-utils.ts";
 
-const TOKEN = "test-agent-token";
-const app = createApp(TOKEN);
-
-function api(path: string, init?: RequestInit) {
-	return app.fetch(
-		new Request(`http://localhost${path}`, {
-			...init,
-			headers: { Authorization: `Bearer ${TOKEN}`, ...(init?.headers ?? {}) }
-		})
-	);
-}
+const { api } = makeTestApp("test-agent-token");
 
 // Read all SSE events from a response body.
 async function collectEvents(res: Response): Promise<{ type: string; [k: string]: unknown }[]> {

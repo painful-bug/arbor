@@ -13,7 +13,7 @@ export interface ProviderDef {
 }
 
 // ponytail: a flat map, not a plugin registry. Add a row to support a provider.
-export const PROVIDERS: Record<string, ProviderDef> = {
+const PROVIDERS: Record<string, ProviderDef> = {
 	anthropic: {
 		label: "Anthropic",
 		api: "anthropic-messages",

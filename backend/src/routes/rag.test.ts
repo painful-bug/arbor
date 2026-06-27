@@ -1,19 +1,9 @@
 // RAG route integration test. Loads a small text and verifies search recalls it.
 // Embedding model downloads on first run (~45 MB) — subsequent runs use MODELS_DIR cache.
 import { describe, it, expect } from "bun:test";
-import { createApp } from "../server.ts";
+import { makeTestApp } from "./test-utils.ts";
 
-const TOKEN = "test-rag-token";
-const app = createApp(TOKEN);
-
-function api(path: string, init?: RequestInit) {
-	return app.fetch(
-		new Request(`http://localhost${path}`, {
-			...init,
-			headers: { Authorization: `Bearer ${TOKEN}`, ...(init?.headers ?? {}) },
-		}),
-	);
-}
+const { api } = makeTestApp("test-rag-token");
 
 const NOTES = `
 # Third Normal Form

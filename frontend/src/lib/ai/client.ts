@@ -122,15 +122,6 @@ export async function runAgent(
 	}
 }
 
-export async function cancelAgent(cardId: string): Promise<void> {
-	const { apiFetch } = await import('$lib/api');
-	try {
-		await apiFetch(`/api/agent/${encodeURIComponent(cardId)}/cancel`, { method: 'POST' });
-	} catch {
-		/* nothing to cancel */
-	}
-}
-
 // Lightweight provider check (key present in keychain, or keyless) via the backend.
 export async function testConnection(provider: Provider): Promise<string | null> {
 	const { apiFetch } = await import('$lib/api');

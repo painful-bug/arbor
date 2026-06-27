@@ -39,7 +39,6 @@ sqlite.exec(`
 `);
 
 export const db = drizzle(sqlite, { schema });
-export { schema };
 
 // Small kv helpers over the meta table for "current" + "order".
 export function metaGet(key: string): string | null {
