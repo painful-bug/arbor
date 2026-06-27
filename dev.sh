@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/frontend"
 
 # Tauri dev mode: starts Vite (beforeDevCommand) then opens the native window.
 # Swift runtime rpath is baked into the binary via src-tauri/.cargo/config.toml.
