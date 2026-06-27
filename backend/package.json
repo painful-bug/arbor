@@ -8,12 +8,11 @@
 		"test": "LOOM_DIR=\"$(mktemp -d)\" bun test"
 	},
 	"dependencies": {
-		"@lancedb/lancedb": "^0.30.0",
 		"@langchain/community": "^1.1.29",
 		"@mariozechner/pi-agent-core": "0.73.1",
 		"@mariozechner/pi-ai": "0.73.1",
 		"@mariozechner/pi-coding-agent": "0.73.1",
-		"@xenova/transformers": "^2.17.2",
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"canvas": "^3.2.3",
 		"d3-dsv": "2",
 		"drizzle-orm": "^0.45.2",

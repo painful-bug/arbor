@@ -7,9 +7,15 @@ import { join } from "node:path";
 export const LOOM_DIR = process.env.LOOM_DIR || join(homedir(), ".loom");
 export const DB_PATH = join(LOOM_DIR, "loom.db");
 export const BLOBS_DIR = join(LOOM_DIR, "blobs");
-export const LANCEDB_DIR = join(LOOM_DIR, "lancedb");
-// Model cache is separate from LOOM_DIR so tests don't re-download on every run.
-export const MODELS_DIR = process.env.LOOM_MODELS_DIR || join(homedir(), ".loom", "models");
+
+// Graphiti knowledge base. Install dir is global (~/.graphiti, created by
+// setup_graphiti.sh); the FalkorDB graph data lives under LOOM_DIR so tests
+// get an isolated store.
+export const GRAPHITI_DIR = process.env.GRAPHITI_INSTALL_DIR || join(homedir(), ".graphiti");
+export const GRAPHITI_MCP_DIR = join(GRAPHITI_DIR, "mcp_server");
+export const GRAPHITI_LAUNCHER = join(GRAPHITI_DIR, "falkor_launcher.py");
+export const GRAPHITI_DATA_DIR = join(LOOM_DIR, "graphiti");
+
 // Written at startup so the sidecar bridge can discover port+token without Rust IPC.
 export const BACKEND_HANDSHAKE_FILE = join(LOOM_DIR, "backend.json");
 

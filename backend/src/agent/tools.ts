@@ -1,5 +1,5 @@
 // Agent tools: web search (Tavily/DDG), scholar search (OpenAlex+arXiv),
-// research plan, and canvas RAG search (in-process via rag/index.ts).
+// research plan, and canvas knowledge base search (in-process via kb/index.ts).
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 
@@ -238,23 +238,20 @@ export function researchPlanTool(): AgentTool<typeof planSchema> {
 	};
 }
 
-// ── Canvas RAG search (in-process) ─────────────────────────────────────────
-// In Phase 3 the agent runs inside the backend, so rag/index.ts search() is called
-// directly — no stdio duplex, no HTTP bridge. Images are [] until Phase 4 adds
-// the vision blob path.
-const ragSchema = Type.Object({
-	query: Type.String({ description: "What to look for in the user's dropped files." })
+// ── Canvas knowledge base search (in-process via Graphiti MCP) ────────────────
+const kbSchema = Type.Object({
+	query: Type.String({ description: "What to search for in this canvas's knowledge base." })
 });
 
-export function ragSearchTool(
+export function knowledgeBaseSearchTool(
 	search: (query: string) => Promise<string[]>
-): AgentTool<typeof ragSchema> {
+): AgentTool<typeof kbSchema> {
 	return {
-		name: "rag_search",
-		label: "rag_search",
+		name: "knowledge_base_search",
+		label: "knowledge_base_search",
 		description:
-			"Search the files the user dropped onto THIS canvas (PDFs, docx, markdown, notes, images). Returns the most relevant text chunks. This is the ONLY way to read the user's uploaded files — call it FIRST whenever they mention 'the pdf', 'the file', 'the document', 'my notes', 'the attachment', or any uploaded material, instead of asking them for a path.",
-		parameters: ragSchema,
+			"Search the entire knowledge base of THIS canvas — any file, chat, or card. Returns relevant facts and entities from the temporal graph. Call this FIRST whenever the user mentions 'the pdf', 'the file', 'the document', 'my notes', 'the attachment', previous conversations, or any uploaded material, instead of asking them for a path.",
+		parameters: kbSchema,
 		async execute(_id, params): Promise<AgentToolResult<{ chunks: string[] }>> {
 			const chunks = await search(params.query);
 			const content =
@@ -263,7 +260,7 @@ export function ragSearchTool(
 					: [
 							{
 								type: "text",
-								text: `No indexed file content matched "${params.query}". The user may not have dropped any files on this canvas yet, or none are relevant to this query.`
+								text: `No knowledge base content matched "${params.query}". The user may not have added files or context to this canvas yet, or the query is too specific.`
 							}
 						];
 			return { content, details: { chunks } };

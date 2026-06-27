@@ -50,7 +50,7 @@ export async function loadText(filename: string, mime: string, bytes: Uint8Array
 		if (text.trim().length > 50) return text; // has real text content
 
 		// 2. No text extracted → scanned PDF. Render pages and OCR via vision LLM.
-		console.log(`[RAG] ${filename}: no text in PDF, falling back to vision OCR`);
+		console.log(`[KB] ${filename}: no text in PDF, falling back to vision OCR`);
 		const pages = await pdfToImages(bytes);
 		if (!pages.length) return "";
 		return ocrPages(pages);
