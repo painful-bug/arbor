@@ -7,15 +7,22 @@
 	// is the canonical edit path for .docx — no in-app .docx writer).
 	import { tick } from 'svelte';
 	import { slide } from 'svelte/transition';
-	import { flow, setFilePreview, type FileData } from './store.svelte';
+	import { flow, setFilePreview, setCardText, type FileData, type TextData } from './store.svelte';
 	import { getFileBlob, canUseFs, readFile, writeFile, openPath } from '$lib/files';
 	import { renderMarkdown } from '$lib/markdown';
 
 	let { fileId, onclose }: { fileId: string; onclose: () => void } = $props();
 
 	const node = $derived(flow.nodes.find((n) => n.id === fileId));
-	const file = $derived(node?.data as FileData | undefined);
-	const blob = $derived(getFileBlob(fileId));
+	const isText = $derived(node?.type === 'text');
+	const textData = $derived(isText ? (node?.data as TextData) : undefined);
+	const file = $derived(isText ? undefined : (node?.data as FileData | undefined));
+	const blob = $derived(isText ? undefined : getFileBlob(fileId));
+	const panelTitle = $derived(
+		isText
+			? (textData?.text?.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'Note')
+			: (file?.filename ?? 'File')
+	);
 
 	let width = $state(Math.min(720, Math.round(window.innerWidth * 0.5)));
 	let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -195,23 +202,34 @@
 <aside class="panel" style="width: {width}px" transition:slide={{ axis: 'x', duration: 220 }}>
 	<div class="grip" onpointerdown={startResize} role="separator" aria-label="Resize" tabindex="-1"></div>
 	<header>
-		<span class="title" title={file?.filename}>{file?.filename ?? 'File'}</span>
+		<span class="title" title={panelTitle}>{panelTitle}</span>
 		<div class="actions">
-			{#if editable && file?.kind !== 'docx'}
-				<button onclick={save} class="save">
-					{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Save (desktop)' : 'Save'}
-				</button>
+			{#if !isText}
+				{#if editable && file?.kind !== 'docx'}
+					<button onclick={save} class="save">
+						{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Save (desktop)' : 'Save'}
+					</button>
+				{/if}
+				{#if file?.kind === 'pdf' && highlights.length}
+					<button onclick={clearHighlights}>Clear marks</button>
+				{/if}
+				<button onclick={openInOs} disabled={!file?.path || !canUseFs()} title={file?.path ? 'Open in default app' : 'Desktop only'}>Open file ↗</button>
 			{/if}
-			{#if file?.kind === 'pdf' && highlights.length}
-				<button onclick={clearHighlights}>Clear marks</button>
-			{/if}
-			<button onclick={openInOs} disabled={!file?.path || !canUseFs()} title={file?.path ? 'Open in default app' : 'Desktop only'}>Open file ↗</button>
 			<button onclick={onclose} aria-label="Close">✕</button>
 		</div>
 	</header>
 
-	{#if !blob && file?.kind !== 'markdown'}
-		<div class="empty">File bytes not loaded — re-drop “{file?.filename}” to view. (Bytes aren’t persisted across reloads.)</div>
+	{#if isText}
+		<div class="text-editor-hint">Markdown — renders live on the card</div>
+		<textarea
+			class="text-editor"
+			value={textData?.text ?? ''}
+			oninput={(e) => setCardText(fileId, (e.target as HTMLTextAreaElement).value)}
+			placeholder="Write your note in markdown…"
+			spellcheck="false"
+		></textarea>
+	{:else if !blob && file?.kind !== 'markdown'}
+		<div class="empty">File bytes not loaded — re-drop "{file?.filename}" to view. (Bytes aren't persisted across reloads.)</div>
 	{:else if file?.kind === 'pdf'}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="pages" bind:this={pagesEl} onmouseup={onPdfMouseUp}>
@@ -231,7 +249,7 @@
 			<button onclick={() => exec('bold')}><b>B</b></button>
 			<button onclick={() => exec('italic')}><i>I</i></button>
 			<button onclick={() => exec('underline')}><u>U</u></button>
-			{#if file?.kind === 'docx'}<span class="note">docx — edits in-app only; use “Open file” to edit on disk</span>{/if}
+			{#if file?.kind === 'docx'}<span class="note">docx — edits in-app only; use "Open file" to edit on disk</span>{/if}
 		</div>
 		<div class="editor" bind:this={editor} contenteditable="true"></div>
 	{:else if file?.kind === 'image'}
@@ -239,7 +257,7 @@
 			{#if blob}<img src={URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }))} alt={file.filename} />{/if}
 		</div>
 	{:else}
-		<div class="empty">No preview for this file type. Use “Open file”.</div>
+		<div class="empty">No preview for this file type. Use "Open file".</div>
 	{/if}
 </aside>
 
@@ -398,5 +416,29 @@
 		padding: var(--s-xl);
 		font-size: 13px;
 		color: rgba(0, 0, 0, 0.5);
+	}
+	.text-editor-hint {
+		padding: 4px var(--s-md);
+		font-size: 11px;
+		color: rgba(0, 0, 0, 0.4);
+		border-bottom: 1px solid var(--c-hairline);
+		flex: none;
+	}
+	.text-editor {
+		flex: 1;
+		width: 100%;
+		border: none;
+		outline: none;
+		resize: none;
+		padding: var(--s-lg) var(--s-xl);
+		font-family: var(--font-mono);
+		font-size: 13px;
+		line-height: 1.6;
+		background: transparent;
+		color: var(--c-ink);
+		box-sizing: border-box;
+	}
+	.text-editor::placeholder {
+		color: rgba(0, 0, 0, 0.3);
 	}
 </style>

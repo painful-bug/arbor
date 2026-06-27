@@ -87,6 +87,7 @@
 	onclick={onClick}
 	ondblclick={onDblClick}
 	oncontextmenu={onContextMenu}
+	onmousedown={(e) => { if ((e.target as HTMLElement).closest('.nodrag')) e.stopPropagation(); }}
 	role="button"
 	tabindex="0"
 	onkeydown={(e) => e.key === 'Enter' && (flow.selected = id)}
@@ -174,7 +175,10 @@
 		box-shadow: 0 0 0 2px var(--c-ink);
 	}
 	/* nodrag elements: let the user select text (to branch) instead of dragging the node */
+	/* -webkit- prefix needed: base.css sets -webkit-user-select:none on .svelte-flow__node,
+	   no autoprefixer in this project, so unprefixed override alone doesn't win in WKWebView */
 	.nodrag {
+		-webkit-user-select: text;
 		user-select: text;
 		cursor: text;
 	}
