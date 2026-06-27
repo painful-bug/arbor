@@ -30,8 +30,15 @@ export interface CardData {
 // Last turn helper — the one being streamed / replied to.
 export const lastTurn = (d: CardData): Turn => d.turns[d.turns.length - 1];
 
-const BLOCKS = ['lime', 'lilac', 'cream', 'pink', 'mint', 'coral'];
+export const BLOCKS = ['lime', 'lilac', 'cream', 'pink', 'mint', 'coral'];
 let blockIdx = 0;
+
+// ── Tool state (shared by toolbar + canvas) ──────────────────────────────────
+export type Tool = 'hand' | 'text' | 'duplicate' | 'connect' | 'color';
+export const tool = $state<{ active: Tool; connectFrom: string | null }>({
+	active: 'hand',
+	connectFrom: null
+});
 let idCounter = 0;
 const nextId = () => `n${++idCounter}`;
 
@@ -450,6 +457,74 @@ export function setFilePreview(id: string, preview: string): void {
 	flow.nodes = flow.nodes.map((n) =>
 		n.id === id ? { ...n, data: { ...n.data, preview } } : n
 	);
+}
+
+// ── Text card (user markdown note) ───────────────────────────────────────────
+export interface TextData {
+	text: string;
+	block: string;
+	[key: string]: unknown;
+}
+
+export function addTextCard(position: XYPosition, text = ''): string {
+	const id = nextId();
+	const block = BLOCKS[blockIdx++ % BLOCKS.length];
+	const data: TextData = { text, block };
+	flow.nodes = [...flow.nodes, { id, type: 'text', position, data, width: 320 }];
+	return id;
+}
+
+export function setCardText(id: string, text: string): void {
+	flow.nodes = flow.nodes.map((n) =>
+		n.id === id ? { ...n, data: { ...n.data, text } } : n
+	);
+}
+
+export function setCardBlock(id: string, block: string): void {
+	flow.nodes = flow.nodes.map((n) =>
+		n.id === id ? { ...n, data: { ...n.data, block } } : n
+	);
+}
+
+export function cycleCardBlock(id: string): void {
+	const n = flow.nodes.find((node) => node.id === id);
+	if (!n) return;
+	const cur = (n.data as { block?: string }).block ?? 'lime';
+	const next = BLOCKS[(BLOCKS.indexOf(cur) + 1) % BLOCKS.length];
+	setCardBlock(id, next);
+}
+
+export function duplicateNode(id: string): string {
+	const src = flow.nodes.find((n) => n.id === id);
+	if (!src) return '';
+	const newId = nextId();
+	const data = JSON.parse(JSON.stringify(src.data)) as Record<string, unknown>;
+	if ('streaming' in data) data.streaming = false;
+	const srcW = (src as Node & { measured?: { width?: number } }).measured?.width ?? src.width ?? 400;
+	// Place beside original — don't spread src to avoid copying SvelteFlow internals
+	const node: Node = {
+		id: newId,
+		type: src.type ?? 'card',
+		position: { x: src.position.x + srcW + 40, y: src.position.y },
+		data,
+		width: src.width
+	};
+	if (src.height != null) node.height = src.height;
+	flow.nodes = [...flow.nodes, node];
+	return newId;
+}
+
+export function addManualEdge(
+	source: string,
+	target: string,
+	sourceHandle: string,
+	targetHandle: string
+): void {
+	const id = `e-${source}-${target}-${Date.now()}`;
+	flow.edges = [
+		...flow.edges,
+		{ id, source, target, sourceHandle, targetHandle, type: 'bezier' }
+	];
 }
 
 // Append a streamed agent event (tool call / reasoning) to the active turn's timeline.

@@ -5,18 +5,25 @@
 	import CardNode from './CardNode.svelte';
 	import FileCard from './FileCard.svelte';
 	import WebCard from './WebCard.svelte';
+	import UserTextCard from './UserTextCard.svelte';
+	import TextView from './TextView.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
 	import PromptBubble from './PromptBubble.svelte';
 	import CardExpand from './CardExpand.svelte';
 	import CardChatPanel from './CardChatPanel.svelte';
 	import {
 		flow,
+		tool,
 		ui,
 		addCard,
 		addFileCard,
 		addWebCard,
+		addTextCard,
 		setFileStatus,
 		setFilePreview,
+		cycleCardBlock,
+		duplicateNode,
+		addManualEdge,
 		runModel,
 		continueCard,
 		saveCanvas,
@@ -45,8 +52,8 @@
 		};
 	}
 
-	const { screenToFlowPosition } = useSvelteFlow();
-	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard };
+	const { screenToFlowPosition, fitView } = useSvelteFlow();
+	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard };
 
 	let bubble = $state<{
 		x: number;
@@ -59,6 +66,10 @@
 		deep?: boolean;
 	} | null>(null);
 
+	function doFitView() {
+		requestAnimationFrame(() => fitView({ duration: 300, padding: 0.1 }));
+	}
+
 	function startDeepResearch() {
 		const x = window.innerWidth / 2;
 		const y = 140;
@@ -66,12 +77,32 @@
 	}
 
 	let expandId = $state<string | null>(null);
+	let viewTextId = $state<string | null>(null);
 	let lastBranchAt = 0;
+
+	// Pending branch: set when user selects text; confirmed on button click or Enter.
+	let pendingBranch = $state<{
+		x: number; y: number;          // button position (fixed)
+		selCx: number; selCy: number;  // selection center for bubble placement
+		parentId: string;
+		quote: string;
+		overModal: boolean;
+	} | null>(null);
+	let branchHiding = $state(false);
+
+	// Animate button out via CSS, then remove from DOM after transition completes.
+	function dismissBranch() {
+		if (!pendingBranch || branchHiding) return;
+		branchHiding = true;
+		setTimeout(() => { pendingBranch = null; branchHiding = false; }, 180);
+	}
 
 	// Chat panel open state lifted here so the flex layout can include it.
 	let chatOpen = $state(false);
 
 	function onDblClick(e: MouseEvent) {
+		// Only spawn prompt bubble in hand mode.
+		if (tool.active !== 'hand') return;
 		const target = e.target as HTMLElement;
 		if (!target.classList.contains('svelte-flow__pane')) return;
 		bubble = {
@@ -81,12 +112,51 @@
 		};
 	}
 
+	// Pane click: text tool places a note card.
+	function onPaneClick({ event }: { event: MouseEvent }) {
+		if (tool.active !== 'text') return;
+		const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+		const id = addTextCard(pos);
+		flow.selected = id;
+		// Open editor immediately; revert to hand tool.
+		window.dispatchEvent(new CustomEvent('loom:openfile', { detail: { fileId: id } }));
+		tool.active = 'hand';
+	}
+
+	// Node click: duplicate / color / connect tool dispatch.
+	function onNodeClick(node: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }) {
+		if (tool.active === 'duplicate') {
+			const newId = duplicateNode(node.id);
+			if (newId) flow.selected = newId;
+		} else if (tool.active === 'color') {
+			cycleCardBlock(node.id);
+		} else if (tool.active === 'connect') {
+			if (!tool.connectFrom) {
+				tool.connectFrom = node.id;
+			} else if (tool.connectFrom !== node.id) {
+				// Compute best handles using existing helpers.
+				const src = flow.nodes.find((n) => n.id === tool.connectFrom);
+				const tgt = flow.nodes.find((n) => n.id === node.id);
+				if (src && tgt) {
+					const sc = nodeCenter(src);
+					const tc = nodeCenter(tgt);
+					addManualEdge(tool.connectFrom, node.id, bestSide(sc, tc) + '-s', bestSide(tc, sc) + '-t');
+				}
+				tool.connectFrom = null;
+			}
+		}
+	}
+
+	function onViewTextEvent(e: Event) {
+		viewTextId = (e as CustomEvent).detail.cardId;
+	}
+
 	function onBranchEvent(e: Event) {
 		lastBranchAt = Date.now();
 		const { x, y, parentId, quote, overModal } = (e as CustomEvent).detail;
-		const parent = flow.nodes.find((n) => n.id === parentId);
+		const parent = flow.nodes.find((n) => n.id === parentId) as (typeof flow.nodes[0] & { measured?: { width?: number } }) | undefined;
 		const pos = parent
-			? { x: parent.position.x + 60, y: parent.position.y + 260 }
+			? { x: parent.position.x + (parent.measured?.width ?? parent.width ?? 400) + 60, y: parent.position.y }
 			: screenToFlowPosition({ x, y });
 		bubble = { x, y, flow: pos, parentId, quote, overModal };
 	}
@@ -104,16 +174,26 @@
 		const rect = sel.getRangeAt(0).getBoundingClientRect();
 		const cx = rect.width ? rect.left + rect.width / 2 : e.clientX;
 		const cy = rect.height ? rect.top + rect.height / 2 : e.clientY;
+		// Button sits just above the selection midpoint.
+		const bx = Math.max(60, Math.min(window.innerWidth - 60, cx));
+		const by = Math.max(40, cy - 52);
+		pendingBranch = { x: bx, y: by, selCx: cx, selCy: cy, parentId, quote: text, overModal };
+	}
+
+	function confirmBranch() {
+		if (!pendingBranch) return;
+		const { selCx, selCy, parentId, quote, overModal } = pendingBranch;
+		pendingBranch = null;
 		const radius = 100 + Math.random() * 60;
 		const angle = Math.random() * 2 * Math.PI;
 		const bw = 180;
-		const x = Math.max(bw, Math.min(window.innerWidth - bw, cx + Math.cos(angle) * radius));
-		const y = Math.max(50, Math.min(window.innerHeight - 50, cy + Math.sin(angle) * radius));
-		onBranchEvent(
-			new CustomEvent('loom:branch', {
-				detail: { x, y, parentId, quote: text, overModal }
-			})
-		);
+		const x = Math.max(bw, Math.min(window.innerWidth - bw, selCx + Math.cos(angle) * radius));
+		const y = Math.max(50, Math.min(window.innerHeight - 50, selCy + Math.sin(angle) * radius));
+		onBranchEvent(new CustomEvent('loom:branch', { detail: { x, y, parentId, quote, overModal } }));
+	}
+
+	function onSelectionChange() {
+		if (pendingBranch && !branchHiding && !window.getSelection()?.toString().trim()) dismissBranch();
 	}
 
 	function onContinueEvent(e: Event) {
@@ -123,6 +203,7 @@
 
 	function onExpandEvent(e: Event) {
 		if (Date.now() - lastBranchAt < 400) return;
+		dismissBranch();
 		expandId = (e as CustomEvent).detail.cardId;
 	}
 
@@ -186,7 +267,7 @@
 		flow.selected = addWebCard(pos, url);
 	}
 
-	// Keyboard: Escape closes file preview; Cmd/Ctrl+Z undoes; Cmd/Ctrl+Shift+Z redoes.
+	// Keyboard: tool hotkeys, Escape, Cmd/Ctrl+Z undo/redo.
 	function onKeydown(e: KeyboardEvent) {
 		const tag = (e.target as HTMLElement)?.tagName;
 		const inInput =
@@ -194,11 +275,33 @@
 			tag === 'TEXTAREA' ||
 			(e.target as HTMLElement)?.isContentEditable;
 
-		if (e.key === 'Escape' && !inInput && openFileId) {
-			openFileId = null;
-			e.preventDefault();
-			return;
+		if (!inInput) {
+			if (e.key === 'Enter' && pendingBranch) { e.preventDefault(); confirmBranch(); return; }
+
+			// Escape: close panels/modals in priority order; last resort → reset to hand.
+			if (e.key === 'Escape') {
+				if (pendingBranch) { dismissBranch(); e.preventDefault(); return; }
+				if (openFileId) { openFileId = null; e.preventDefault(); return; }
+				if (viewTextId) { viewTextId = null; e.preventDefault(); return; }
+				if (expandId) { expandId = null; e.preventDefault(); return; }
+				if (tool.active !== 'hand' || tool.connectFrom) {
+					tool.active = 'hand';
+					tool.connectFrom = null;
+					e.preventDefault();
+					return;
+				}
+			}
+			// Tool hotkeys (no modifier).
+			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+				if (e.key === 'h' || e.key === 'H') { tool.active = 'hand'; tool.connectFrom = null; e.preventDefault(); }
+				else if (e.key === 't' || e.key === 'T') { tool.active = 'text'; e.preventDefault(); }
+				else if (e.key === 'd' || e.key === 'D') { tool.active = 'duplicate'; e.preventDefault(); }
+				else if (e.key === 'c' || e.key === 'C') { tool.active = 'connect'; e.preventDefault(); }
+				else if (e.key === 'u' || e.key === 'U') { undo(); e.preventDefault(); }
+				else if (e.key === 'f' || e.key === 'F') { doFitView(); e.preventDefault(); }
+			}
 		}
+
 		if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
 			e.preventDefault();
 			if (e.shiftKey) redo();
@@ -222,10 +325,12 @@
 		window.addEventListener('loom:branch', onBranchEvent);
 		window.addEventListener('loom:continue', onContinueEvent);
 		window.addEventListener('loom:expand', onExpandEvent);
+		window.addEventListener('loom:viewtext', onViewTextEvent);
 		window.addEventListener('loom:weburl', onWebUrlEvent);
 		window.addEventListener('loom:openfile', onOpenFileEvent);
 		window.addEventListener('keydown', onKeydown);
 		document.addEventListener('mouseup', onDocSelect);
+		document.addEventListener('selectionchange', onSelectionChange);
 		document.addEventListener('paste', onPaste);
 
 		let tauriUnlisten: (() => void) | null = null;
@@ -266,10 +371,12 @@
 			window.removeEventListener('loom:branch', onBranchEvent);
 			window.removeEventListener('loom:continue', onContinueEvent);
 			window.removeEventListener('loom:expand', onExpandEvent);
+			window.removeEventListener('loom:viewtext', onViewTextEvent);
 			window.removeEventListener('loom:weburl', onWebUrlEvent);
 			window.removeEventListener('loom:openfile', onOpenFileEvent);
 			window.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('mouseup', onDocSelect);
+			document.removeEventListener('selectionchange', onSelectionChange);
 			document.removeEventListener('paste', onPaste);
 			tauriUnlisten?.();
 		};
@@ -360,6 +467,9 @@
 				<!-- capture phase: Svelte Flow's d3-zoom stops dblclick propagation in the bubble phase -->
 				<div
 					class="wrap"
+					class:cursor-text={tool.active === 'text'}
+					class:cursor-copy={tool.active === 'duplicate'}
+					class:cursor-crosshair={tool.active === 'connect' || tool.active === 'color'}
 					ondblclickcapture={onDblClick}
 					ondrop={onDrop}
 					ondragover={(e) => e.preventDefault()}
@@ -373,10 +483,23 @@
 						zoomOnDoubleClick={false}
 						proOptions={{ hideAttribution: true }}
 						onnodedragstop={onNodeDragStop}
+						onpaneclick={onPaneClick}
+						onnodeclick={({ node }) => onNodeClick(node)}
 					>
 						<Background bgColor="var(--c-canvas)" patternColor="#ececec" gap={28} />
 						<Controls showLock={false} />
 					</SvelteFlow>
+
+					{#if pendingBranch}
+						<button
+							class="branch-trigger glass"
+							class:is-hiding={branchHiding}
+							style="left: {pendingBranch.x}px; top: {pendingBranch.y}px; z-index: {pendingBranch.overModal ? 200 : 60}"
+							in:scale={reducedMotion() ? { duration: 0 } : { duration: 420, start: 0.5, opacity: 0, easing: backOut }}
+							onmousedown={(e) => e.preventDefault()}
+							onclick={confirmBranch}
+						>Follow Up ↵</button>
+					{/if}
 
 					{#if bubble}
 						<PromptBubble
@@ -393,7 +516,11 @@
 						<div class="hint">Double-click anywhere to start</div>
 					{/if}
 
-					<CanvasToolbar onDeepResearch={startDeepResearch} />
+					{#if tool.active === 'connect' && tool.connectFrom}
+						<div class="connect-hint">Click another card to connect · Esc to cancel</div>
+					{/if}
+
+					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} />
 				</div>
 
 				{#if openFileId}
@@ -406,6 +533,10 @@
 
 			{#if expandId}
 				<CardExpand cardId={expandId} onclose={() => (expandId = null)} />
+			{/if}
+
+			{#if viewTextId}
+				<TextView cardId={viewTextId} onclose={() => (viewTextId = null)} />
 			{/if}
 		</div>
 	{/if}
@@ -451,4 +582,45 @@
 		letter-spacing: 0.5px;
 		color: rgba(0, 0, 0, 0.32);
 	}
+	.connect-hint {
+		position: absolute;
+		bottom: 20px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 40;
+		background: var(--c-ink);
+		color: var(--c-on-primary, #fff);
+		font-size: 12px;
+		padding: 6px 14px;
+		border-radius: var(--r-pill, 999px);
+		pointer-events: none;
+		box-shadow: var(--elev-2);
+	}
+	.branch-trigger {
+		position: fixed;
+		transform: translate(-50%, -50%);
+		padding: 8px 18px;
+		border-radius: var(--r-pill);
+		border: none;
+		font-size: 14px;
+		font-family: var(--font-sans);
+		font-weight: 500;
+		color: var(--c-ink);
+		cursor: pointer;
+		white-space: nowrap;
+		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
+	}
+	.branch-trigger:active {
+		transform: translate(-50%, -50%) scale(0.93);
+	}
+	.branch-trigger.is-hiding {
+		transform: translate(-50%, -50%) scale(0.82);
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	/* Cursor overrides per tool */
+	.wrap.cursor-text :global(.svelte-flow__pane) { cursor: text; }
+	.wrap.cursor-copy :global(.svelte-flow__pane) { cursor: copy; }
+	.wrap.cursor-crosshair :global(.svelte-flow__pane) { cursor: crosshair; }
 </style>
