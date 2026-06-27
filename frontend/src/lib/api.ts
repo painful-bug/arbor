@@ -21,7 +21,7 @@ async function connect(): Promise<{ base: string; token: string }> {
 }
 
 // Resolve (and memoize) the backend base URL + token.
-export function backend(): Promise<{ base: string; token: string }> {
+function backend(): Promise<{ base: string; token: string }> {
 	return (cached ??= connect());
 }
 

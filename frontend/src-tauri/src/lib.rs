@@ -1,6 +1,6 @@
 mod backend;
 
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 // Open a file or URL with the OS default handler.
 #[tauri::command]

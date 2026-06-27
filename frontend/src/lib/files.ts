@@ -19,7 +19,7 @@ export function getFileBlob(id: string): { bytes: ArrayBuffer; mime: string; nam
 	return blobs.get(id);
 }
 
-export function hasFileBlob(id: string): boolean {
+function hasFileBlob(id: string): boolean {
 	return blobs.has(id);
 }
 

@@ -45,7 +45,7 @@ export const flow = $state<{ nodes: Node[]; edges: Edge[]; selected: string | nu
 // All canvases/settings live in the backend (SQLite); we reach it over HTTP.
 // Writes are fire-and-forget (the in-memory `flow` is the source of truth during a
 // session; persistence is backup), matching the old fire-and-forget Tauri commands.
-export interface CanvasMeta {
+interface CanvasMeta {
 	id: string;
 	name: string;
 	createdAt: number;
@@ -79,7 +79,7 @@ function writeIndex(current: string, list: CanvasMeta[]): void {
 // In-memory doc cache: populated on load/write so Library.svelte can show previews sync.
 const _docCache = new Map<string, CanvasDoc>();
 
-export async function loadDoc(id: string): Promise<CanvasDoc | null> {
+async function loadDoc(id: string): Promise<CanvasDoc | null> {
 	try {
 		const doc = await apiJson<CanvasDoc>(`/api/canvases/${id}`);
 		_docCache.set(id, doc);
@@ -282,7 +282,7 @@ export const DEFAULT_MODELS = Object.fromEntries(
 
 const VALID_PROVIDERS = new Set(PROVIDERS.map((p) => p.id));
 
-export interface Settings {
+interface Settings {
 	provider: Provider;
 	models: Record<Provider, string>;
 	workflow: string;
@@ -368,7 +368,7 @@ export function addCard(
 }
 
 // Write the streamed answer into the card's last (active) turn.
-export function setTurnAnswer(id: string, answer: string, streaming: boolean): void {
+function setTurnAnswer(id: string, answer: string, streaming: boolean): void {
 	flow.nodes = flow.nodes.map((n) => {
 		if (n.id !== id) return n;
 		const turns = [...(n.data.turns as Turn[])];
@@ -388,7 +388,7 @@ export function continueCard(id: string, prompt: string): void {
 }
 
 // Web embed card: an interactive iframe of a URL pasted/dropped/clicked onto the canvas.
-export interface WebData {
+interface WebData {
 	url: string;
 	title?: string;
 	block: string;
@@ -580,7 +580,7 @@ function pushTurns(messages: ChatMessage[], d: CardData): void {
 	}
 }
 
-export function canvasDigest(excludeId: string): string {
+function canvasDigest(excludeId: string): string {
 	const cards = flow.nodes
 		.filter((n) => n.type === 'card' && n.id !== excludeId)
 		.map((n) => {
@@ -606,7 +606,7 @@ export function digestFrom(
 	return `## Other threads on this canvas\nThe user may reference these. Use them as context when relevant.\n${lines.join('\n')}`;
 }
 
-export function ancestry(id: string): string[] {
+function ancestry(id: string): string[] {
 	const parentOf = new Map<string, string>();
 	for (const e of flow.edges) parentOf.set(e.target, e.source);
 	const chain: string[] = [];
