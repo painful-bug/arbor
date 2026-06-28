@@ -9,9 +9,10 @@ import {
 	webSearchTool,
 	scholarSearchTool,
 	researchPlanTool,
-	knowledgeBaseSearchTool
+	knowledgeBaseSearchTool,
+	knowledgeBaseOverviewTool
 } from "./tools.ts";
-import { search as kbSearch, addChat } from "../kb/index.ts";
+import { search as kbSearch, addChat, contentsOf } from "../kb/index.ts";
 
 const SERVICE = "app.loom.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
@@ -108,8 +109,9 @@ export async function handlePrompt(
 			tools.push(webSearchTool(req.websearchBackend ?? "duckduckgo", tavilyKey));
 		}
 		tools.push(scholarSearchTool(), researchPlanTool());
-		// KB search is in-process via Graphiti MCP client.
+		// KB search + overview are in-process via Graphiti MCP client.
 		tools.push(knowledgeBaseSearchTool((query) => kbSearch(canvas, query)));
+		tools.push(knowledgeBaseOverviewTool(() => contentsOf(canvas)));
 
 		const agent = new Agent({
 			streamFn: streamSimple,

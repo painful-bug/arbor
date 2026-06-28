@@ -139,6 +139,24 @@ export async function testConnection(provider: Provider): Promise<string | null>
 
 // ── Per-canvas knowledge base ────────────────────────────────────────────────
 
+// Clear all KB content for a canvas.
+export async function kbClear(canvas: string): Promise<void> {
+	const { apiFetch } = await import('$lib/api');
+	await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/files`, { method: 'DELETE' });
+}
+
+// Fetch a sampled snapshot of KB nodes and facts (for monitoring).
+export async function kbContents(canvas: string): Promise<{ nodes: string[]; facts: string[] }> {
+	const { apiFetch } = await import('$lib/api');
+	try {
+		const res = await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/contents`);
+		if (!res.ok) return { nodes: [], facts: [] };
+		return res.json() as Promise<{ nodes: string[]; facts: string[] }>;
+	} catch {
+		return { nodes: [], facts: [] };
+	}
+}
+
 // Index a file in the canvas KB (Graphiti). Works in both Tauri and browser dev.
 export async function kbAdd(
 	canvas: string,

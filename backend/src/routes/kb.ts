@@ -3,7 +3,7 @@
 import { Hono } from "hono";
 import { restartGraphiti, graphitiReady } from "../kb/server-process.ts";
 import { resetClient } from "../kb/mcp-client.ts";
-import { addFile, search, clearCanvas } from "../kb/index.ts";
+import { addFile, search, clearCanvas, contentsOf } from "../kb/index.ts";
 
 export const kbRoutes = new Hono();
 
@@ -41,8 +41,22 @@ kbRoutes.get("/:canvas/search", async (c) => {
 	return c.json({ results });
 });
 
-// Clear all KB content for a canvas (called on canvas delete).
+// Clear all KB content for a canvas (Clear KB button / canvas delete).
 kbRoutes.delete("/:canvas/files", async (c) => {
 	await clearCanvas(c.req.param("canvas"));
+	// Graphiti ingests episodes from an in-memory background queue, so any chunks
+	// queued before this clear would be written to the graph *after* it — making the
+	// KB look like clearing re-ingests data. Restarting the server drains that queue
+	// (unprocessed episodes live only in memory; the cleared graph is already
+	// persisted to FalkorDB). resetClient() drops the now-stale MCP connection.
+	resetClient();
+	await restartGraphiti();
 	return c.json({ ok: true });
+});
+
+// Sample KB contents for a canvas — nodes and facts as text strings.
+kbRoutes.get("/:canvas/contents", async (c) => {
+	const canvas = c.req.param("canvas");
+	const contents = await contentsOf(canvas);
+	return c.json(contents);
 });

@@ -4,11 +4,13 @@
 	let {
 		onDeepResearch,
 		onFit,
-		onUndo
+		onUndo,
+		onKB
 	}: {
 		onDeepResearch: () => void;
 		onFit: () => void;
 		onUndo: () => void;
+		onKB: () => void;
 	} = $props();
 
 	const tools: { id: Tool; label: string; icon: string; key: string; title: string }[] = [
@@ -58,6 +60,10 @@
 		<button class="action" onclick={onDeepResearch} title="Deep Research -- plan and search real papers">
 			<span class="icon">🔬</span>
 			<span class="label">Research</span>
+		</button>
+		<button class="action" onclick={onKB} title="Knowledge Base -- view and clear indexed content">
+			<span class="icon">⬡</span>
+			<span class="label">KB</span>
 		</button>
 	</div>
 </div>

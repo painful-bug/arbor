@@ -5,7 +5,7 @@ import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { ocrImage, pdfToImages } from "./vision.ts";
+import { ocrImage, pdfToImages, pdfPageCount } from "./vision.ts";
 
 function tmpPath(ext: string): string {
 	return join(tmpdir(), `loom_${randomBytes(8).toString("hex")}${ext}`);
@@ -47,12 +47,21 @@ export async function loadText(filename: string, mime: string, bytes: Uint8Array
 			return docsToText(docs);
 		});
 
-		if (text.trim().length > 50) return text; // has real text content
+		// A real text PDF has substantial text per page. Scanned notes carry a thin
+		// text layer — often just a cover-page watermark or social links — which must
+		// NOT be mistaken for content (it builds a graph of junk and suppresses OCR).
+		// pdf-parse only counts pages that HAVE a text layer, so compare against the
+		// true page count from mupdf instead.
+		// ponytail: per-page selective OCR (keep text pages, OCR image pages) is the
+		// upgrade if mixed text/scan PDFs ever matter; full-OCR is fine for uniform scans.
+		const pageCount = await pdfPageCount(bytes).catch(() => 0);
+		const perPage = pageCount ? text.length / pageCount : text.length;
+		if (perPage >= 100) return text; // genuine text PDF
 
-		// 2. No text extracted → scanned PDF. Render pages and OCR via vision LLM.
-		console.log(`[KB] ${filename}: no text in PDF, falling back to vision OCR`);
+		// 2. Thin text layer → scanned PDF. Render pages and OCR.
+		console.log(`[KB] ${filename}: thin text layer (${Math.round(perPage)} chars/page over ${pageCount} pages) — using vision OCR`);
 		const pages = await pdfToImages(bytes);
-		if (!pages.length) return "";
+		if (!pages.length) return text;
 		return ocrPages(pages);
 	}
 
