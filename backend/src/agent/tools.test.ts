@@ -18,7 +18,7 @@ describe("knowledgeBaseSearchTool", () => {
 	it("reports when nothing is indexed instead of inventing a path", async () => {
 		const tool = knowledgeBaseSearchTool(async () => []);
 		const res = await tool.execute("id", { query: "missing" });
-		expect(res.content[0].text).toContain("No knowledge base content matched");
+		expect(res.content[0].text).toContain("No results for");
 		expect(res.details.chunks).toEqual([]);
 	});
 });

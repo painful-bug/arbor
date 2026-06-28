@@ -1,8 +1,60 @@
-// Vision-based OCR: tries tesseract (local, fast, deterministic) first, then
-// falls back to cloud vision LLMs. Keys come from the same Bun.secrets store.
+// Vision-based OCR: Apple Vision (macOS) → tesseract → cloud vision LLMs.
+// Keys come from the same Bun.secrets store.
+
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { existsSync } from "node:fs";
 
 const SERVICE = "app.loom.canvas";
 const getKey = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
+
+// ── Apple Vision OCR (macOS only, best quality) ──────────────────────────────
+const LOOM_OCR_BIN = join(homedir(), ".loom", "bin", "loom-ocr");
+const LOOM_OCR_SRC = join(__dirname, "..", "..", "native", "ocr.swift");
+let visionBin: string | null | undefined = undefined;
+
+async function findVisionOCR(): Promise<string | null> {
+	if (visionBin !== undefined) return visionBin;
+	if (process.platform !== "darwin") { visionBin = null; return null; }
+	if (existsSync(LOOM_OCR_BIN)) { visionBin = LOOM_OCR_BIN; return LOOM_OCR_BIN; }
+	// ponytail: compile on demand if swiftc + source exist and binary is missing
+	if (existsSync(LOOM_OCR_SRC)) {
+		try {
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(join(homedir(), ".loom", "bin"), { recursive: true });
+			const p = Bun.spawn(["swiftc", "-O", LOOM_OCR_SRC, "-o", LOOM_OCR_BIN], {
+				stdout: "pipe", stderr: "pipe",
+			});
+			await p.exited;
+			if (p.exitCode === 0 && existsSync(LOOM_OCR_BIN)) {
+				console.log("[KB] Compiled loom-ocr (Apple Vision OCR) on demand.");
+				visionBin = LOOM_OCR_BIN;
+				return LOOM_OCR_BIN;
+			}
+		} catch { /* swiftc not available */ }
+	}
+	visionBin = null;
+	return null;
+}
+
+async function ocrAppleVision(pngBytes: Uint8Array): Promise<string> {
+	const bin = await findVisionOCR();
+	if (!bin) return "";
+	const { writeFile, unlink } = await import("node:fs/promises");
+	const { tmpdir } = await import("node:os");
+	const { join: pathJoin } = await import("node:path");
+	const { randomBytes } = await import("node:crypto");
+	const tmp = pathJoin(tmpdir(), `loom_vision_${randomBytes(8).toString("hex")}.png`);
+	await writeFile(tmp, pngBytes);
+	try {
+		const proc = Bun.spawn([bin, tmp], { stdout: "pipe", stderr: "pipe" });
+		const text = await new Response(proc.stdout).text();
+		await proc.exited;
+		return text.trim();
+	} finally {
+		await unlink(tmp).catch(() => {});
+	}
+}
 
 // ── Tesseract OCR ─────────────────────────────────────────────────────────────
 // Cache result of binary probe so we only pay it once per process.
@@ -147,10 +199,13 @@ async function ocrOpenRouter(pngBytes: Uint8Array, apiKey: string): Promise<stri
 	return data.choices[0]?.message?.content ?? "";
 }
 
-// OCR one PNG image. Tries tesseract first (local, deterministic, great for
-// printed text), then falls back to cloud vision LLMs. Returns "" if nothing works.
+// OCR one PNG image. Apple Vision (macOS) → tesseract → cloud LLMs. Returns "" if nothing works.
 export async function ocrImage(pngBytes: Uint8Array): Promise<string> {
-	// 1. Tesseract: fast, offline, excellent for typed/printed text in PDFs.
+	// 1. Apple Vision: best quality on macOS, local, free.
+	const visionText = await ocrAppleVision(pngBytes).catch(() => "");
+	if (visionText.trim().length > 30) return visionText;
+
+	// 2. Tesseract: cross-platform fallback.
 	const tessText = await ocrTesseract(pngBytes).catch(() => "");
 	if (tessText.trim().length > 30) return tessText;
 

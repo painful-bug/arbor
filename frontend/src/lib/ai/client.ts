@@ -145,19 +145,18 @@ export async function kbClear(canvas: string): Promise<void> {
 	await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/files`, { method: 'DELETE' });
 }
 
-// Fetch a sampled snapshot of KB nodes and facts (for monitoring).
-export async function kbContents(canvas: string): Promise<{ nodes: string[]; facts: string[] }> {
+export async function kbContents(canvas: string): Promise<{ sources: string[]; chunks: number }> {
 	const { apiFetch } = await import('$lib/api');
 	try {
 		const res = await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/contents`);
-		if (!res.ok) return { nodes: [], facts: [] };
-		return res.json() as Promise<{ nodes: string[]; facts: string[] }>;
+		if (!res.ok) return { sources: [], chunks: 0 };
+		return res.json() as Promise<{ sources: string[]; chunks: number }>;
 	} catch {
-		return { nodes: [], facts: [] };
+		return { sources: [], chunks: 0 };
 	}
 }
 
-// Index a file in the canvas KB (Graphiti). Works in both Tauri and browser dev.
+// Index a file in the canvas KB. Works in both Tauri and browser dev.
 export async function kbAdd(
 	canvas: string,
 	filename: string,
@@ -182,6 +181,7 @@ export async function kbAdd(
 		return data.chunks ?? 0;
 	} catch (err) {
 		if (err instanceof Error && err.message.startsWith('KB index')) throw err;
-		return 0; // network unreachable — fail silently
+		console.warn('[kbAdd] failed:', err);
+		return 0;
 	}
 }
