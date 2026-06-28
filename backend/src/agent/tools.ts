@@ -271,9 +271,30 @@ export function ragSearchTool(
 	};
 }
 
-// ── Canvas card tools (hub session only) ───────────────────────────────────
+// ── Canvas card tools ──────────────────────────────────────────────────────
 // execute() is a no-op confirmation to the LLM; the real mutation happens
 // frontend-side off the tool_start args (args flow via SSE to the store).
+
+const createNoteSchema = Type.Object({
+	title: Type.Optional(Type.String({ description: "Short title for the note." })),
+	content: Type.String({ description: "The COMPLETE markdown content to save in the note." })
+});
+
+export function createNoteTool(): AgentTool<typeof createNoteSchema> {
+	return {
+		name: "create_note",
+		label: "create_note",
+		description:
+			"Create a standalone markdown note card on the canvas. Use for saving drafted prose, summaries, emails, outlines, or any authored content the user wants to keep. Unlike create_card (a Q&A thread), notes are pure editable text with no conversation history.",
+		parameters: createNoteSchema,
+		async execute(_id, params): Promise<AgentToolResult<{ title?: string; content: string }>> {
+			return {
+				content: [{ type: "text", text: `Note "${params.title ?? "Untitled"}" created on the canvas.` }],
+				details: { title: params.title, content: params.content }
+			};
+		}
+	};
+}
 
 const createCardSchema = Type.Object({
 	title: Type.String({ description: "Short title — the question or topic this card captures." }),

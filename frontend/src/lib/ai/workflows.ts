@@ -123,6 +123,19 @@ WORKFLOW — Synthesis & Citation:
 
 const BY_ID = new Map(WORKFLOWS.map((w) => [w.id, w]));
 
+const CANVAS_TOOLS_HINT = `
+
+## Canvas Tools
+You can create content directly on the user's canvas:
+- **create_note**(title?, content): Standalone markdown note — for drafted prose, summaries, emails, outlines, or any authored content the user wants to keep.
+- **create_card**(title, content): Q&A conversation card — for content the user may want to follow up on or discuss further.
+- **update_card**(card, content): Replace an existing card's content by id or title.
+
+**When to create:** Call create_note or create_card when the user asks to save, write, draft, note, or create content — even without the word "card." Examples: "write me a summary" → create_note with the summary; "draft an email to X" → create_note; "research Y and save the findings" → answer in chat, then create_note with findings.
+**When NOT to create:** Don't create cards for ordinary Q&A where the user just wants an inline answer. Only create when there's clear intent to persist content separately.
+**How:** Put the full deliverable in content (markdown); give a short descriptive title. Still narrate a brief confirmation in your normal response.`;
+
 export function workflowSystemPrompt(id: string | undefined): string {
-	return (id && BY_ID.get(id)?.systemPrompt) || WORKFLOWS[0].systemPrompt;
+	const base = (id && BY_ID.get(id)?.systemPrompt) || WORKFLOWS[0].systemPrompt;
+	return base + CANVAS_TOOLS_HINT;
 }
