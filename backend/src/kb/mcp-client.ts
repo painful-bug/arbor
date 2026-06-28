@@ -49,6 +49,11 @@ export async function addMemory(
 	source: "text" | "json" | "message" = "text",
 	sourceDescription = "",
 ): Promise<void> {
+	// NOTE: do NOT pass `uuid` here. Graphiti treats a supplied uuid as an *update*
+	// to an existing episode node — for a new random uuid that node doesn't exist, so
+	// add_episode fails with "node <uuid> not found" and the episode is never written.
+	// Let Graphiti generate the uuid. (The cosmetic "Processing episode None" log is
+	// harmless — `None` is just the unset uuid before generation.)
 	await call("add_memory", {
 		name,
 		episode_body: content,
@@ -91,6 +96,18 @@ export async function searchNodes(groupId: string, query: string, maxNodes = 10)
 // Wipe a canvas's graph (called when a canvas is deleted).
 export async function clearGraph(groupId: string): Promise<void> {
 	await call("clear_graph", { group_ids: [groupId] });
+}
+
+// Sample KB contents for display. Graphiti requires a query string, so we use
+// a handful of broad seeds and deduplicate results for a reasonable snapshot.
+export async function sampleContents(groupId: string): Promise<{ nodes: string[]; facts: string[] }> {
+	const seeds = ["information", "topic", "question", "concept", "definition", "network"];
+	const [nodeArrs, factArrs] = await Promise.all([
+		Promise.all(seeds.map((q) => searchNodes(groupId, q, 20).catch(() => [] as string[]))),
+		Promise.all(seeds.map((q) => searchFacts(groupId, q, 20).catch(() => [] as string[]))),
+	]);
+	const dedup = (arrs: string[][]) => [...new Set(arrs.flat().filter(Boolean))];
+	return { nodes: dedup(nodeArrs).slice(0, 60), facts: dedup(factArrs).slice(0, 60) };
 }
 
 export async function status(): Promise<string> {

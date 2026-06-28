@@ -1,6 +1,6 @@
 // Per-canvas knowledge base: file/chat/card ingestion → Graphiti temporal graph.
 // One Graphiti group_id per canvas (= canvas id). Replaces rag/index.ts.
-import { addMemory, searchFacts, searchNodes, clearGraph } from "./mcp-client.ts";
+import { addMemory, searchFacts, searchNodes, clearGraph, sampleContents } from "./mcp-client.ts";
 import { loadText } from "./loaders.ts";
 
 // ponytail: 2000-char chunks — larger than old RAG (800) because LLM entity extraction
@@ -33,13 +33,20 @@ export async function addFile(
 	console.log(`[KB] addFile ${filename} (${canvas}): ${text.length} chars extracted, first 200: ${text.slice(0, 200).replace(/\n/g, " ")}`);
 	const chunks = splitText(text);
 	// Send chunks in parallel; each becomes an episode in the graph.
+	let failed = 0;
 	await Promise.all(
 		chunks.map((chunk, i) =>
-			addMemory(canvas, `${filename}#${i}`, chunk, "text", filename).catch((err) =>
-				console.error(`[KB] addMemory chunk ${i} of ${filename}:`, err)
-			)
+			addMemory(canvas, `${filename}#${i}`, chunk, "text", filename).catch((err) => {
+				failed++;
+				console.error(`[KB] addMemory chunk ${i} of ${filename}:`, err);
+			})
 		)
 	);
+	// If every chunk failed to queue, the file is NOT indexed — surface that as an
+	// error instead of reporting a phantom success (which made empty KBs look full).
+	if (chunks.length && failed === chunks.length) {
+		throw new Error(`KB indexing failed: all ${chunks.length} chunks of ${filename} were rejected by Graphiti.`);
+	}
 	return chunks.length;
 }
 
@@ -83,4 +90,9 @@ export async function search(canvas: string, query: string, k = 6): Promise<stri
 
 export async function clearCanvas(canvas: string): Promise<void> {
 	await clearGraph(canvas).catch((err) => console.error("[KB] clearCanvas:", err));
+}
+
+export async function contentsOf(canvas: string): Promise<{ nodes: string[]; facts: string[] }> {
+	if (!canvas) return { nodes: [], facts: [] };
+	return sampleContents(canvas).catch(() => ({ nodes: [], facts: [] }));
 }

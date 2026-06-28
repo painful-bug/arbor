@@ -250,7 +250,7 @@ export function knowledgeBaseSearchTool(
 		name: "knowledge_base_search",
 		label: "knowledge_base_search",
 		description:
-			"Search the entire knowledge base of THIS canvas — any file, chat, or card. Returns relevant facts and entities from the temporal graph. Call this FIRST whenever the user mentions 'the pdf', 'the file', 'the document', 'my notes', 'the attachment', previous conversations, or any uploaded material, instead of asking them for a path.",
+			"Search the entire knowledge base of THIS canvas — any file, chat, or card. Returns relevant facts and entities from the temporal graph. Call this FIRST whenever the user mentions 'the pdf', 'the file', 'the document', 'my notes', 'the attachment', previous conversations, or any uploaded material, instead of asking them for a path. IMPORTANT: search for CONTENT topics (e.g. 'OSI model layers', 'TCP/IP protocol'), NOT meta-terms like 'pdf', 'file', or 'document' — the KB stores extracted knowledge, not filenames. For broad questions ('what is this about?'), search for general subject terms. If no results, try rephrasing with different topic keywords.",
 		parameters: kbSchema,
 		async execute(_id, params): Promise<AgentToolResult<{ chunks: string[] }>> {
 			const chunks = await search(params.query);
@@ -260,10 +260,38 @@ export function knowledgeBaseSearchTool(
 					: [
 							{
 								type: "text",
-								text: `No knowledge base content matched "${params.query}". The user may not have added files or context to this canvas yet, or the query is too specific.`
+								text: `No knowledge base content matched "${params.query}". Try searching with different topic keywords — the KB stores extracted facts and entities, not filenames or metadata. Use broader subject terms (e.g. "networking protocols" instead of "pdf").`
 							}
 						];
 			return { content, details: { chunks } };
+		}
+	};
+}
+
+// ── Canvas knowledge base overview (broad "what's in here?" queries) ─────────
+const kbOverviewSchema = Type.Object({});
+
+export function knowledgeBaseOverviewTool(
+	overview: () => Promise<{ nodes: string[]; facts: string[] }>
+): AgentTool<typeof kbOverviewSchema> {
+	return {
+		name: "knowledge_base_overview",
+		label: "knowledge_base_overview",
+		description:
+			"Get a broad overview of EVERYTHING in this canvas's knowledge base — all known entities and facts. Call this when the user asks vague/overview questions like 'what are these about?', 'summarize everything', or 'what's in the knowledge base?'. Use knowledge_base_search instead when you have a specific topic to look up.",
+		parameters: kbOverviewSchema,
+		async execute(_id): Promise<AgentToolResult<{ nodes: string[]; facts: string[] }>> {
+			const { nodes, facts } = await overview();
+			if (!nodes.length && !facts.length) {
+				return {
+					content: [{ type: "text", text: "The knowledge base for this canvas is empty — no files, chats, or cards have been indexed yet." }],
+					details: { nodes: [], facts: [] }
+				};
+			}
+			const parts: string[] = [];
+			if (nodes.length) parts.push("## Entities\n" + nodes.join("\n"));
+			if (facts.length) parts.push("## Facts\n" + facts.join("\n"));
+			return { content: [{ type: "text", text: parts.join("\n\n") }], details: { nodes, facts } };
 		}
 	};
 }
