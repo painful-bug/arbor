@@ -10,9 +10,9 @@ import CardHandles from './CardHandles.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import AgentTimeline from './AgentTimeline.svelte';
 
-	let { id, data }: NodeProps = $props();
+	let { id, data, selected: nativeSelected }: NodeProps = $props();
 	const card = $derived(data as CardData);
-	const selected = $derived(flow.selected === id);
+	const selected = $derived(flow.selected === id || !!nativeSelected);
 	const turn = $derived(lastTurn(card)); // card face shows the latest exchange
 	const answerHtml = $derived(renderMarkdown(turn?.answer ?? ''));
 	const moreTurns = $derived((card.turns?.length ?? 0) - 1); // earlier turns hidden on the face
