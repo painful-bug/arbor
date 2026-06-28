@@ -5,16 +5,19 @@
 		onDeepResearch,
 		onFit,
 		onUndo,
+		onRedo,
 		onKB
 	}: {
 		onDeepResearch: () => void;
 		onFit: () => void;
 		onUndo: () => void;
+		onRedo: () => void;
 		onKB: () => void;
 	} = $props();
 
 	const tools: { id: Tool; label: string; icon: string; key: string; title: string }[] = [
 		{ id: 'hand',      label: 'Hand',      icon: '✋', key: 'H', title: 'Hand tool -- pan canvas (H)' },
+		{ id: 'select',    label: 'Select',    icon: '⬚',  key: 'V', title: 'Select -- click or drag to select cards (V)' },
 		{ id: 'text',      label: 'Text',      icon: 'T',  key: 'T', title: 'Text tool -- click to place a note (T)' },
 		{ id: 'duplicate', label: 'Duplicate', icon: '⧉',  key: 'D', title: 'Duplicate -- click a card to copy it (D)' },
 		{ id: 'connect',   label: 'Connect',   icon: '↗',  key: 'C', title: 'Connect -- click two cards to draw an edge (C)' },
@@ -51,6 +54,11 @@
 			<span class="icon">↩</span>
 			<span class="label">Undo</span>
 			<span class="key">U</span>
+		</button>
+		<button class="action" onclick={onRedo} title="Redo (R)">
+			<span class="icon">↪</span>
+			<span class="label">Redo</span>
+			<span class="key">R</span>
 		</button>
 		<button class="action" onclick={onFit} title="Zoom to fit all cards (F)">
 			<span class="icon">⊡</span>

@@ -7,9 +7,9 @@
 	import { renderMarkdown } from '$lib/markdown';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
-	let { id, data }: NodeProps = $props();
+	let { id, data, selected: nativeSelected }: NodeProps = $props();
 	const card = $derived(data as TextData);
-	const selected = $derived(flow.selected === id);
+	const selected = $derived(flow.selected === id || !!nativeSelected);
 	const html = $derived(renderMarkdown(card.text ?? ''));
 	const isEmpty = $derived(!card.text?.trim());
 
