@@ -358,8 +358,8 @@
 							const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
 							putFileBlob(id, bytes, mime, name);
 							extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
-							await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
-							setFileStatus(id, 'ready');
+							const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
+							setFileStatus(id, chunks > 0 ? 'ready' : 'error');
 						} catch (err) {
 							console.error('tauri file drop read failed', err);
 							setFileStatus(id, 'error');
@@ -426,8 +426,8 @@
 				extractText(buf, kind)
 					.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
 					.catch(() => {});
-				await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
-				setFileStatus(id, 'ready');
+				const chunks = await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
+				setFileStatus(id, chunks > 0 ? 'ready' : 'error');
 			} catch (err) {
 				console.error('kb index failed', err);
 				setFileStatus(id, 'error');
@@ -442,7 +442,7 @@
 
 	// ── KB overlay ───────────────────────────────────────────────────────────────
 	let kbOpen = $state(false);
-	let kbData = $state<{ nodes: string[]; facts: string[] } | null>(null);
+	let kbData = $state<{ sources: string[]; chunks: number } | null>(null);
 	let kbLoading = $state(false);
 	let kbClearing = $state(false);
 	let kbClearConfirm = $state(false);
@@ -461,8 +461,6 @@
 		kbClearing = true;
 		await kbClear(currentCanvasId() || 'default');
 		kbClearConfirm = false;
-		// Re-read after the backend has cleared + drained its queue, so the viewer
-		// reflects the now-empty graph instead of a stale snapshot.
 		kbData = await kbContents(currentCanvasId() || 'default');
 		kbClearing = false;
 	}
@@ -594,29 +592,17 @@
 						<div class="kb-body">
 							{#if kbLoading}
 								<div class="kb-empty">Loading…</div>
-							{:else if !kbData || (kbData.nodes.length === 0 && kbData.facts.length === 0)}
+							{:else if !kbData || kbData.sources.length === 0}
 								<div class="kb-empty">KB is empty — drop files onto the canvas to index them.</div>
 							{:else}
-								{#if kbData.nodes.length}
-									<section>
-										<h3>Entities ({kbData.nodes.length})</h3>
-										<ul>
-											{#each kbData.nodes as n (n)}
-												<li>{n}</li>
-											{/each}
-										</ul>
-									</section>
-								{/if}
-								{#if kbData.facts.length}
-									<section>
-										<h3>Facts ({kbData.facts.length})</h3>
-										<ul>
-											{#each kbData.facts as f (f)}
-												<li>{f}</li>
-											{/each}
-										</ul>
-									</section>
-								{/if}
+								<section>
+									<h3>Indexed sources ({kbData.chunks} chunks)</h3>
+									<ul>
+										{#each kbData.sources as s (s)}
+											<li>{s}</li>
+										{/each}
+									</ul>
+								</section>
 							{/if}
 						</div>
 					</div>

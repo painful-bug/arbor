@@ -79,40 +79,6 @@
 		persistSettings();
 	}
 
-	// ── Knowledge Base (Graphiti) ──────────────────────────────────────────────
-	let kbStatus = $state<'idle' | 'restarting' | 'ok' | 'fail'>('idle');
-	let customKey = $state('');
-	let customKeyStatus = $state<Status>('idle');
-
-	const KB_KEY_HINT: Record<string, string> = {
-		ollama: 'Local — no key needed. Make sure Ollama is running and the model is pulled.',
-		groq: 'Uses the Groq key set above. Note: Groq free tier cannot fit graphiti extraction — use a paid tier.',
-		gemini: 'Uses the Google Gemini key set above (free tier works well).',
-		custom: 'OpenAI-compatible endpoint. Set its base URL and key below.'
-	};
-
-	function saveGraphiti() {
-		persistSettings();
-	}
-
-	async function saveCustomKey() {
-		customKeyStatus = 'saving';
-		customKeyStatus = (await saveKey('graphiti_custom', customKey)) ? 'saved' : 'error';
-		setTimeout(() => (customKeyStatus = 'idle'), 2000);
-	}
-
-	// Persist + restart the KB runtime so new provider/model/key take effect.
-	async function applyKb() {
-		persistSettings();
-		kbStatus = 'restarting';
-		try {
-			const r = await apiJson<{ ready: boolean }>('/api/kb/restart', { method: 'POST' });
-			kbStatus = r.ready ? 'ok' : 'fail';
-		} catch {
-			kbStatus = 'fail';
-		}
-		setTimeout(() => (kbStatus = 'idle'), 5000);
-	}
 </script>
 
 <div class="page">
@@ -271,97 +237,6 @@
 		{#if settings.bashEnabled}
 			<p class="warn">⚠︎ The agent can run shell commands on your Mac. Only enable for tasks you trust.</p>
 		{/if}
-	</section>
-
-	<section>
-		<h2>Knowledge Base</h2>
-		<p class="sub">
-			Each canvas gets its own temporal knowledge graph (Graphiti + FalkorDB, local, no Docker).
-			Files, chats, and cards are indexed into it; the agent's <strong>knowledge base search</strong> tool
-			retrieves across everything in the canvas. The graph is built by an LLM — pick which one below.
-		</p>
-
-		<label for="kb-llm">Graph LLM provider</label>
-		<select id="kb-llm" class="select" bind:value={settings.graphiti.llmProvider} onchange={saveGraphiti}>
-			<option value="ollama">Ollama — local, no key (default)</option>
-			<option value="gemini">Google Gemini — free tier, capable</option>
-			<option value="groq">Groq — fast (needs paid tier for graphiti)</option>
-			<option value="custom">Custom — OpenAI-compatible endpoint</option>
-		</select>
-		<p class="sub">{KB_KEY_HINT[settings.graphiti.llmProvider]}</p>
-
-		<label for="kb-llm-model">Graph LLM model</label>
-		<input
-			id="kb-llm-model"
-			type="text"
-			class="model-input"
-			placeholder="llama3.2:3b"
-			bind:value={settings.graphiti.llmModel}
-			oninput={saveGraphiti}
-			autocomplete="off"
-			spellcheck="false"
-		/>
-
-		{#if settings.graphiti.llmProvider === 'custom'}
-			<label for="kb-base">Custom endpoint base URL</label>
-			<input
-				id="kb-base"
-				type="text"
-				placeholder="https://my-llm.example.com/v1"
-				bind:value={settings.graphiti.llmApiBase}
-				oninput={saveGraphiti}
-				autocomplete="off"
-				spellcheck="false"
-			/>
-			<label for="kb-custom-key">Custom endpoint API key</label>
-			<div class="key-input-wrap">
-				<input
-					id="kb-custom-key"
-					type="password"
-					placeholder={keyExists['graphiti_custom'] ? '•••••••• saved' : 'sk-…'}
-					bind:value={customKey}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-				<button class="save-btn" onclick={saveCustomKey} disabled={!customKey || customKeyStatus === 'saving'}>
-					{customKeyStatus === 'saved' ? 'Saved ✓' : customKeyStatus === 'error' ? 'Error' : 'Save'}
-				</button>
-			</div>
-		{/if}
-
-		<label for="kb-embed">Embedder</label>
-		<select id="kb-embed" class="select" bind:value={settings.graphiti.embedder} onchange={saveGraphiti}>
-			<option value="ollama">Ollama — local, no key (default)</option>
-			<option value="gemini">Google Gemini — uses Google key</option>
-		</select>
-
-		<label for="kb-embed-model">Embedder model</label>
-		<input
-			id="kb-embed-model"
-			type="text"
-			class="model-input"
-			placeholder={settings.graphiti.embedder === 'gemini' ? 'models/text-embedding-004' : 'nomic-embed-text'}
-			bind:value={settings.graphiti.embedderModel}
-			oninput={saveGraphiti}
-			autocomplete="off"
-			spellcheck="false"
-		/>
-
-		<button
-			class="save-btn"
-			style="margin-top: var(--s-md); align-self: flex-start;"
-			onclick={applyKb}
-			disabled={kbStatus === 'restarting'}
-		>
-			{kbStatus === 'restarting'
-				? 'Restarting…'
-				: kbStatus === 'ok'
-					? 'Applied ✓'
-					: kbStatus === 'fail'
-						? 'Failed ✕'
-						: 'Apply & Restart KB'}
-		</button>
-		<p class="sub">Changes are saved automatically; click to restart the knowledge base so they take effect now.</p>
 	</section>
 
 	<section>

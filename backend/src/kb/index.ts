@@ -1,11 +1,10 @@
-// Per-canvas knowledge base: file/chat/card ingestion → Graphiti temporal graph.
-// One Graphiti group_id per canvas (= canvas id). Replaces rag/index.ts.
-import { addMemory, searchFacts, searchNodes, clearGraph, sampleContents } from "./mcp-client.ts";
 import { loadText } from "./loaders.ts";
+import { embed } from "./embeddings.ts";
+import { upsert, hybridSearch, clear, sources as storeSources, sourceContent } from "./store.ts";
+import { contextualize } from "./contextualize.ts";
+import { randomBytes } from "node:crypto";
 
-// ponytail: 2000-char chunks — larger than old RAG (800) because LLM entity extraction
-// benefits from more context per episode. Fewer calls, richer graph edges.
-function splitText(text: string, size = 2000, overlap = 200): string[] {
+function splitText(text: string, size = 800, overlap = 120): string[] {
 	const paragraphs = text.split(/\n\n+/);
 	const chunks: string[] = [];
 	let buf = "";
@@ -24,75 +23,86 @@ export async function addFile(
 	canvas: string,
 	filename: string,
 	mime: string,
-	bytes: Uint8Array
+	bytes: Uint8Array,
 ): Promise<number> {
 	if (!canvas) { console.warn("[KB] addFile called with empty canvas id — skipping"); return 0; }
 	const text = await loadText(filename, mime, bytes);
 	if (!text.trim()) return 0;
 
-	console.log(`[KB] addFile ${filename} (${canvas}): ${text.length} chars extracted, first 200: ${text.slice(0, 200).replace(/\n/g, " ")}`);
+	console.log(`[KB] addFile ${filename} (${canvas}): ${text.length} chars extracted`);
 	const chunks = splitText(text);
-	// Send chunks in parallel; each becomes an episode in the graph.
-	let failed = 0;
-	await Promise.all(
-		chunks.map((chunk, i) =>
-			addMemory(canvas, `${filename}#${i}`, chunk, "text", filename).catch((err) => {
-				failed++;
-				console.error(`[KB] addMemory chunk ${i} of ${filename}:`, err);
-			})
-		)
+
+	// Contextual headers: prepend a 1-sentence situating header per chunk
+	const headers = await contextualize(filename, chunks).catch(() =>
+		new Array<string>(chunks.length).fill(""),
 	);
-	// If every chunk failed to queue, the file is NOT indexed — surface that as an
-	// error instead of reporting a phantom success (which made empty KBs look full).
-	if (chunks.length && failed === chunks.length) {
-		throw new Error(`KB indexing failed: all ${chunks.length} chunks of ${filename} were rejected by Graphiti.`);
-	}
-	return chunks.length;
+
+	const embedTexts = chunks.map((chunk, i) =>
+		headers[i] ? `${headers[i]}\n\n${chunk}` : chunk,
+	);
+
+	const vectors = await embed(embedTexts);
+
+	const rows = embedTexts.map((text, i) => ({
+		id: randomBytes(8).toString("hex"),
+		source: filename,
+		text,
+		vector: vectors[i],
+	}));
+
+	await upsert(canvas, filename, rows);
+	return rows.length;
 }
 
 export async function addChat(
 	canvas: string,
 	cardId: string,
 	prompt: string,
-	answer: string
+	answer: string,
 ): Promise<void> {
 	if (!canvas) { console.warn("[KB] addChat called with empty canvas id — skipping"); return; }
 	const body = `User: ${prompt}\n\nAssistant: ${answer}`;
-	await addMemory(canvas, `chat:${cardId}:${Date.now()}`, body, "message", `card ${cardId}`).catch(
-		(err) => console.error("[KB] addChat:", err)
-	);
+	const source = `chat:${cardId}`;
+	const vectors = await embed([body]);
+	await upsert(canvas, source, [{
+		id: randomBytes(8).toString("hex"),
+		source,
+		text: body,
+		vector: vectors[0],
+	}]);
 }
 
 export async function addCard(canvas: string, cardId: string, title: string): Promise<void> {
-	await addMemory(canvas, `card:${cardId}`, title, "text", `card ${cardId}`).catch((err) =>
-		console.error("[KB] addCard:", err)
-	);
+	const source = `card:${cardId}`;
+	const vectors = await embed([title]);
+	await upsert(canvas, source, [{
+		id: randomBytes(8).toString("hex"),
+		source,
+		text: title,
+		vector: vectors[0],
+	}]);
 }
 
 export async function search(canvas: string, query: string, k = 6): Promise<string[]> {
 	if (!canvas) return [];
-	const [facts, nodes] = await Promise.all([
-		searchFacts(canvas, query, k).catch(() => [] as string[]),
-		searchNodes(canvas, query, k).catch(() => [] as string[])
-	]);
-	// Deduplicate by content; facts first (more specific), nodes second.
-	const seen = new Set<string>();
-	const results: string[] = [];
-	for (const s of [...facts, ...nodes]) {
-		const key = s.trim().toLowerCase().slice(0, 80);
-		if (!seen.has(key)) {
-			seen.add(key);
-			results.push(s);
-		}
-	}
-	return results.slice(0, k);
+	const [queryVec] = await embed([query]);
+	return hybridSearch(canvas, queryVec, query, k);
 }
 
 export async function clearCanvas(canvas: string): Promise<void> {
-	await clearGraph(canvas).catch((err) => console.error("[KB] clearCanvas:", err));
+	await clear(canvas);
 }
 
-export async function contentsOf(canvas: string): Promise<{ nodes: string[]; facts: string[] }> {
-	if (!canvas) return { nodes: [], facts: [] };
-	return sampleContents(canvas).catch(() => ({ nodes: [], facts: [] }));
+export async function readSource(canvas: string, source: string): Promise<string[]> {
+	if (!canvas || !source) return [];
+	return sourceContent(canvas, source);
+}
+
+export async function contentsOf(canvas: string): Promise<{ sources: string[]; chunks: number }> {
+	if (!canvas) return { sources: [], chunks: 0 };
+	const list = await storeSources(canvas);
+	return {
+		sources: list.map((s) => s.source),
+		chunks: list.reduce((sum, s) => sum + s.chunks, 0),
+	};
 }

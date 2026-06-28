@@ -1,6 +1,3 @@
-// KB route smoke tests. Text extraction runs in-process; MCP indexing is
-// fire-and-forget (errors logged, not thrown), so routes return 200 even when
-// Graphiti isn't running. Full retrieval tests need LOOM_KB_IT=1.
 import { describe, it, expect } from "bun:test";
 import { makeTestApp } from "./test-utils.ts";
 
@@ -12,8 +9,6 @@ const NOTES = `
 A relation is in 3NF if it is in 2NF and no non-prime attribute is transitively
 dependent on any key. This eliminates transitive dependencies in a relational schema.
 `.trim();
-
-const IT = process.env.LOOM_KB_IT === "1";
 
 describe("KB routes", () => {
 	it("POST /api/kb/:canvas/files → 200, chunks > 0 for plain text", async () => {
@@ -66,17 +61,26 @@ describe("KB routes", () => {
 		expect(chunks).toBeGreaterThan(0);
 	});
 
-	// Full retrieval test: requires Graphiti running (LOOM_KB_IT=1).
-	it.skipIf(!IT)("indexes and retrieves content via Graphiti (needs LOOM_KB_IT=1)", async () => {
-		const res = await api("/api/kb/it-canvas/files", {
+	it("GET /api/kb/:canvas/contents → sources + chunks", async () => {
+		// Ingest first
+		await api("/api/kb/contents-test/files", {
+			method: "POST",
+			headers: { "Content-Type": "text/plain", "X-Filename": encodeURIComponent("doc.txt") },
+			body: new TextEncoder().encode(NOTES)
+		});
+		const res = await api("/api/kb/contents-test/contents");
+		expect(res.status).toBe(200);
+		const data = (await res.json()) as { sources: string[]; chunks: number };
+		expect(data.sources).toContain("doc.txt");
+		expect(data.chunks).toBeGreaterThan(0);
+	});
+
+	it("indexes and retrieves content via hybrid search", async () => {
+		await api("/api/kb/it-canvas/files", {
 			method: "POST",
 			headers: { "Content-Type": "text/plain", "X-Filename": "notes.txt" },
 			body: new TextEncoder().encode(NOTES)
 		});
-		expect(res.status).toBe(200);
-
-		// Wait for graph extraction.
-		await Bun.sleep(30_000);
 
 		const search = await api("/api/kb/it-canvas/search?q=third+normal+form&k=4");
 		const { results } = (await search.json()) as { results: string[] };

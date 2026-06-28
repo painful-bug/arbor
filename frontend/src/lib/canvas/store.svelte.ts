@@ -289,33 +289,12 @@ export const DEFAULT_MODELS = Object.fromEntries(
 
 const VALID_PROVIDERS = new Set(PROVIDERS.map((p) => p.id));
 
-// Knowledge-base (Graphiti) config. Mirrors the backend GraphitiSettings shape.
-// Default is fully local (Ollama LLM + embedder) — no key, no rate limits.
-export interface GraphitiSettings {
-	llmProvider: 'ollama' | 'groq' | 'gemini' | 'custom';
-	llmModel: string;
-	llmApiBase: string;
-	embedder: 'ollama' | 'gemini';
-	embedderModel: string;
-	ollamaUrl: string;
-}
-
-const GRAPHITI_DEFAULTS: GraphitiSettings = {
-	llmProvider: 'ollama',
-	llmModel: 'llama3.2:3b',
-	llmApiBase: '',
-	embedder: 'ollama',
-	embedderModel: 'nomic-embed-text',
-	ollamaUrl: 'http://localhost:11434/v1'
-};
-
 interface Settings {
 	provider: Provider;
 	models: Record<Provider, string>;
 	workflow: string;
 	bashEnabled: boolean;
 	websearch: { enabled: boolean; backend: 'duckduckgo' | 'tavily' };
-	graphiti: GraphitiSettings;
 }
 
 const FALLBACK_SETTINGS: Settings = {
@@ -324,13 +303,11 @@ const FALLBACK_SETTINGS: Settings = {
 	workflow: 'general',
 	bashEnabled: false,
 	websearch: { enabled: false, backend: 'duckduckgo' },
-	graphiti: { ...GRAPHITI_DEFAULTS }
 };
 
 export const settings = $state<Settings>({
 	...FALLBACK_SETTINGS,
 	models: { ...DEFAULT_MODELS },
-	graphiti: { ...GRAPHITI_DEFAULTS }
 });
 
 async function loadSettingsAsync(): Promise<void> {
@@ -354,9 +331,6 @@ async function loadSettingsAsync(): Promise<void> {
 			if (typeof ws.enabled === 'boolean') settings.websearch.enabled = ws.enabled;
 			if (ws.backend === 'duckduckgo' || ws.backend === 'tavily') settings.websearch.backend = ws.backend;
 		}
-		if (p.graphiti && typeof p.graphiti === 'object') {
-			settings.graphiti = { ...GRAPHITI_DEFAULTS, ...(p.graphiti as Partial<GraphitiSettings>) };
-		}
 	} catch {}
 }
 
@@ -367,7 +341,6 @@ export function persistSettings(): void {
 		workflow: settings.workflow,
 		bashEnabled: settings.bashEnabled,
 		websearch: settings.websearch,
-		graphiti: settings.graphiti
 	});
 }
 
@@ -504,10 +477,28 @@ export function addTextCard(position: XYPosition, text = ''): string {
 	return id;
 }
 
+const _textIndexTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export function setCardText(id: string, text: string): void {
 	flow.nodes = flow.nodes.map((n) =>
 		n.id === id ? { ...n, data: { ...n.data, text } } : n
 	);
+	// Debounce KB indexing so we don't re-embed on every keystroke
+	const prev = _textIndexTimers.get(id);
+	if (prev) clearTimeout(prev);
+	_textIndexTimers.set(id, setTimeout(() => {
+		_textIndexTimers.delete(id);
+		if (text.trim()) {
+			void indexTextCard(id, text);
+		}
+	}, 2000));
+}
+
+async function indexTextCard(cardId: string, text: string): Promise<void> {
+	const { kbAdd } = await import('$lib/ai/client');
+	const canvas = currentCanvasId() || 'default';
+	const bytes = new TextEncoder().encode(text);
+	await kbAdd(canvas, `text:${cardId}`, 'text/plain', bytes.buffer as ArrayBuffer).catch(() => {});
 }
 
 export function setCardBlock(id: string, block: string): void {

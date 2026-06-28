@@ -238,9 +238,9 @@ export function researchPlanTool(): AgentTool<typeof planSchema> {
 	};
 }
 
-// ── Canvas knowledge base search (in-process via Graphiti MCP) ────────────────
+// ── Canvas knowledge base: search / overview / read-source ──────────────────
 const kbSchema = Type.Object({
-	query: Type.String({ description: "What to search for in this canvas's knowledge base." })
+	query: Type.String({ description: "Content-topic search terms (e.g. 'TCP handshake', 'mitochondria'), NOT meta like 'pdf' or 'file'." })
 });
 
 export function knowledgeBaseSearchTool(
@@ -250,48 +250,74 @@ export function knowledgeBaseSearchTool(
 		name: "knowledge_base_search",
 		label: "knowledge_base_search",
 		description:
-			"Search the entire knowledge base of THIS canvas — any file, chat, or card. Returns relevant facts and entities from the temporal graph. Call this FIRST whenever the user mentions 'the pdf', 'the file', 'the document', 'my notes', 'the attachment', previous conversations, or any uploaded material, instead of asking them for a path. IMPORTANT: search for CONTENT topics (e.g. 'OSI model layers', 'TCP/IP protocol'), NOT meta-terms like 'pdf', 'file', or 'document' — the KB stores extracted knowledge, not filenames. For broad questions ('what is this about?'), search for general subject terms. If no results, try rephrasing with different topic keywords.",
+			"Search this canvas's indexed content (files, chats, notes) by topic. Returns top matching chunks. Use when the user references uploaded material or asks about content that may be in the KB. Search by subject keywords, not filenames. If no results, rephrase with broader terms and retry.",
 		parameters: kbSchema,
 		async execute(_id, params): Promise<AgentToolResult<{ chunks: string[] }>> {
 			const chunks = await search(params.query);
-			const content =
-				chunks.length > 0
-					? [{ type: "text", text: chunks.join("\n\n---\n\n") }]
-					: [
-							{
-								type: "text",
-								text: `No knowledge base content matched "${params.query}". Try searching with different topic keywords — the KB stores extracted facts and entities, not filenames or metadata. Use broader subject terms (e.g. "networking protocols" instead of "pdf").`
-							}
-						];
-			return { content, details: { chunks } };
+			if (chunks.length > 0) {
+				return { content: [{ type: "text", text: chunks.join("\n\n---\n\n") }], details: { chunks } };
+			}
+			return {
+				content: [{
+					type: "text",
+					text: `No results for "${params.query}". Rephrase: use broader subject terms and call this tool again.`
+				}],
+				details: { chunks: [] }
+			};
 		}
 	};
 }
 
-// ── Canvas knowledge base overview (broad "what's in here?" queries) ─────────
 const kbOverviewSchema = Type.Object({});
 
 export function knowledgeBaseOverviewTool(
-	overview: () => Promise<{ nodes: string[]; facts: string[] }>
+	overview: () => Promise<{ sources: string[]; chunks: number }>
 ): AgentTool<typeof kbOverviewSchema> {
 	return {
 		name: "knowledge_base_overview",
 		label: "knowledge_base_overview",
 		description:
-			"Get a broad overview of EVERYTHING in this canvas's knowledge base — all known entities and facts. Call this when the user asks vague/overview questions like 'what are these about?', 'summarize everything', or 'what's in the knowledge base?'. Use knowledge_base_search instead when you have a specific topic to look up.",
+			"List all indexed sources and total chunk count in this canvas's KB. Use for 'what's indexed?', 'what files do I have?', or as a prerequisite to knowledge_base_read_source (which needs an exact source name).",
 		parameters: kbOverviewSchema,
-		async execute(_id): Promise<AgentToolResult<{ nodes: string[]; facts: string[] }>> {
-			const { nodes, facts } = await overview();
-			if (!nodes.length && !facts.length) {
+		async execute(_id): Promise<AgentToolResult<{ sources: string[]; chunks: number }>> {
+			const { sources, chunks } = await overview();
+			if (!sources.length) {
 				return {
-					content: [{ type: "text", text: "The knowledge base for this canvas is empty — no files, chats, or cards have been indexed yet." }],
-					details: { nodes: [], facts: [] }
+					content: [{ type: "text", text: "KB is empty — no files, chats, or notes indexed yet." }],
+					details: { sources: [], chunks: 0 }
 				};
 			}
-			const parts: string[] = [];
-			if (nodes.length) parts.push("## Entities\n" + nodes.join("\n"));
-			if (facts.length) parts.push("## Facts\n" + facts.join("\n"));
-			return { content: [{ type: "text", text: parts.join("\n\n") }], details: { nodes, facts } };
+			const text = `## Indexed sources (${chunks} chunks total)\n` + sources.map((s) => `- ${s}`).join("\n");
+			return { content: [{ type: "text", text }], details: { sources, chunks } };
+		}
+	};
+}
+
+const kbReadSourceSchema = Type.Object({
+	source: Type.String({ description: "Exact source name from knowledge_base_overview (e.g. 'lecture.pdf', 'chat:n5')." })
+});
+
+export function knowledgeBaseReadSourceTool(
+	readSource: (source: string) => Promise<string[]>
+): AgentTool<typeof kbReadSourceSchema> {
+	return {
+		name: "knowledge_base_read_source",
+		label: "knowledge_base_read_source",
+		description:
+			"Return ALL chunks from one source — the full content, not just top matches. Use for summarize/review/explain-entire-file requests. Get the exact source name from knowledge_base_overview first. For multiple files, call this in parallel for each.",
+		parameters: kbReadSourceSchema,
+		async execute(_id, params): Promise<AgentToolResult<{ chunks: string[] }>> {
+			const chunks = await readSource(params.source);
+			if (!chunks.length) {
+				return {
+					content: [{ type: "text", text: `Source "${params.source}" not found. Call knowledge_base_overview to get exact names.` }],
+					details: { chunks: [] }
+				};
+			}
+			return {
+				content: [{ type: "text", text: chunks.join("\n\n---\n\n") }],
+				details: { chunks }
+			};
 		}
 	};
 }

@@ -10,9 +10,10 @@ import {
 	scholarSearchTool,
 	researchPlanTool,
 	knowledgeBaseSearchTool,
-	knowledgeBaseOverviewTool
+	knowledgeBaseOverviewTool,
+	knowledgeBaseReadSourceTool
 } from "./tools.ts";
-import { search as kbSearch, addChat, contentsOf } from "../kb/index.ts";
+import { search as kbSearch, addChat, contentsOf, readSource } from "../kb/index.ts";
 
 const SERVICE = "app.loom.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
@@ -109,14 +110,16 @@ export async function handlePrompt(
 			tools.push(webSearchTool(req.websearchBackend ?? "duckduckgo", tavilyKey));
 		}
 		tools.push(scholarSearchTool(), researchPlanTool());
-		// KB search + overview are in-process via Graphiti MCP client.
+		// KB search + overview + full-source read via local hybrid RAG (LanceDB).
 		tools.push(knowledgeBaseSearchTool((query) => kbSearch(canvas, query)));
 		tools.push(knowledgeBaseOverviewTool(() => contentsOf(canvas)));
+		tools.push(knowledgeBaseReadSourceTool((source) => readSource(canvas, source)));
 
 		const agent = new Agent({
 			streamFn: streamSimple,
 			getApiKey: () => apiKey ?? "",
 			convertToLlm: (messages) => messages as Message[],
+			toolExecution: "parallel",
 			initialState: {
 				systemPrompt: req.systemPrompt ?? "",
 				model,
