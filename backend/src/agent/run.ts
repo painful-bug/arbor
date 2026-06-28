@@ -11,6 +11,7 @@ import {
 	researchPlanTool,
 	ragSearchTool,
 	createCardTool,
+	createNoteTool,
 	updateCardTool
 } from "./tools.ts";
 import { search as ragSearch } from "../rag/index.ts";
@@ -115,7 +116,7 @@ export async function handlePrompt(
 		tools.push(scholarSearchTool(), researchPlanTool());
 		// ragSearch is now in-process — no stdio, no HTTP bridge.
 		tools.push(ragSearchTool((query) => ragSearch(canvas, query)));
-		if (req.canvasTools) tools.push(createCardTool(), updateCardTool());
+		if (req.canvasTools) tools.push(createCardTool(), createNoteTool(), updateCardTool());
 
 		const agent = new Agent({
 			streamFn: streamSimple,

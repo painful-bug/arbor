@@ -930,7 +930,8 @@ export async function runSession(prompt: string): Promise<void> {
 		'Call create_card once per card you want to create — do not batch them into one card. ' +
 		'Ask a question only if you genuinely cannot proceed without the answer.\n\n' +
 		'## Canvas Tools\n' +
-		'- create_card(title, content): creates a new card on the canvas. Call this once per card — multiple calls = multiple cards.\n' +
+		'- create_card(title, content): creates a new Q&A card on the canvas. Call this once per card — multiple calls = multiple cards.\n' +
+		'- create_note(title?, content): creates a standalone markdown note card — for drafted prose, summaries, emails, outlines.\n' +
 		'- update_card(card, content): replaces an existing card\'s content (use card id when available).';
 	const systemPrompt = workflowSystemPrompt(workflow) + toolHint + (digest ? '\n\n' + digest : '');
 
