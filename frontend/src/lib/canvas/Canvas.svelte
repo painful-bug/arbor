@@ -6,6 +6,7 @@
 	import FileCard from './FileCard.svelte';
 	import WebCard from './WebCard.svelte';
 	import UserTextCard from './UserTextCard.svelte';
+	import GroupNode from './GroupNode.svelte';
 	import TextView from './TextView.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
 	import PromptBubble from './PromptBubble.svelte';
@@ -30,6 +31,8 @@
 		pushHistory,
 		undo,
 		redo,
+		deleteNodes,
+		groupNodes,
 		init
 	} from './store.svelte';
 	import Library from './Library.svelte';
@@ -55,7 +58,7 @@
 	}
 
 	const { screenToFlowPosition, fitView } = useSvelteFlow();
-	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard };
+	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode };
 
 	let bubble = $state<{
 		x: number;
@@ -293,14 +296,26 @@
 					return;
 				}
 			}
+			// Delete/Backspace: remove selected nodes
+			if (e.key === 'Delete' || e.key === 'Backspace') {
+				const sel = flow.nodes.filter((n) => n.selected).map((n) => n.id);
+				if (sel.length) { deleteNodes(sel); e.preventDefault(); return; }
+			}
+
 			// Tool hotkeys (no modifier).
 			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
 				if (e.key === 'h' || e.key === 'H') { tool.active = 'hand'; tool.connectFrom = null; e.preventDefault(); }
+				else if (e.key === 'v' || e.key === 'V') { tool.active = 'select'; tool.connectFrom = null; e.preventDefault(); }
 				else if (e.key === 't' || e.key === 'T') { tool.active = 'text'; e.preventDefault(); }
 				else if (e.key === 'd' || e.key === 'D') { tool.active = 'duplicate'; e.preventDefault(); }
 				else if (e.key === 'c' || e.key === 'C') { tool.active = 'connect'; e.preventDefault(); }
 				else if (e.key === 'u' || e.key === 'U') { undo(); e.preventDefault(); }
+				else if (e.key === 'r' || e.key === 'R') { redo(); e.preventDefault(); }
 				else if (e.key === 'f' || e.key === 'F') { doFitView(); e.preventDefault(); }
+				else if (e.key === 'g' || e.key === 'G') {
+					const sel = flow.nodes.filter((n) => n.selected).map((n) => n.id);
+					if (sel.length >= 2) { groupNodes(sel); e.preventDefault(); }
+				}
 			}
 		}
 
@@ -494,6 +509,7 @@
 				<!-- capture phase: Svelte Flow's d3-zoom stops dblclick propagation in the bubble phase -->
 				<div
 					class="wrap"
+					class:cursor-default={tool.active === 'select'}
 					class:cursor-text={tool.active === 'text'}
 					class:cursor-copy={tool.active === 'duplicate'}
 					class:cursor-crosshair={tool.active === 'connect' || tool.active === 'color'}
@@ -508,6 +524,8 @@
 						bind:edges={flow.edges}
 						{nodeTypes}
 						zoomOnDoubleClick={false}
+						selectionOnDrag={tool.active === 'select'}
+						panOnDrag={tool.active === 'select' ? [1, 2] : true}
 						proOptions={{ hideAttribution: true }}
 						onnodedragstop={onNodeDragStop}
 						onpaneclick={onPaneClick}
@@ -547,7 +565,7 @@
 						<div class="connect-hint">Click another card to connect · Esc to cancel</div>
 					{/if}
 
-					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onKB={openKB} />
+					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} />
 				</div>
 
 				{#if openFileId}
@@ -690,6 +708,7 @@
 	}
 
 	/* Cursor overrides per tool */
+	.wrap.cursor-default :global(.svelte-flow__pane) { cursor: default; }
 	.wrap.cursor-text :global(.svelte-flow__pane) { cursor: text; }
 	.wrap.cursor-copy :global(.svelte-flow__pane) { cursor: copy; }
 	.wrap.cursor-crosshair :global(.svelte-flow__pane) { cursor: crosshair; }

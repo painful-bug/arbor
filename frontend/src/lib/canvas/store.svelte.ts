@@ -34,7 +34,7 @@ export const BLOCKS = ['lime', 'lilac', 'cream', 'pink', 'mint', 'coral'];
 let blockIdx = 0;
 
 // ── Tool state (shared by toolbar + canvas) ──────────────────────────────────
-export type Tool = 'hand' | 'text' | 'duplicate' | 'connect' | 'color';
+export type Tool = 'hand' | 'text' | 'duplicate' | 'connect' | 'color' | 'select';
 export const tool = $state<{ active: Tool; connectFrom: string | null }>({
 	active: 'hand',
 	connectFrom: null
@@ -546,6 +546,71 @@ export function addManualEdge(
 		...flow.edges,
 		{ id, source, target, sourceHandle, targetHandle, type: 'bezier' }
 	];
+}
+
+// ── Delete nodes ────────────────────────────────────────────────────────────
+export function deleteNodes(ids: string[]): void {
+	const idSet = new Set(ids);
+	// Cascade: if deleting a group, also delete its children
+	for (const n of flow.nodes) {
+		if (n.parentId && idSet.has(n.parentId)) idSet.add(n.id);
+	}
+	flow.nodes = flow.nodes.filter((n) => !idSet.has(n.id));
+	flow.edges = flow.edges.filter((e) => !idSet.has(e.source) && !idSet.has(e.target));
+}
+
+// ── Group nodes ─────────────────────────────────────────────────────────────
+// ponytail: parent-node approach — SvelteFlow handles drag-together natively.
+export interface GroupData { block: string; [key: string]: unknown }
+
+export function groupNodes(ids: string[]): string {
+	const selected = flow.nodes.filter((n) => ids.includes(n.id));
+	if (selected.length < 2) return '';
+
+	const PADDING = 28;
+	const GAP = 24;
+	const cols = Math.ceil(Math.sqrt(selected.length));
+	const rows = Math.ceil(selected.length / cols);
+	const cellW = Math.max(...selected.map((n) => n.width ?? 400));
+	const cellH = 280;
+
+	const groupW = PADDING * 2 + cols * cellW + (cols - 1) * GAP;
+	const groupH = PADDING * 2 + rows * cellH + (rows - 1) * GAP;
+
+	const avgX = selected.reduce((s, n) => s + n.position.x, 0) / selected.length;
+	const avgY = selected.reduce((s, n) => s + n.position.y, 0) / selected.length;
+
+	const groupId = nextId();
+	const block = BLOCKS[blockIdx++ % BLOCKS.length];
+
+	const groupNode: Node = {
+		id: groupId,
+		type: 'group',
+		position: { x: avgX - groupW / 2, y: avgY - groupH / 2 },
+		data: { block } satisfies GroupData,
+		width: groupW,
+		height: groupH,
+	};
+
+	const idSet = new Set(ids);
+	const rest = flow.nodes.filter((n) => !idSet.has(n.id));
+
+	const reparented = selected.map((n, i) => {
+		const col = i % cols;
+		const row = Math.floor(i / cols);
+		return {
+			...n,
+			parentId: groupId,
+			position: {
+				x: PADDING + col * (cellW + GAP),
+				y: PADDING + row * (cellH + GAP),
+			},
+		};
+	});
+
+	// Group must appear before its children in the array
+	flow.nodes = [...rest, groupNode, ...reparented];
+	return groupId;
 }
 
 // Append a streamed agent event (tool call / reasoning) to the active turn's timeline.
