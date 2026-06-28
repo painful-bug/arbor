@@ -584,6 +584,71 @@ export function addManualEdge(
 	];
 }
 
+// ── Delete nodes ────────────────────────────────────────────────────────────
+export function deleteNodes(ids: string[]): void {
+	const idSet = new Set(ids);
+	// Cascade: if deleting a group, also delete its children
+	for (const n of flow.nodes) {
+		if (n.parentId && idSet.has(n.parentId)) idSet.add(n.id);
+	}
+	flow.nodes = flow.nodes.filter((n) => !idSet.has(n.id));
+	flow.edges = flow.edges.filter((e) => !idSet.has(e.source) && !idSet.has(e.target));
+}
+
+// ── Group nodes ─────────────────────────────────────────────────────────────
+// ponytail: parent-node approach — SvelteFlow handles drag-together natively.
+export interface GroupData { block: string; [key: string]: unknown }
+
+export function groupNodes(ids: string[]): string {
+	const selected = flow.nodes.filter((n) => ids.includes(n.id));
+	if (selected.length < 2) return '';
+
+	const PADDING = 28;
+	const GAP = 24;
+	const cols = Math.ceil(Math.sqrt(selected.length));
+	const rows = Math.ceil(selected.length / cols);
+	const cellW = Math.max(...selected.map((n) => n.width ?? 400));
+	const cellH = 280;
+
+	const groupW = PADDING * 2 + cols * cellW + (cols - 1) * GAP;
+	const groupH = PADDING * 2 + rows * cellH + (rows - 1) * GAP;
+
+	const avgX = selected.reduce((s, n) => s + n.position.x, 0) / selected.length;
+	const avgY = selected.reduce((s, n) => s + n.position.y, 0) / selected.length;
+
+	const groupId = nextId();
+	const block = BLOCKS[blockIdx++ % BLOCKS.length];
+
+	const groupNode: Node = {
+		id: groupId,
+		type: 'group',
+		position: { x: avgX - groupW / 2, y: avgY - groupH / 2 },
+		data: { block } satisfies GroupData,
+		width: groupW,
+		height: groupH,
+	};
+
+	const idSet = new Set(ids);
+	const rest = flow.nodes.filter((n) => !idSet.has(n.id));
+
+	const reparented = selected.map((n, i) => {
+		const col = i % cols;
+		const row = Math.floor(i / cols);
+		return {
+			...n,
+			parentId: groupId,
+			position: {
+				x: PADDING + col * (cellW + GAP),
+				y: PADDING + row * (cellH + GAP),
+			},
+		};
+	});
+
+	// Group must appear before its children in the array
+	flow.nodes = [...rest, groupNode, ...reparented];
+	return groupId;
+}
+
 // Append a streamed agent event (tool call / reasoning) to the active turn's timeline.
 function pushEvent(id: string, ev: AgentEvent): void {
 	flow.nodes = flow.nodes.map((n) => {
@@ -832,6 +897,11 @@ function applyCanvasTool(ev: AgentEvent): void {
 	if (!args) return;
 	if (ev.name === 'create_card') {
 		createCardFromAgent(args.title ?? '', args.content ?? '');
+	} else if (ev.name === 'create_note') {
+		const maxX = flow.nodes.reduce((m, n) => Math.max(m, n.position.x + (n.width ?? 400)), 0);
+		const pos = { x: maxX > 0 ? maxX + 40 : 80, y: 80 };
+		addTextCard(pos, args.content ?? '');
+		saveCanvas();
 	} else if (ev.name === 'update_card') {
 		updateCardContent(args.card ?? '', args.content ?? '');
 	}
@@ -916,8 +986,16 @@ function pushTurns(messages: ChatMessage[], d: CardData): void {
 
 function canvasDigest(excludeId: string): string {
 	const cards = flow.nodes
-		.filter((n) => n.type === 'card' && n.id !== excludeId)
+		.filter((n) => (n.type === 'card' || n.type === 'text' || n.type === 'file') && n.id !== excludeId)
 		.map((n) => {
+			if (n.type === 'text') {
+				const d = n.data as TextData;
+				return { id: n.id, title: '[note]', lastAnswer: (d.text ?? '').slice(0, 120) };
+			}
+			if (n.type === 'file') {
+				const d = n.data as FileData;
+				return { id: n.id, title: `[file: ${d.filename}]`, lastAnswer: '' };
+			}
 			const d = n.data as CardData;
 			return { id: n.id, title: d.title ?? '', lastAnswer: lastTurn(d)?.answer ?? '' };
 		});
