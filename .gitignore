@@ -13,7 +13,15 @@ sidecar/
 
 # Backend
 backend/dist
-~/.loom
+
+# Bun build artifacts
+*.bun-build
+
+# Tauri build artifacts
+frontend/src-tauri/target/
+frontend/src-tauri/binaries/
+frontend/src-tauri/resources/backend/
+
 # OS
 .DS_Store
 Thumbs.db
