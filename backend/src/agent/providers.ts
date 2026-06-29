@@ -1,4 +1,4 @@
-// Provider catalog: maps a Loom provider id -> the pi-ai Model shape.
+// Provider catalog: maps an Arbor provider id -> the pi-ai Model shape.
 // pi-ai's `Model` is a plain object, so we build one for any model id the user
 // types (pi's getModel() only accepts its built-in known ids). API key is passed
 // per-call via StreamOptions.apiKey — never stored here.

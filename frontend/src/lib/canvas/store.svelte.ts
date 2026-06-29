@@ -2,6 +2,7 @@
 import type { Node, Edge, XYPosition } from '@xyflow/svelte';
 import {
 	runAgent,
+	ragRemove,
 	PROVIDERS,
 	type Provider,
 	type ChatMessage,
@@ -169,7 +170,7 @@ function newDoc(name: string): CanvasDoc {
 }
 
 export async function init(): Promise<void> {
-	// Backend already migrated any legacy ~/.loom JSON into SQLite on boot.
+	// Backend already migrated any legacy JSON into SQLite on boot.
 	const stored = await readIndex();
 
 	if (!stored.list.length) {
@@ -235,6 +236,9 @@ export async function renameCanvas(id: string, name: string): Promise<void> {
 
 export async function deleteCanvas(id: string): Promise<void> {
 	void apiFetch(`/api/canvases/${id}`, { method: 'DELETE' });
+	// Drop this canvas's whole RAG index (clearCanvas → dropTable). ponytail: orphaned
+	// per-canvas blobs are left on disk; cheap to ignore vs. listing every file node.
+	void apiFetch(`/api/rag/${encodeURIComponent(id)}/files`, { method: 'DELETE' });
 	library.list = library.list.filter((c) => c.id !== id);
 	writeIndex(currentId, library.list);
 	if (currentId === id) {
@@ -314,7 +318,7 @@ const FALLBACK_SETTINGS: Settings = {
 	websearch: { enabled: false, backend: 'duckduckgo' }
 };
 
-const LS_KEY = 'loom:settings';
+const LS_KEY = 'arbor:settings';
 
 export const settings = $state<Settings>({ ...FALLBACK_SETTINGS, models: { ...DEFAULT_MODELS } });
 
@@ -564,9 +568,26 @@ export function duplicateSelected(): void {
 	flow.nodes = [...flow.nodes.map((n) => ({ ...n, selected: false })), ...newNodes];
 }
 
+// Purge a removed file node's RAG chunks + stored blob. Idempotent, so it's safe to
+// call from every delete path. Dynamic import of files.ts avoids a static store↔files cycle.
+function cleanupRemovedNodes(ids: Set<string>): void {
+	const fileNodes = flow.nodes.filter(
+		(n) => ids.has(n.id) && n.type === 'file'
+	);
+	if (!fileNodes.length) return;
+	void import('$lib/files').then(({ deleteFileBlob }) => {
+		for (const n of fileNodes) {
+			const filename = (n.data as { filename?: string }).filename;
+			if (filename) void ragRemove(currentId, filename);
+			deleteFileBlob(n.id);
+		}
+	});
+}
+
 export function deleteSelected(): void {
 	const toDelete = new Set(flow.nodes.filter((n) => n.selected).map((n) => n.id));
 	if (!toDelete.size) return;
+	cleanupRemovedNodes(toDelete);
 	flow.edges = flow.edges.filter((e) => !toDelete.has(e.source) && !toDelete.has(e.target));
 	flow.nodes = flow.nodes.filter((n) => !toDelete.has(n.id));
 }
@@ -591,6 +612,7 @@ export function deleteNodes(ids: string[]): void {
 	for (const n of flow.nodes) {
 		if (n.parentId && idSet.has(n.parentId)) idSet.add(n.id);
 	}
+	cleanupRemovedNodes(idSet);
 	flow.nodes = flow.nodes.filter((n) => !idSet.has(n.id));
 	flow.edges = flow.edges.filter((e) => !idSet.has(e.source) && !idSet.has(e.target));
 }
@@ -709,7 +731,8 @@ export async function runModel(id: string): Promise<void> {
 			bash: settings.bashEnabled,
 			websearch: settings.websearch.enabled,
 			websearchBackend: settings.websearch.backend,
-			canvasTools: true
+			canvasTools: true,
+			canvas: currentId
 		},
 		(e) => {
 			switch (e.type) {
@@ -947,7 +970,8 @@ export async function runSession(prompt: string): Promise<void> {
 			bash: false,
 			websearch: settings.websearch.enabled,
 			websearchBackend: settings.websearch.backend,
-			canvasTools: true
+			canvasTools: true,
+			canvas: currentId
 		},
 		(e) => {
 			switch (e.type) {

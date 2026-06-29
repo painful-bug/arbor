@@ -4,7 +4,7 @@
 // previously-saved keys are found.
 import { Hono } from "hono";
 
-const SERVICE = "app.loom.canvas";
+const SERVICE = "app.arbor.canvas";
 
 // Providers that need no key (local).
 const keyless = (provider: string) => provider === "ollama";

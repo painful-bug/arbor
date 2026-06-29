@@ -1,14 +1,14 @@
 // The importer needs a pristine, empty DB to exercise its first-run path, so each
-// case runs in a fresh subprocess with its own temp LOOM_DIR holding a legacy
-// ~/.loom fixture. Asserts: data lands in SQLite, originals stay, second run no-ops.
+// case runs in a fresh subprocess with its own temp ARBOR_DIR holding a legacy
+// ~/.arbor fixture. Asserts: data lands in SQLite, originals stay, second run no-ops.
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Build a legacy ~/.loom layout in a fresh temp dir.
+// Build a legacy ~/.arbor layout in a fresh temp dir.
 function fixture(): string {
-	const dir = mkdtempSync(join(tmpdir(), "loom-import-"));
+	const dir = mkdtempSync(join(tmpdir(), "arbor-import-"));
 	mkdirSync(join(dir, "canvases"), { recursive: true });
 	mkdirSync(join(dir, "blobs"), { recursive: true });
 	writeFileSync(
@@ -29,7 +29,7 @@ function fixture(): string {
 // Run a snippet in a subprocess rooted at `dir` (fresh DB singleton each time).
 function run(dir: string, snippet: string): string {
 	const p = Bun.spawnSync(["bun", "-e", snippet], {
-		env: { ...process.env, LOOM_DIR: dir },
+		env: { ...process.env, ARBOR_DIR: dir },
 		cwd: join(import.meta.dir, "..", ".."),
 	});
 	return p.stdout.toString().trim();
@@ -44,7 +44,7 @@ describe("legacy importer", () => {
 		const dir = fixture();
 
 		expect(run(dir, doImport)).toContain("imported 2 canvas(es), 1 blob(s), settings");
-		expect(existsSync(join(dir, "loom.db"))).toBe(true);
+		expect(existsSync(join(dir, "arbor.db"))).toBe(true);
 		expect(existsSync(join(dir, "canvases", "index.json"))).toBe(true); // originals untouched
 
 		// Rows actually landed, in order.
@@ -55,7 +55,7 @@ describe("legacy importer", () => {
 	});
 
 	test("no index.json → nothing to import", () => {
-		const dir = mkdtempSync(join(tmpdir(), "loom-empty-"));
+		const dir = mkdtempSync(join(tmpdir(), "arbor-empty-"));
 		expect(run(dir, doImport)).toBe("null");
 	});
 });

@@ -1,7 +1,7 @@
-// One-time migration of the old ~/.loom JSON layout into SQLite. Runs on boot when
+// One-time migration of the old ~/.arbor JSON layout into SQLite. Runs on boot when
 // the canvases table is empty but a legacy index.json exists. Idempotent (the empty
 // check guards re-runs) and non-destructive — original JSON files are left in place
-// as a backup. Blob *bytes* already live in ~/.loom/blobs and stay there; we only
+// as a backup. Blob *bytes* already live in ~/.arbor/blobs and stay there; we only
 // record their mime/name rows.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -61,7 +61,7 @@ export function importLegacyIfNeeded(): string | null {
 			.run();
 	}
 
-	// Blob metadata (bytes already on disk under ~/.loom/blobs).
+	// Blob metadata (bytes already on disk under ~/.arbor/blobs).
 	let blobCount = 0;
 	if (existsSync(BLOBS_DIR)) {
 		for (const file of readdirSync(BLOBS_DIR)) {

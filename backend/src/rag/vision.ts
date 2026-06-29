@@ -1,129 +1,95 @@
-// Vision-based OCR: send an image to the best available LLM with vision support.
-// Tries Anthropic → OpenAI → Google in order, returns extracted text.
-// Keys come from the same Bun.secrets store as the agent runner.
+// Fully local OCR. Apple Vision (macOS) is primary; tesseract.js (WASM, bundled)
+// is the cross-platform engine — primary on Windows/Linux, fallback on macOS.
+// No network calls, no API keys.
+import { mkdirSync, existsSync } from "node:fs";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
+import { ARBOR_DIR } from "../paths.ts";
 
-const SERVICE = "app.loom.canvas";
-const getKey = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
+const IS_MAC = process.platform === "darwin";
 
-const OCR_PROMPT =
-	"Extract ALL text from this image verbatim. Include every word, number, formula, and symbol you can see. Output only the extracted text — no commentary, no markdown formatting, no explanation.";
+// Compiled Apple Vision helper lives in the data dir; source ships in the repo.
+const OCR_BIN_DIR = join(ARBOR_DIR, "bin");
+const OCR_BIN = join(OCR_BIN_DIR, "arbor-ocr");
+const OCR_SWIFT = fileURLToPath(new URL("../../native/ocr.swift", import.meta.url));
+// Vendored eng traineddata so tesseract.js runs offline (no CDN fetch).
+const TESSDATA_DIR = fileURLToPath(new URL("../../native/tessdata", import.meta.url));
 
-async function ocrAnthropic(pngBytes: Uint8Array, apiKey: string): Promise<string> {
-	const b64 = Buffer.from(pngBytes).toString("base64");
-	const res = await fetch("https://api.anthropic.com/v1/messages", {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			"x-api-key": apiKey,
-			"anthropic-version": "2023-06-01"
-		},
-		body: JSON.stringify({
-			model: "claude-haiku-4-5-20251001",
-			max_tokens: 4096,
-			messages: [
-				{
-					role: "user",
-					content: [
-						{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } },
-						{ type: "text", text: OCR_PROMPT }
-					]
-				}
-			]
-		})
-	});
-	if (!res.ok) throw new Error(`Anthropic OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
-	const data = (await res.json()) as { content: { type: string; text: string }[] };
-	return data.content.find((c) => c.type === "text")?.text ?? "";
+function tmpPng(): string {
+	return join(tmpdir(), `arbor_ocr_${randomBytes(8).toString("hex")}.png`);
 }
 
-async function ocrOpenAI(pngBytes: Uint8Array, apiKey: string): Promise<string> {
-	const b64 = Buffer.from(pngBytes).toString("base64");
-	const res = await fetch("https://api.openai.com/v1/chat/completions", {
-		method: "POST",
-		headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-		body: JSON.stringify({
-			model: "gpt-4o",
-			max_tokens: 4096,
-			messages: [
-				{
-					role: "user",
-					content: [
-						{ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
-						{ type: "text", text: OCR_PROMPT }
-					]
-				}
-			]
-		})
+// Compile the Swift Vision helper once, cached in ~/.arbor/bin. Throws if swiftc absent.
+async function ensureVisionBinary(): Promise<void> {
+	if (existsSync(OCR_BIN)) return;
+	mkdirSync(OCR_BIN_DIR, { recursive: true });
+	const proc = Bun.spawn(["swiftc", OCR_SWIFT, "-O", "-o", OCR_BIN], {
+		stdout: "pipe",
+		stderr: "pipe",
 	});
-	if (!res.ok) throw new Error(`OpenAI OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
-	const data = (await res.json()) as { choices: { message: { content: string } }[] };
-	return data.choices[0]?.message?.content ?? "";
+	const code = await proc.exited;
+	if (code !== 0) {
+		const err = await new Response(proc.stderr).text();
+		throw new Error(`swiftc failed (${code}): ${err.slice(0, 300)}`);
+	}
 }
 
-async function ocrGoogle(pngBytes: Uint8Array, apiKey: string): Promise<string> {
-	const b64 = Buffer.from(pngBytes).toString("base64");
-	const res = await fetch(
-		`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-		{
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				contents: [
-					{
-						parts: [
-							{ inline_data: { mime_type: "image/png", data: b64 } },
-							{ text: OCR_PROMPT }
-						]
-					}
-				]
-			})
+async function appleVisionOCR(pngBytes: Uint8Array): Promise<string> {
+	await ensureVisionBinary();
+	const path = tmpPng();
+	await writeFile(path, pngBytes);
+	try {
+		const proc = Bun.spawn([OCR_BIN, path], { stdout: "pipe", stderr: "pipe" });
+		const code = await proc.exited;
+		if (code !== 0) {
+			const err = await new Response(proc.stderr).text();
+			throw new Error(`arbor-ocr failed (${code}): ${err.slice(0, 300)}`);
 		}
-	);
-	if (!res.ok) throw new Error(`Google OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
-	const data = (await res.json()) as { candidates: { content: { parts: { text?: string }[] } }[] };
-	return data.candidates[0]?.content?.parts?.find((p) => p.text)?.text ?? "";
+		return (await new Response(proc.stdout).text()).trim();
+	} finally {
+		await unlink(path).catch(() => {});
+	}
 }
 
-async function ocrOpenRouter(pngBytes: Uint8Array, apiKey: string): Promise<string> {
-	const b64 = Buffer.from(pngBytes).toString("base64");
-	const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-		method: "POST",
-		headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-		body: JSON.stringify({
-			model: "meta-llama/llama-3.2-11b-vision-instruct",
-			max_tokens: 4096,
-			messages: [
-				{
-					role: "user",
-					content: [
-						{ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
-						{ type: "text", text: OCR_PROMPT }
-					]
-				}
-			]
-		})
-	});
-	if (!res.ok) throw new Error(`OpenRouter OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
-	const data = (await res.json()) as { choices: { message: { content: string } }[] };
-	return data.choices[0]?.message?.content ?? "";
+// One cached tesseract.js worker, lazily created. eng only.
+// ponytail: eng only; add more langs on demand.
+let _worker: Promise<import("tesseract.js").Worker> | null = null;
+async function tessWorker() {
+	if (!_worker) {
+		const { createWorker } = await import("tesseract.js");
+		_worker = createWorker("eng", undefined, {
+			langPath: TESSDATA_DIR,
+			cacheMethod: "none",
+			logger: () => {},
+		});
+	}
+	return _worker;
 }
 
-// OCR one PNG image. Tries providers in order of preference; returns "" if none configured.
+async function tesseractOCR(pngBytes: Uint8Array): Promise<string> {
+	const worker = await tessWorker();
+	const { data } = await worker.recognize(Buffer.from(pngBytes));
+	return data.text.trim();
+}
+
+// OCR one PNG image fully locally. macOS: Vision → tesseract.js; else tesseract.js.
 export async function ocrImage(pngBytes: Uint8Array): Promise<string> {
-	const [anthropicKey, openaiKey, googleKey, openrouterKey] = await Promise.all([
-		getKey("anthropic"),
-		getKey("openai"),
-		getKey("google"),
-		getKey("openrouter")
-	]);
-
-	if (anthropicKey) return ocrAnthropic(pngBytes, anthropicKey);
-	if (openaiKey) return ocrOpenAI(pngBytes, openaiKey);
-	if (googleKey) return ocrGoogle(pngBytes, googleKey);
-	if (openrouterKey) return ocrOpenRouter(pngBytes, openrouterKey);
-
-	console.warn("[RAG] No vision provider key found — scanned PDF/image will not be indexed.");
-	return "";
+	if (IS_MAC) {
+		try {
+			return await appleVisionOCR(pngBytes);
+		} catch (err) {
+			console.warn(`[RAG] Apple Vision OCR failed, falling back to tesseract: ${err}`);
+		}
+	}
+	try {
+		return await tesseractOCR(pngBytes);
+	} catch (err) {
+		console.warn(`[RAG] Tesseract OCR failed — image will not be indexed: ${err}`);
+		return "";
+	}
 }
 
 // Render all pages of a PDF buffer to PNG bytes using mupdf.js (pure WASM, no native deps).

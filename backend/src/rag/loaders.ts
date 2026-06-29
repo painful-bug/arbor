@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { ocrImage, pdfToImages } from "./vision.ts";
 
 function tmpPath(ext: string): string {
-	return join(tmpdir(), `loom_${randomBytes(8).toString("hex")}${ext}`);
+	return join(tmpdir(), `arbor_${randomBytes(8).toString("hex")}${ext}`);
 }
 
 async function withTempFile(ext: string, bytes: Uint8Array, fn: (path: string) => Promise<string>): Promise<string> {
@@ -25,14 +25,16 @@ function docsToText(docs: { pageContent: string }[]): string {
 	return docs.map((d) => d.pageContent).join("\n\n").trim();
 }
 
-// OCR multiple page images in sequence (parallel floods API rate limits for large docs).
+// OCR page images in batches of 6 (local engines, no rate limits).
 async function ocrPages(pages: Uint8Array[]): Promise<string> {
-	const texts: string[] = [];
-	for (const png of pages) {
-		const t = await ocrImage(png);
-		if (t.trim()) texts.push(t.trim());
+	const results = new Array<string>(pages.length);
+	const BATCH = 6;
+	for (let i = 0; i < pages.length; i += BATCH) {
+		const batch = pages.slice(i, i + BATCH);
+		const texts = await Promise.all(batch.map((p) => ocrImage(p)));
+		texts.forEach((t, j) => { results[i + j] = t.trim(); });
 	}
-	return texts.join("\n\n---\n\n");
+	return results.filter(Boolean).join("\n\n---\n\n");
 }
 
 export async function loadText(filename: string, mime: string, bytes: Uint8Array): Promise<string> {

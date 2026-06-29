@@ -40,6 +40,7 @@ export interface AgentOptions {
 	websearch?: boolean;
 	websearchBackend?: 'duckduckgo' | 'tavily';
 	canvasTools?: boolean;
+	canvas?: string; // which canvas's RAG index the agent searches
 }
 
 // Run an agent turn. `onEvent` fires for every streamed event until `done`/`error`.
@@ -70,7 +71,8 @@ export async function runAgent(
 				bash: opts.bash ?? false,
 				websearch: opts.websearch ?? false,
 				websearchBackend: opts.websearchBackend ?? 'duckduckgo',
-				canvasTools: opts.canvasTools ?? false
+				canvasTools: opts.canvasTools ?? false,
+				canvas: opts.canvas
 			})
 		});
 	} catch {
@@ -138,8 +140,6 @@ export async function testConnection(provider: Provider): Promise<string | null>
 }
 
 // ── Per-canvas RAG ───────────────────────────────────────────────────────────
-
-export const DEFAULT_CANVAS = 'default'; // ponytail: single canvas until multi-canvas exists
 
 // Index a file in the backend RAG store. Works in both Tauri and browser dev.
 export async function ragAdd(

@@ -20,12 +20,12 @@ import CardHandles from './CardHandles.svelte';
 
 	function onDblClick(e: MouseEvent) {
 		e.stopPropagation();
-		window.dispatchEvent(new CustomEvent('loom:openfile', { detail: { fileId: id } }));
+		window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
 	}
 
 	function openEditor(e: MouseEvent) {
 		e.stopPropagation();
-		window.dispatchEvent(new CustomEvent('loom:openfile', { detail: { fileId: id } }));
+		window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
 	}
 </script>
 

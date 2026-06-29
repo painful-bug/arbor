@@ -73,7 +73,7 @@
 
 	<!-- wordmark — only when expanded -->
 	{#if expanded}
-		<div class="wordmark">Loom</div>
+		<div class="wordmark">Arbor</div>
 	{/if}
 
 	<nav>

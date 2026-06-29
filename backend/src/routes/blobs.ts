@@ -1,8 +1,9 @@
-// Dropped-file blobs. Bytes live on disk in ~/.loom/blobs/<id>; mime/name in a row.
+// Dropped-file blobs. Bytes live on disk in ~/.arbor/blobs/<id>; mime/name in a row.
 // Lets files survive restart without re-dropping. Raw bytes in/out (no base64).
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { existsSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { db } from "../store/db.ts";
 import { blobMeta } from "../store/schema.ts";
@@ -27,6 +28,15 @@ blobRoutes.put("/:id", async (c) => {
 		.values({ id, mime, name })
 		.onConflictDoUpdate({ target: blobMeta.id, set: { mime, name } })
 		.run();
+	return c.json({ ok: true });
+});
+
+// Delete bytes + metadata when a file node is removed from a canvas.
+blobRoutes.delete("/:id", async (c) => {
+	const id = c.req.param("id");
+	if (!safeId(id)) return c.json({ error: "bad id" }, 400);
+	await unlink(join(BLOBS_DIR, id)).catch(() => {});
+	db.delete(blobMeta).where(eq(blobMeta.id, id)).run();
 	return c.json({ ok: true });
 });
 

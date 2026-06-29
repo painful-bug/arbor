@@ -146,7 +146,7 @@
 
 <div class="page">
 	<header>
-		<p class="eyebrow">LOOM · SETTINGS</p>
+		<p class="eyebrow">ARBOR · SETTINGS</p>
 		<h1>Preferences</h1>
 	</header>
 
