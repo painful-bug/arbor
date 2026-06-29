@@ -8,8 +8,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if (-not $RepoRoot) { $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..") }
+$RepoRoot = Split-Path -Parent $PSScriptRoot
 $TauriDir = Join-Path $RepoRoot "frontend" "src-tauri"
 $ResourcesDir = Join-Path $TauriDir "resources"
 $BinariesDir = Join-Path $TauriDir "binaries"
