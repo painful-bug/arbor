@@ -14,7 +14,13 @@
 		edit: 'Edited',
 		bash: 'Ran shell',
 		web_search: 'Searched web',
-		rag_search: 'Searched files'
+		scholar_search: 'Searched papers',
+		knowledge_base_search: 'Searched KB',
+		knowledge_base_overview: 'KB overview',
+		knowledge_base_read_source: 'Read source',
+		create_card: 'Created card',
+		create_note: 'Created note',
+		update_card: 'Updated card'
 	};
 	function basename(p: unknown): string {
 		return typeof p === 'string' ? p.split('/').pop() || p : '';

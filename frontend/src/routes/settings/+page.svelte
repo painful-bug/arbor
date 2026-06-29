@@ -142,6 +142,7 @@
 			pullProgress = String(err);
 		}
 	}
+
 </script>
 
 <div class="page">

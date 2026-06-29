@@ -5,7 +5,7 @@ import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { ocrImage, pdfToImages } from "./vision.ts";
+import { ocrImage } from "./vision.ts";
 
 function tmpPath(ext: string): string {
 	return join(tmpdir(), `arbor_${randomBytes(8).toString("hex")}${ext}`);
@@ -25,37 +25,47 @@ function docsToText(docs: { pageContent: string }[]): string {
 	return docs.map((d) => d.pageContent).join("\n\n").trim();
 }
 
-// OCR page images in batches of 6 (local engines, no rate limits).
-async function ocrPages(pages: Uint8Array[]): Promise<string> {
-	const results = new Array<string>(pages.length);
-	const BATCH = 6;
-	for (let i = 0; i < pages.length; i += BATCH) {
-		const batch = pages.slice(i, i + BATCH);
-		const texts = await Promise.all(batch.map((p) => ocrImage(p)));
-		texts.forEach((t, j) => { results[i + j] = t.trim(); });
+const PAGE_CHAR_THRESHOLD = 100;
+
+async function loadPdfPerPage(filename: string, pdfBytes: Uint8Array): Promise<string> {
+	const { default: mupdf } = await import("mupdf");
+	const doc = mupdf.Document.openDocument(pdfBytes, "application/pdf");
+	const count = Math.min(doc.countPages(), 120);
+	const pageTexts: string[] = [];
+	const scale = mupdf.Matrix.scale(2, 2);
+	let ocrCount = 0;
+
+	for (let i = 0; i < count; i++) {
+		const page = doc.loadPage(i);
+		const text = page.toStructuredText("preserve-whitespace").asText();
+
+		if (text.trim().length >= PAGE_CHAR_THRESHOLD) {
+			pageTexts.push(text.trim());
+		} else {
+			ocrCount++;
+			const pixmap = page.toPixmap(scale, mupdf.ColorSpace.DeviceRGB, false, true);
+			const ocrText = await ocrImage(pixmap.asPNG());
+			if (ocrText.trim()) {
+				pageTexts.push(ocrText.trim());
+			} else if (text.trim()) {
+				pageTexts.push(text.trim());
+			}
+		}
 	}
-	return results.filter(Boolean).join("\n\n---\n\n");
+
+	if (ocrCount > 0) {
+		console.log(`[KB] ${filename}: ${count - ocrCount} text pages, ${ocrCount} OCR'd pages`);
+	}
+
+	return pageTexts.join("\n\n");
 }
 
 export async function loadText(filename: string, mime: string, bytes: Uint8Array): Promise<string> {
 	const lower = filename.toLowerCase();
 
-	// ── PDF ──────────────────────────────────────────────────────────────────
+	// ── PDF (per-page routing: text pages kept, thin/image pages OCR'd) ─────
 	if (mime === "application/pdf" || lower.endsWith(".pdf")) {
-		// 1. Try text extraction first (fast, free, works for text-based PDFs).
-		const { PDFLoader } = await import("@langchain/community/document_loaders/fs/pdf");
-		const text = await withTempFile(".pdf", bytes, async (p) => {
-			const docs = await new PDFLoader(p, { splitPages: false }).load();
-			return docsToText(docs);
-		});
-
-		if (text.trim().length > 50) return text; // has real text content
-
-		// 2. No text extracted → scanned PDF. Render pages and OCR via vision LLM.
-		console.log(`[RAG] ${filename}: no text in PDF, falling back to vision OCR`);
-		const pages = await pdfToImages(bytes);
-		if (!pages.length) return "";
-		return ocrPages(pages);
+		return loadPdfPerPage(filename, bytes);
 	}
 
 	// ── DOCX ─────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ import { canvasRoutes } from "./routes/canvases.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { blobRoutes } from "./routes/blobs.ts";
 import { keyRoutes } from "./routes/keys.ts";
-import { ragRoutes } from "./routes/rag.ts";
+import { kbRoutes } from "./routes/kb.ts";
 import { agentRoutes } from "./routes/agent.ts";
 import { fileRoutes } from "./routes/files.ts";
 import { ollamaRoutes } from "./routes/ollama.ts";
@@ -46,7 +46,7 @@ export function createApp(token: string) {
 	app.route("/api/canvases", canvasRoutes);
 	app.route("/api/settings", settingsRoutes);
 	app.route("/api/blobs", blobRoutes);
-	app.route("/api/rag", ragRoutes);
+	app.route("/api/kb", kbRoutes);
 	app.route("/api/agent", agentRoutes);
 	app.route("/api/files", fileRoutes);
 	app.route("/api", keyRoutes); // /api/keys/* and /api/providers/*

@@ -1,11 +1,9 @@
-// RAG routes: index a file, vector search, clear canvas.
 import { Hono } from "hono";
-import { addFile, search, clearCanvas, removeFile } from "../rag/index.ts";
+import { addFile, search, clearCanvas, contentsOf, removeFile } from "../kb/index.ts";
 
-export const ragRoutes = new Hono();
+export const kbRoutes = new Hono();
 
-// Index a file for this canvas. Body = raw bytes; X-Filename + Content-Type headers.
-ragRoutes.post("/:canvas/files", async (c) => {
+kbRoutes.post("/:canvas/files", async (c) => {
 	const canvas = c.req.param("canvas");
 	const bytes = new Uint8Array(await c.req.arrayBuffer());
 	const mime = c.req.header("Content-Type") ?? "application/octet-stream";
@@ -14,30 +12,33 @@ ragRoutes.post("/:canvas/files", async (c) => {
 		const chunks = await addFile(canvas, filename, mime, bytes);
 		return c.json({ chunks });
 	} catch (err) {
-		console.error(`RAG addFile error [${filename}]:`, err);
+		console.error(`[KB] addFile error [${filename}]:`, err);
 		return c.json({ error: String((err as Error)?.message ?? err) }, 500);
 	}
 });
 
-// Vector search for a canvas.
-ragRoutes.get("/:canvas/search", async (c) => {
+kbRoutes.get("/:canvas/search", async (c) => {
 	const canvas = c.req.param("canvas");
 	const q = c.req.query("q") ?? "";
-	const k = Math.min(Number(c.req.query("k") ?? 4), 20);
+	const k = Math.min(Number(c.req.query("k") ?? 6), 20);
 	if (!q) return c.json({ results: [] });
 	const results = await search(canvas, q, k);
 	return c.json({ results });
 });
 
-// Remove one file's chunks from a canvas index.
-ragRoutes.delete("/:canvas/files/:filename", async (c) => {
+kbRoutes.delete("/:canvas/files/:filename", async (c) => {
 	const filename = decodeURIComponent(c.req.param("filename"));
 	await removeFile(c.req.param("canvas"), filename);
 	return c.json({ ok: true });
 });
 
-// Clear all indexed content for a canvas (e.g. canvas deleted).
-ragRoutes.delete("/:canvas/files", async (c) => {
+kbRoutes.delete("/:canvas/files", async (c) => {
 	await clearCanvas(c.req.param("canvas"));
 	return c.json({ ok: true });
+});
+
+kbRoutes.get("/:canvas/contents", async (c) => {
+	const canvas = c.req.param("canvas");
+	const contents = await contentsOf(canvas);
+	return c.json(contents);
 });
