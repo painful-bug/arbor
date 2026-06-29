@@ -48,7 +48,8 @@ fn bun_path() -> PathBuf {
         PathBuf::from("bun")
     } else {
         let exe = std::env::current_exe().expect("current_exe");
-        exe.parent().unwrap().join("bun")
+        let name = if cfg!(target_os = "windows") { "bun.exe" } else { "bun" };
+        exe.parent().unwrap().join(name)
     }
 }
 

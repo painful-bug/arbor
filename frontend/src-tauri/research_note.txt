@@ -1,0 +1,1 @@
+This research card explores Data Warehousing (UNIT-1 and UNIT-2_DW&DM_DSZ.pdf) alongside ETL processes and OLAP subcategories. It includes analysis of embedded multidimensional analytics in Oracle OLAP: Embedded Multidimensional Analytics Server. Key focus areas: data integration patterns, multidimensional query optimization, and hierarchical data modeling techniques.
