@@ -11,6 +11,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use tauri::{AppHandle, Manager, Runtime, State};
 
 #[derive(Clone, serde::Serialize)]
@@ -56,10 +59,23 @@ fn bun_path() -> PathBuf {
 pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<Backend, String> {
     let entry = entry_path(app);
     let bun = bun_path();
-    let mut child = Command::new(&bun)
+
+    let mut command = Command::new(&bun);
+    command
         .arg(&entry)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    // Bun is a console program; spawning it from this GUI app would flash a
+    // console window on Windows. CREATE_NO_WINDOW suppresses it. stdout is
+    // still piped below, so the handshake and logs are unaffected.
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = command
         .spawn()
         .map_err(|e| format!("spawn backend ({} {}): {e}", bun.display(), entry.display()))?;
 
