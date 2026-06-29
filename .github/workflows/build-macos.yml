@@ -82,19 +82,30 @@ jobs:
           cp "$BUN_REAL" "frontend/src-tauri/binaries/bun-$TRIPLE"
           chmod +x "frontend/src-tauri/binaries/bun-$TRIPLE"
 
-      - name: Install DMG bundler deps
-        run: brew install create-dmg
-
-      - name: Build Tauri
-        run: cd frontend && npx tauri build
+      - name: Build Tauri (.app only)
+        run: cd frontend && npx tauri build --bundles app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          APP_PATH=$(find frontend/src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          create-dmg \
+            --volname "Arbor" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --app-drop-link 425 175 \
+            --icon "$(basename "$APP_PATH")" 175 175 \
+            "Arbor.dmg" \
+            "$APP_PATH"
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
           name: arbor-macos-dmg
-          path: frontend/src-tauri/target/release/bundle/dmg/*.dmg
+          path: Arbor.dmg
           if-no-files-found: error
 
   build-windows:

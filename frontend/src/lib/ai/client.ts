@@ -188,6 +188,30 @@ export async function kbAdd(
 	}
 }
 
+// ── Clean Up — LLM-based semantic refinement ───────────────────────────────
+
+export async function cleanupRefine(
+	canvas: string,
+	items: { id: string; group: string; title: string; snippet: string }[],
+	provider: string,
+	model: string,
+): Promise<Record<string, string>> {
+	const { apiFetch } = await import('$lib/api');
+	try {
+		const res = await apiFetch(`/api/cleanup/${encodeURIComponent(canvas)}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider, model, items }),
+			signal: AbortSignal.timeout(6000),
+		});
+		if (!res.ok) return {};
+		const data = (await res.json()) as { labels?: Record<string, string> };
+		return data.labels ?? {};
+	} catch {
+		return {};
+	}
+}
+
 export async function kbRemove(canvas: string, filename: string): Promise<void> {
 	const { apiFetch } = await import('$lib/api');
 	try {

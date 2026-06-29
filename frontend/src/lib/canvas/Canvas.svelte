@@ -35,6 +35,8 @@
 		redo,
 		deleteNodes,
 		groupNodes,
+		cleanUp,
+		settings,
 		init
 	} from './store.svelte';
 	import Library from './Library.svelte';
@@ -43,6 +45,7 @@
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
 	import { kbAdd, kbClear, kbContents, kbRemove } from '$lib/ai/client';
 	import { currentCanvasId } from './store.svelte';
+	import { goto } from '$app/navigation';
 	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
@@ -285,6 +288,7 @@
 	}
 
 	// Keyboard: tool hotkeys, Escape, Cmd/Ctrl+Z undo/redo.
+	let lastC = 0;
 	function onKeydown(e: KeyboardEvent) {
 		const tag = (e.target as HTMLElement)?.tagName;
 		const inInput =
@@ -341,7 +345,12 @@
 					if (tool.active === 'select' && selectedNodes.length) { duplicateSelected(); e.preventDefault(); }
 					else { tool.active = 'duplicate'; e.preventDefault(); }
 				}
-				else if (e.key === 'c' || e.key === 'C') { tool.active = 'connect'; e.preventDefault(); }
+				else if (e.key === 'c' || e.key === 'C') {
+					const now = Date.now();
+					if (now - lastC < 350) { lastC = 0; tool.active = 'hand'; tool.connectFrom = null; void cleanUp(); e.preventDefault(); return; }
+					lastC = now;
+					tool.active = 'connect'; e.preventDefault();
+				}
 				else if (e.key === 'u' || e.key === 'U') { undo(); e.preventDefault(); }
 				else if (e.key === 'r' || e.key === 'R') { redo(); e.preventDefault(); }
 				else if (e.key === 'f' || e.key === 'F') { doFitView(); e.preventDefault(); }
@@ -352,6 +361,11 @@
 			}
 		}
 
+		if ((e.metaKey || e.ctrlKey) && e.key === ',' && !inInput) {
+			e.preventDefault();
+			goto('/settings');
+			return;
+		}
 		if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
 			e.preventDefault();
 			if (e.shiftKey) redo();
@@ -559,6 +573,7 @@
 						selectionOnDrag={tool.active === 'select'}
 						panOnDrag={tool.active === 'select' ? [1, 2] : true}
 						proOptions={{ hideAttribution: true }}
+						snapGrid={settings.snapToGrid ? [28, 28] : undefined}
 						onnodedragstop={onNodeDragStop}
 					ondelete={onDelete}
 						onpaneclick={onPaneClick}
@@ -606,7 +621,7 @@
 						</div>
 					{/if}
 
-					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} />
+					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => cleanUp()} />
 				</div>
 
 				{#if openFileId}

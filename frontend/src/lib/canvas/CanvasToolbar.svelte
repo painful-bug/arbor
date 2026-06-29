@@ -6,13 +6,15 @@
 		onFit,
 		onUndo,
 		onRedo,
-		onKB
+		onKB,
+		onCleanUp
 	}: {
 		onDeepResearch: () => void;
 		onFit: () => void;
 		onUndo: () => void;
 		onRedo: () => void;
 		onKB: () => void;
+		onCleanUp: () => void;
 	} = $props();
 
 	const tools: { id: Tool; label: string; icon: string; key: string; title: string }[] = [
@@ -64,6 +66,11 @@
 			<span class="icon">⊡</span>
 			<span class="label">Fit</span>
 			<span class="key">F</span>
+		</button>
+		<button class="action" onclick={onCleanUp} title="Clean Up — group cards into clusters (CC)">
+			<span class="icon">✦</span>
+			<span class="label">Clean Up</span>
+			<span class="key">CC</span>
 		</button>
 		<button class="action" onclick={onDeepResearch} title="Deep Research -- plan and search real papers">
 			<span class="icon">🔬</span>

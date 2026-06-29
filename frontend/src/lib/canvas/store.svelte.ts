@@ -342,6 +342,8 @@ function applySettings(p: Record<string, unknown>): void {
 		if (typeof ws.enabled === 'boolean') settings.websearch.enabled = ws.enabled;
 		if (ws.backend === 'duckduckgo' || ws.backend === 'tavily') settings.websearch.backend = ws.backend;
 	}
+	if (typeof p.snapToGrid === 'boolean') settings.snapToGrid = p.snapToGrid;
+	if (typeof p.cleanupSemantic === 'boolean') settings.cleanupSemantic = p.cleanupSemantic;
 }
 
 // Apply any localStorage-cached settings immediately (synchronous, before backend responds).
@@ -367,7 +369,9 @@ export function persistSettings(): void {
 		models: { ...settings.models },
 		workflow: settings.workflow,
 		bashEnabled: settings.bashEnabled,
-		websearch: { ...settings.websearch }
+		websearch: { ...settings.websearch },
+		snapToGrid: settings.snapToGrid,
+		cleanupSemantic: settings.cleanupSemantic,
 	};
 	try {
 		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));
@@ -639,7 +643,7 @@ export function deleteNodes(ids: string[]): void {
 
 // ── Group nodes ─────────────────────────────────────────────────────────────
 // ponytail: parent-node approach — SvelteFlow handles drag-together natively.
-export interface GroupData { block: string; [key: string]: unknown }
+export interface GroupData { block: string; label?: string; cleanup?: boolean; [key: string]: unknown }
 
 export function groupNodes(ids: string[]): string {
 	const selected = flow.nodes.filter((n) => ids.includes(n.id));
@@ -689,6 +693,200 @@ export function groupNodes(ids: string[]): string {
 	// Group must appear before its children in the array
 	flow.nodes = [...rest, groupNode, ...reparented];
 	return groupId;
+}
+
+// ── Clean Up — semantic clustering ─────────────────────────────────────────
+
+function categoryOf(node: Node): string {
+	switch (node.type) {
+		case 'card': {
+			const wf = (node.data as CardData).workflow ?? '';
+			return /research|deep/i.test(wf) ? 'Research' : 'Q&A';
+		}
+		case 'text': return 'Notes';
+		case 'web': return 'Web';
+		case 'file': {
+			const kind = (node.data as { kind?: string }).kind ?? 'other';
+			const map: Record<string, string> = {
+				pdf: 'PDFs', image: 'Images', markdown: 'Markdown',
+				docx: 'Documents', text: 'Text Files', other: 'Files',
+			};
+			return map[kind] ?? 'Files';
+		}
+		default: return 'Other';
+	}
+}
+
+const CATEGORY_ORDER = [
+	'Q&A', 'Research', 'Notes', 'PDFs', 'Documents',
+	'Markdown', 'Text Files', 'Images', 'Web', 'Files', 'Other',
+];
+
+function snippetOf(node: Node): string {
+	const d = node.data as Record<string, unknown>;
+	if (node.type === 'card') {
+		const turns = d.turns as Turn[] | undefined;
+		const title = (d.title as string) ?? '';
+		const answer = turns?.length ? turns[0].answer?.slice(0, 200) : '';
+		return `${title} ${answer}`.trim();
+	}
+	if (node.type === 'text') return ((d.text as string) ?? '').slice(0, 200);
+	if (node.type === 'file') {
+		const name = (d.filename as string) ?? '';
+		const preview = (d.preview as string) ?? '';
+		return `${name} ${preview.slice(0, 200)}`.trim();
+	}
+	if (node.type === 'web') return (d.title as string) ?? (d.url as string) ?? '';
+	return '';
+}
+
+// ponytail: shortest-column bin-packing — not strict grid, ragged masonry feel
+function packCluster(nodes: Node[]): { positions: Map<string, XYPosition>; w: number; h: number } {
+	const GAP = 24;
+	const cols = Math.max(1, Math.min(4, Math.round(Math.sqrt(nodes.length))));
+	const colW = Math.max(...nodes.map((n) => n.width ?? n.measured?.width ?? 400));
+	const colHeights = new Array(cols).fill(0) as number[];
+	const positions = new Map<string, XYPosition>();
+
+	const sorted = [...nodes].sort((a, b) => {
+		const ah = a.measured?.height ?? a.height ?? 280;
+		const bh = b.measured?.height ?? b.height ?? 280;
+		return bh - ah;
+	});
+
+	for (const n of sorted) {
+		const shortest = colHeights.indexOf(Math.min(...colHeights));
+		positions.set(n.id, { x: shortest * (colW + GAP), y: colHeights[shortest] });
+		colHeights[shortest] += (n.measured?.height ?? n.height ?? 280) + GAP;
+	}
+
+	return {
+		positions,
+		w: cols * colW + (cols - 1) * GAP,
+		h: Math.max(...colHeights) - GAP,
+	};
+}
+
+export async function cleanUp(ids?: string[]): Promise<void> {
+	// Scope: selected subset or all top-level non-group nodes
+	let targets: Node[];
+	if (ids && ids.length >= 2) {
+		const idSet = new Set(ids);
+		targets = flow.nodes.filter((n) => idSet.has(n.id) && n.type !== 'group');
+	} else {
+		targets = flow.nodes.filter((n) => !n.parentId && n.type !== 'group' && !(n.data as GroupData).cleanup);
+	}
+	if (targets.length === 0) return;
+
+	// Deterministic categories
+	const groups = new Map<string, Node[]>();
+	for (const n of targets) {
+		const cat = categoryOf(n);
+		if (!groups.has(cat)) groups.set(cat, []);
+		groups.get(cat)!.push(n);
+	}
+
+	// Hybrid refine: LLM sub-splits same-type clusters
+	if (settings.cleanupSemantic) {
+		try {
+			const { cleanupRefine } = await import('$lib/ai/client');
+			const items = targets.map((n) => ({
+				id: n.id,
+				group: categoryOf(n),
+				title: (n.data as Record<string, unknown>).title as string ?? (n.data as Record<string, unknown>).filename as string ?? '',
+				snippet: snippetOf(n),
+			}));
+			const canvas = currentCanvasId() || 'default';
+			const labels = await cleanupRefine(canvas, items, settings.provider, settings.models[settings.provider]);
+			if (Object.keys(labels).length > 0) {
+				groups.clear();
+				for (const n of targets) {
+					const cat = labels[n.id] ?? categoryOf(n);
+					if (!groups.has(cat)) groups.set(cat, []);
+					groups.get(cat)!.push(n);
+				}
+			}
+		} catch { /* deterministic fallback */ }
+	}
+
+	// Sort cluster keys by precedence
+	const sorted = [...groups.keys()].sort((a, b) => {
+		const ai = CATEGORY_ORDER.indexOf(a);
+		const bi = CATEGORY_ORDER.indexOf(b);
+		return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+	});
+
+	// Pack each cluster, then lay them out left→right with wrapping
+	const CLUSTER_GAP = 120;
+	const PADDING = 28;
+	const packed = new Map<string, ReturnType<typeof packCluster>>();
+	for (const cat of sorted) packed.set(cat, packCluster(groups.get(cat)!));
+
+	const totalArea = [...packed.values()].reduce((s, p) => s + p.w * p.h, 0);
+	const maxRowW = Math.max(2400, Math.sqrt(totalArea) * 1.6);
+
+	// Anchor near existing min position
+	const anchorX = Math.min(...targets.map((n) => n.position.x));
+	const anchorY = Math.min(...targets.map((n) => n.position.y));
+
+	let curX = 0;
+	let curY = 0;
+	let rowH = 0;
+	const clusterOrigins = new Map<string, XYPosition>();
+	for (const cat of sorted) {
+		const p = packed.get(cat)!;
+		const boxW = p.w + PADDING * 2;
+		const boxH = p.h + PADDING * 2 + 24; // +24 for label
+		if (curX > 0 && curX + boxW > maxRowW) {
+			curX = 0;
+			curY += rowH + CLUSTER_GAP;
+			rowH = 0;
+		}
+		clusterOrigins.set(cat, { x: curX, y: curY });
+		curX += boxW + CLUSTER_GAP;
+		rowH = Math.max(rowH, boxH);
+	}
+
+	// Remove old cleanup backdrops
+	const remaining = flow.nodes.filter((n) => !(n.type === 'group' && (n.data as GroupData).cleanup));
+
+	// Build new positions + backdrop group nodes
+	const backdrops: Node[] = [];
+	const newPos = new Map<string, XYPosition>();
+	for (const cat of sorted) {
+		const origin = clusterOrigins.get(cat)!;
+		const p = packed.get(cat)!;
+		const block = BLOCKS[backdrops.length % BLOCKS.length];
+
+		// Backdrop
+		backdrops.push({
+			id: nextId(),
+			type: 'group',
+			position: { x: anchorX + origin.x, y: anchorY + origin.y },
+			data: { block, label: cat, cleanup: true } satisfies GroupData,
+			width: p.w + PADDING * 2,
+			height: p.h + PADDING * 2 + 24,
+			selectable: false,
+			draggable: false,
+		});
+
+		// Compute new card positions
+		for (const n of groups.get(cat)!) {
+			const pos = p.positions.get(n.id)!;
+			newPos.set(n.id, {
+				x: anchorX + origin.x + PADDING + pos.x,
+				y: anchorY + origin.y + PADDING + 24 + pos.y,
+			});
+		}
+	}
+
+	// Rebuild nodes as fresh objects so SvelteFlow reacts (in-place position
+	// mutation on existing refs is not picked up). Backdrops before cards (z-order).
+	const untouched = remaining.filter((n) => !newPos.has(n.id));
+	const moved = remaining
+		.filter((n) => newPos.has(n.id))
+		.map((n) => ({ ...n, position: newPos.get(n.id)! }));
+	flow.nodes = [...untouched, ...backdrops, ...moved];
 }
 
 // Append a streamed agent event (tool call / reasoning) to the active turn's timeline.

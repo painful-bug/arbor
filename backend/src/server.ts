@@ -14,6 +14,7 @@ import { kbRoutes } from "./routes/kb.ts";
 import { agentRoutes } from "./routes/agent.ts";
 import { fileRoutes } from "./routes/files.ts";
 import { ollamaRoutes } from "./routes/ollama.ts";
+import { cleanupRoutes } from "./routes/cleanup.ts";
 import { importLegacyIfNeeded } from "./store/import-legacy.ts";
 import { ARBOR_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
 
@@ -51,6 +52,7 @@ export function createApp(token: string) {
 	app.route("/api/files", fileRoutes);
 	app.route("/api", keyRoutes); // /api/keys/* and /api/providers/*
 	app.route("/api/ollama", ollamaRoutes);
+	app.route("/api/cleanup", cleanupRoutes);
 
 	return app;
 }

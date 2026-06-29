@@ -325,6 +325,21 @@
 	</section>
 
 	<section>
+		<h2>Canvas</h2>
+		<p class="sub">Grid and layout options for the canvas.</p>
+
+		<label class="toggle-row">
+			<input type="checkbox" bind:checked={settings.snapToGrid} onchange={persistSettings} />
+			<span>Snap nodes to grid</span>
+		</label>
+
+		<label class="toggle-row">
+			<input type="checkbox" bind:checked={settings.cleanupSemantic} onchange={persistSettings} />
+			<span>Use AI to refine Clean Up clusters</span>
+		</label>
+	</section>
+
+	<section>
 		<h2>Tools</h2>
 		<p class="sub">File read/write and web search are always available to the agent.</p>
 
