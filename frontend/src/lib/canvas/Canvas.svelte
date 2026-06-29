@@ -753,8 +753,6 @@
 	.wrap.cursor-text :global(.svelte-flow__pane) { cursor: text; }
 	.wrap.cursor-copy :global(.svelte-flow__pane) { cursor: copy; }
 	.wrap.cursor-crosshair :global(.svelte-flow__pane) { cursor: crosshair; }
-<<<<<<< HEAD
-	.wrap.cursor-default :global(.svelte-flow__pane) { cursor: default; }
 
 	.selection-bar {
 		position: absolute;
