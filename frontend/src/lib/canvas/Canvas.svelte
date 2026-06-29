@@ -36,6 +36,7 @@
 		deleteNodes,
 		groupNodes,
 		cleanUp,
+		ungroupCleanup,
 		settings,
 		init
 	} from './store.svelte';
@@ -135,6 +136,10 @@
 	}
 
 	const selectedNodes = $derived(flow.nodes.filter((n) => n.selected));
+	const selectedCleanupGroup = $derived(
+		selectedNodes.length === 1 && selectedNodes[0].type === 'group' && (selectedNodes[0].data as Record<string, unknown>).cleanup
+			? selectedNodes[0] : null
+	);
 
 	// Node click: duplicate / color / connect tool dispatch.
 	function onNodeClick(node: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }) {
@@ -621,6 +626,13 @@
 						</div>
 					{/if}
 
+					{#if selectedCleanupGroup}
+						<button
+							class="ungroup-trigger glass"
+							onclick={() => ungroupCleanup(selectedCleanupGroup.id)}
+						>Ungroup</button>
+					{/if}
+
 					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => cleanUp()} />
 				</div>
 
@@ -805,6 +817,26 @@
 	}
 	.sel-btn:hover { background: rgba(255,255,255,0.22); }
 	.sel-btn--danger:hover { background: rgba(255, 80, 80, 0.5); }
+
+	.ungroup-trigger {
+		position: absolute;
+		bottom: 64px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 40;
+		padding: 8px 18px;
+		border-radius: var(--r-pill, 999px);
+		border: none;
+		font-size: 14px;
+		font-family: var(--font-sans);
+		font-weight: 500;
+		color: var(--c-ink);
+		cursor: pointer;
+		white-space: nowrap;
+		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
+	}
+	.ungroup-trigger:hover { transform: translateX(-50%) scale(1.04); }
+	.ungroup-trigger:active { transform: translateX(-50%) scale(0.95); }
 
 	/* ── KB overlay ──────────────────────────────────────────────────────────── */
 	.kb-backdrop {

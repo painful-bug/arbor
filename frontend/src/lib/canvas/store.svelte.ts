@@ -767,7 +767,12 @@ function packCluster(nodes: Node[]): { positions: Map<string, XYPosition>; w: nu
 	};
 }
 
+export function ungroupCleanup(groupId: string): void {
+	flow.nodes = flow.nodes.filter((n) => n.id !== groupId);
+}
+
 export async function cleanUp(ids?: string[]): Promise<void> {
+	pushHistory();
 	// Scope: selected subset or all top-level non-group nodes
 	let targets: Node[];
 	if (ids && ids.length >= 2) {
@@ -866,7 +871,6 @@ export async function cleanUp(ids?: string[]): Promise<void> {
 			data: { block, label: cat, cleanup: true } satisfies GroupData,
 			width: p.w + PADDING * 2,
 			height: p.h + PADDING * 2 + 24,
-			selectable: false,
 			draggable: false,
 		});
 
