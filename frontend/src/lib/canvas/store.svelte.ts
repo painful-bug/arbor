@@ -461,6 +461,17 @@ export function addWebCard(position: XYPosition, url: string, opts: { parentId?:
 	return id;
 }
 
+// Normalized highlight rect for a PDF page (coords 0–1 relative to page box).
+export interface PdfHL {
+	page: number;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	color: string;   // CSS color string, e.g. 'rgba(255,222,89,0.45)'
+	text?: string;   // selected text content, used for Send-to-chat
+}
+
 // File card on the canvas: shows a preview of a dropped file + indexing progress.
 export interface FileData {
 	filename: string;
@@ -470,6 +481,7 @@ export interface FileData {
 	kind: import('$lib/files').FileKind;
 	path?: string;
 	preview?: string;
+	highlights?: PdfHL[];
 	[key: string]: unknown;
 }
 
@@ -488,7 +500,7 @@ export function addFileCard(
 		kind: opts.kind ?? 'other',
 		path: opts.path
 	};
-	flow.nodes = [...flow.nodes, { id, type: 'file', position, data }];
+	flow.nodes = [...flow.nodes, { id, type: 'file', position, data, width: 220, height: 280 }];
 	return id;
 }
 
@@ -501,6 +513,12 @@ export function setFileStatus(id: string, status: FileData['status']): void {
 export function setFilePreview(id: string, preview: string): void {
 	flow.nodes = flow.nodes.map((n) =>
 		n.id === id ? { ...n, data: { ...n.data, preview } } : n
+	);
+}
+
+export function setFileHighlights(id: string, highlights: PdfHL[]): void {
+	flow.nodes = flow.nodes.map((n) =>
+		n.id === id ? { ...n, data: { ...n.data, highlights } } : n
 	);
 }
 
