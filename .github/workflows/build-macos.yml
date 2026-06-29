@@ -1,15 +1,15 @@
-name: Build macOS DMG
+name: Build Installers
 
 on:
   push:
     branches: [main]
 
 concurrency:
-  group: build-macos-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-macos:
     runs-on: macos-latest
     timeout-minutes: 30
 
@@ -93,3 +93,92 @@ jobs:
           name: arbor-macos-dmg
           path: frontend/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
+
+  build-windows:
+    needs: build-macos
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            frontend\src-tauri\target
+          key: rust-windows-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
+          restore-keys: rust-windows-
+
+      - name: Install frontend deps
+        run: cd frontend && npm ci
+
+      - name: Stage backend
+        shell: pwsh
+        run: |
+          $ResourcesDir = "frontend/src-tauri/resources"
+          if (Test-Path "$ResourcesDir/backend") { Remove-Item -Recurse -Force "$ResourcesDir/backend" }
+          New-Item -ItemType Directory -Path "$ResourcesDir/backend" -Force | Out-Null
+          Copy-Item -Recurse "backend/src" "$ResourcesDir/backend/src"
+          Copy-Item "backend/package.json" "$ResourcesDir/backend/"
+          if (Test-Path "backend/bun.lock") { Copy-Item "backend/bun.lock" "$ResourcesDir/backend/" }
+          if (Test-Path "backend/native") { Copy-Item -Recurse "backend/native" "$ResourcesDir/backend/native" }
+          Push-Location "$ResourcesDir/backend"
+          bun install --frozen-lockfile 2>$null
+          if ($LASTEXITCODE -ne 0) { bun install }
+          Pop-Location
+
+      - name: Prune non-Windows binaries
+        shell: pwsh
+        run: |
+          $NM = "frontend/src-tauri/resources/backend/node_modules"
+          if (Test-Path $NM) {
+            Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -in @("linux","darwin","macos") } |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $NM -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '\.(d\.ts|d\.mts|d\.cts)$' -or $_.Name -match '^(README|CHANGELOG|LICENSE)' } |
+              Remove-Item -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Copy Bun sidecar
+        shell: pwsh
+        run: |
+          $BinDir = "frontend/src-tauri/binaries"
+          New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+          $BunExe = (Get-Command bun).Source
+          Copy-Item $BunExe "$BinDir/bun-x86_64-pc-windows-msvc.exe"
+
+      - name: Build Tauri
+        run: cd frontend && npx tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbor-windows-nsis
+          path: frontend/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbor-windows-msi
+          path: frontend/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: warn
