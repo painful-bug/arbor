@@ -405,9 +405,8 @@
 	// its clicks don't bubble here.
 	function onWrapPointerDown(e: PointerEvent) {
 		const t = e.target as HTMLElement;
-		if (t?.closest('.svelte-flow__node') || t?.closest('.canvas-actions')) return;
+		if (t?.closest('.svelte-flow__node') || t?.closest('.canvas-actions') || t?.closest('.topbar')) return;
 		if (openFileId) openFileId = null;
-		chatOpen = false;
 		ui.sidebarExpanded = false;
 	}
 
@@ -662,24 +661,25 @@
 						>Ungroup</button>
 					{/if}
 
-					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => doCleanUp()} />
-
-					<div class="canvas-actions">
-						<!-- theme toggle fades out while chat is open (panel "covers" it) -->
-						<div class="theme-slot" class:hidden={chatOpen}>
-							<ThemeToggle />
+					<div class="topbar">
+						<span class="topbar-spacer"></span>
+						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => doCleanUp()} />
+						<div class="canvas-actions">
+							<div class="theme-slot" class:hidden={chatOpen}>
+								<ThemeToggle />
+							</div>
+							<button
+								class="canvas-action-btn glass"
+								class:active={chatOpen}
+								onclick={() => (chatOpen = !chatOpen)}
+								aria-label={chatOpen ? 'Close chat panel' : 'Open chat panel'}
+								title={chatOpen ? 'Close chat (⌘\\)' : 'Open chat (⌘\\)'}
+							>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+								</svg>
+							</button>
 						</div>
-						<button
-							class="canvas-action-btn glass"
-							class:active={chatOpen}
-							onclick={() => (chatOpen = !chatOpen)}
-							aria-label={chatOpen ? 'Close chat panel' : 'Open chat panel'}
-							title={chatOpen ? 'Close chat (⌘\\)' : 'Open chat (⌘\\)'}
-						>
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-								<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-							</svg>
-						</button>
 					</div>
 				</div>
 
@@ -1002,14 +1002,27 @@
 		font-size: 12px;
 		word-break: break-word;
 	}
+	/* 3-col grid: [spacer 1fr] [toolbar auto] [canvas-actions 1fr].
+	   Toolbar stays centered; canvas-actions can never push into it. */
+	.topbar {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 56px;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		align-items: center;
+		pointer-events: none;
+		z-index: 40;
+	}
 	.canvas-actions {
-		position: fixed;
-		top: 12px;
-		right: 16px;
-		z-index: 60;
+		justify-self: end;
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 10px;
+		padding-right: 20px;
+		pointer-events: auto;
 	}
 	.theme-slot {
 		display: flex;
