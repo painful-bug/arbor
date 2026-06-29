@@ -86,11 +86,6 @@
 
 <style>
 	.toolbar {
-		position: absolute;
-		top: 14px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 40;
 		display: flex;
 		align-items: center;
 		gap: 4px;
@@ -100,6 +95,7 @@
 		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
 		box-shadow: var(--elev-2, 0 6px 24px rgba(0, 0, 0, 0.12));
 		user-select: none;
+		pointer-events: auto; /* parent topbar has pointer-events:none */
 	}
 	.tools, .actions {
 		display: flex;

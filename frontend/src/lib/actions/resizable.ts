@@ -5,11 +5,14 @@ export interface ResizableOptions {
 	max: number | (() => number);
 	getWidth: () => number;
 	onwidth: (w: number) => void;
+	onstart?: () => void;
+	onend?: () => void;
 }
 
 export function resizable(node: HTMLElement, opts: ResizableOptions) {
 	function pointerdown(e: PointerEvent) {
 		e.preventDefault();
+		opts.onstart?.();
 		const startX = e.clientX;
 		const startW = opts.getWidth();
 		const maxW = typeof opts.max === 'function' ? opts.max() : opts.max;
@@ -17,6 +20,7 @@ export function resizable(node: HTMLElement, opts: ResizableOptions) {
 			opts.onwidth(Math.max(opts.min, Math.min(maxW, startW + startX - ev.clientX)));
 		};
 		const up = () => {
+			opts.onend?.();
 			window.removeEventListener('pointermove', move);
 			window.removeEventListener('pointerup', up);
 		};

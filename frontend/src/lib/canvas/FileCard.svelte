@@ -108,7 +108,7 @@ import CardHandles from './CardHandles.svelte';
 
 <style>
 	.file {
-		width: 220px;
+		width: 100%;
 		min-height: 160px;
 		max-height: 400px;
 		position: relative;
