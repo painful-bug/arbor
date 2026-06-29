@@ -76,6 +76,9 @@ jobs:
               ;;
           esac
 
+          # Remove .bin symlinks (bun resolves modules directly, broken symlinks crash Tauri bundler)
+          rm -rf "$NM/.bin" 2>/dev/null || true
+
           # Remove packages not needed at runtime (~100MB+)
           rm -rf "$NM/onnxruntime-web" "$NM/onnx-proto" "$NM/playwright-core" 2>/dev/null || true
 
@@ -85,6 +88,9 @@ jobs:
           # Remove source maps, type declarations, docs, tests
           find "$NM" -type f \( -name "*.map" -o -name "*.d.ts" -o -name "*.d.mts" -o -name "*.d.cts" -o -name "README*" -o -name "CHANGELOG*" -o -name "LICENSE*" -o -name "*.md" \) -delete 2>/dev/null || true
           find "$NM" -type d \( -name "test" -o -name "tests" -o -name "__tests__" -o -name "example" -o -name "examples" -o -name "benchmark" -o -name "benchmarks" -o -name "docs" -o -name ".github" \) -exec rm -rf {} + 2>/dev/null || true
+
+          # Remove any remaining broken symlinks
+          find "$NM" -xtype l -delete 2>/dev/null || true
 
           echo "Backend size after pruning: $(du -sh frontend/src-tauri/resources/backend | cut -f1)"
 
@@ -173,6 +179,10 @@ jobs:
         run: |
           $NM = "frontend/src-tauri/resources/backend/node_modules"
           if (Test-Path $NM) {
+            # Remove .bin (bun resolves modules directly, broken symlinks crash Tauri bundler)
+            $binDir = Join-Path $NM ".bin"
+            if (Test-Path $binDir) { Remove-Item -Recurse -Force $binDir }
+
             # Remove other-platform dirs
             Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
               Where-Object { $_.Name -in @("linux","darwin","macos") } |

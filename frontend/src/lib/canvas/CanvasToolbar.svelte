@@ -127,7 +127,7 @@
 		white-space: nowrap;
 	}
 	.tool:hover, .action:hover {
-		background: rgba(0, 0, 0, 0.06);
+		background: rgba(var(--ink-rgb), 0.06);
 	}
 	.tool.active {
 		background: var(--c-ink);

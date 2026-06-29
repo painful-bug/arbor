@@ -137,7 +137,7 @@
 		background: none;
 		border: none;
 		cursor: pointer;
-		color: rgba(0, 0, 0, 0.55);
+		color: rgba(var(--ink-rgb), 0.55);
 		font: inherit;
 	}
 	.chev {
@@ -152,7 +152,7 @@
 	}
 	.count {
 		font-size: 11px;
-		color: rgba(0, 0, 0, 0.4);
+		color: rgba(var(--ink-rgb), 0.4);
 	}
 	.pulse {
 		width: 6px;
@@ -180,7 +180,7 @@
 		height: 7px;
 		margin-top: 4px;
 		border-radius: 50%;
-		background: rgba(0, 0, 0, 0.25);
+		background: rgba(var(--ink-rgb), 0.25);
 	}
 	.dot.running {
 		background: var(--c-ink, #333);
@@ -194,10 +194,10 @@
 	}
 	.dot.think {
 		background: transparent;
-		border: 1px solid rgba(0, 0, 0, 0.3);
+		border: 1px solid rgba(var(--ink-rgb), 0.3);
 	}
 	.label {
-		color: rgba(0, 0, 0, 0.7);
+		color: rgba(var(--ink-rgb), 0.7);
 		text-align: left;
 	}
 	.label.tool {
@@ -206,13 +206,13 @@
 		padding: 0;
 		cursor: pointer;
 		font: inherit;
-		text-decoration: underline dotted rgba(0, 0, 0, 0.25);
+		text-decoration: underline dotted rgba(var(--ink-rgb), 0.25);
 	}
 	.think-text {
 		grid-column: 2;
 		margin: 0;
 		font-style: italic;
-		color: rgba(0, 0, 0, 0.5);
+		color: rgba(var(--ink-rgb), 0.5);
 		white-space: pre-wrap;
 		max-height: 60px;
 		overflow-y: auto;
@@ -222,7 +222,7 @@
 		margin: 2px 0 0;
 		padding: 4px 6px;
 		font-size: 11px;
-		background: rgba(0, 0, 0, 0.05);
+		background: rgba(var(--ink-rgb), 0.05);
 		border-radius: var(--r-sm, 4px);
 		white-space: pre-wrap;
 		word-break: break-word;

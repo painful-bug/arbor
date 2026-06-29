@@ -164,7 +164,7 @@
 		flex-direction: column;
 		background: var(--c-canvas);
 		border-left: 1px solid var(--c-hairline);
-		box-shadow: -12px 0 40px rgba(0, 0, 0, 0.08);
+		box-shadow: -12px 0 40px rgba(var(--ink-rgb), 0.08);
 		overflow: hidden;
 	}
 	.grip {
@@ -234,7 +234,7 @@
 		padding: var(--s-xl);
 		text-align: center;
 		font-size: 13px;
-		color: rgba(0, 0, 0, 0.4);
+		color: rgba(var(--ink-rgb), 0.4);
 	}
 	.composer {
 		display: flex;
@@ -248,7 +248,7 @@
 	.hub-empty {
 		padding: var(--s-lg);
 		font-size: 13px;
-		color: rgba(0, 0, 0, 0.45);
+		color: rgba(var(--ink-rgb), 0.45);
 		line-height: 1.5;
 	}
 	/* Composer defaults (14px, 36px btn) match CardChatPanel — no overrides needed. */

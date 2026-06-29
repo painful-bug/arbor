@@ -584,6 +584,7 @@
 						bind:nodes={flow.nodes}
 						bind:edges={flow.edges}
 						{nodeTypes}
+						colorMode={settings.theme}
 						zoomOnDoubleClick={false}
 						selectionOnDrag={tool.active === 'select'}
 						panOnDrag={tool.active === 'select' ? [1, 2] : true}
@@ -594,7 +595,7 @@
 						onpaneclick={onPaneClick}
 						onnodeclick={({ node }) => onNodeClick(node)}
 					>
-						<Background bgColor="var(--c-canvas)" patternColor="#ececec" gap={28} />
+						<Background bgColor="var(--c-canvas)" patternColor="var(--c-pattern)" gap={28} />
 						<Controls showLock={false} />
 					</SvelteFlow>
 
@@ -746,7 +747,7 @@
 		font-family: var(--font-mono);
 		font-size: 13px;
 		letter-spacing: 0.5px;
-		color: rgba(0, 0, 0, 0.32);
+		color: rgba(var(--ink-rgb), 0.32);
 	}
 	.connect-hint {
 		position: absolute;
@@ -865,7 +866,7 @@
 		position: absolute;
 		inset: 0;
 		z-index: 80;
-		background: rgba(0, 0, 0, 0.28);
+		background: rgba(var(--ink-rgb), 0.28);
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
@@ -919,7 +920,7 @@
 		line-height: 1.55;
 	}
 	.kb-empty {
-		color: rgba(0,0,0,0.45);
+		color: rgba(var(--ink-rgb),0.45);
 		text-align: center;
 		padding: 32px 0;
 	}
@@ -929,7 +930,7 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.6px;
-		color: rgba(0,0,0,0.45);
+		color: rgba(var(--ink-rgb),0.45);
 		margin: 0 0 8px;
 	}
 	.kb-body ul {

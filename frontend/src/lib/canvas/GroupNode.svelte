@@ -33,7 +33,7 @@
 		font-weight: 600;
 		letter-spacing: 0.4px;
 		text-transform: uppercase;
-		color: rgba(0, 0, 0, 0.45);
+		color: rgba(var(--ink-rgb), 0.45);
 		pointer-events: none;
 		user-select: none;
 	}

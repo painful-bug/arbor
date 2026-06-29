@@ -1,11 +1,17 @@
 <script lang="ts">
 	import '$lib/theme/tokens.css';
 	import Sidebar from '$lib/Sidebar.svelte';
+	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import { onMount } from 'svelte';
 	import { apiJson } from '$lib/api';
+	import { settings } from '$lib/canvas/store.svelte';
 
 	let { children } = $props();
+
+	$effect(() => {
+		document.documentElement.setAttribute('data-theme', settings.theme);
+	});
 
 	// Dev sanity check: confirm the UI can reach the backend over the API.
 	onMount(async () => {
@@ -23,6 +29,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+<ThemeToggle />
 <Sidebar />
 
 <div class="content">

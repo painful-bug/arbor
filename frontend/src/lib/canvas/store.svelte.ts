@@ -310,6 +310,7 @@ interface Settings {
 	websearch: { enabled: boolean; backend: 'duckduckgo' | 'tavily' };
 	snapToGrid: boolean;
 	cleanupSemantic: boolean;
+	theme: 'light' | 'dark';
 }
 
 const FALLBACK_SETTINGS: Settings = {
@@ -320,6 +321,7 @@ const FALLBACK_SETTINGS: Settings = {
 	websearch: { enabled: false, backend: 'duckduckgo' },
 	snapToGrid: false,
 	cleanupSemantic: true,
+	theme: 'dark',
 };
 
 const LS_KEY = 'arbor:settings';
@@ -344,6 +346,7 @@ function applySettings(p: Record<string, unknown>): void {
 	}
 	if (typeof p.snapToGrid === 'boolean') settings.snapToGrid = p.snapToGrid;
 	if (typeof p.cleanupSemantic === 'boolean') settings.cleanupSemantic = p.cleanupSemantic;
+	if (p.theme === 'light' || p.theme === 'dark') settings.theme = p.theme;
 }
 
 // Apply any localStorage-cached settings immediately (synchronous, before backend responds).
@@ -372,6 +375,7 @@ export function persistSettings(): void {
 		websearch: { ...settings.websearch },
 		snapToGrid: settings.snapToGrid,
 		cleanupSemantic: settings.cleanupSemantic,
+		theme: settings.theme,
 	};
 	try {
 		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));

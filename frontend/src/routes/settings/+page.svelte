@@ -325,6 +325,17 @@
 	</section>
 
 	<section>
+		<h2>Appearance</h2>
+		<p class="sub">Visual theme for the app.</p>
+
+		<label class="toggle-row">
+			<input type="checkbox" checked={settings.theme === 'dark'}
+				onchange={() => { settings.theme = settings.theme === 'dark' ? 'light' : 'dark'; persistSettings(); }} />
+			<span>Dark mode</span>
+		</label>
+	</section>
+
+	<section>
 		<h2>Canvas</h2>
 		<p class="sub">Grid and layout options for the canvas.</p>
 
@@ -389,7 +400,7 @@
 		font-family: var(--font-mono);
 		font-size: 12px;
 		letter-spacing: 0.6px;
-		color: rgba(0, 0, 0, 0.45);
+		color: rgba(var(--ink-rgb), 0.45);
 		margin: 0;
 	}
 	h1 {
@@ -411,7 +422,7 @@
 	}
 	.sub {
 		font-size: 14px;
-		color: rgba(0, 0, 0, 0.5);
+		color: rgba(var(--ink-rgb), 0.5);
 		margin: 0;
 	}
 
@@ -483,7 +494,7 @@
 	label {
 		font-size: 13px;
 		font-weight: 500;
-		color: rgba(0, 0, 0, 0.65);
+		color: rgba(var(--ink-rgb), 0.65);
 	}
 	.key-input-wrap {
 		display: flex;
@@ -539,13 +550,13 @@
 		margin: 0;
 	}
 	.warn-muted {
-		color: rgba(0, 0, 0, 0.4);
+		color: rgba(var(--ink-rgb), 0.4);
 	}
 	.pull-progress {
 		font-family: var(--font-mono);
 		font-size: 11px;
 		line-height: 1.4;
-		color: rgba(0, 0, 0, 0.55);
+		color: rgba(var(--ink-rgb), 0.55);
 		margin: 0;
 		word-break: break-all;
 	}
@@ -613,7 +624,7 @@
 		font-family: var(--font-mono);
 		font-size: 11px;
 		letter-spacing: 0.3px;
-		color: rgba(0, 0, 0, 0.4);
+		color: rgba(var(--ink-rgb), 0.4);
 		background: var(--c-hairline);
 		padding: 2px 8px;
 		border-radius: var(--r-full);

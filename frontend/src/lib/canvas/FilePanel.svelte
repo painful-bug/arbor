@@ -388,14 +388,14 @@
 		width: 30px;
 		height: 28px;
 		border: 1px solid var(--c-hairline);
-		background: #fff;
+		background: var(--c-canvas);
 		border-radius: 6px;
 		cursor: pointer;
 	}
 	.toolbar .note {
 		margin-left: auto;
 		font-size: 11px;
-		color: rgba(0, 0, 0, 0.45);
+		color: rgba(var(--ink-rgb), 0.45);
 	}
 	.editor {
 		flex: 1;
@@ -432,19 +432,19 @@
 		text-align: center;
 		padding: var(--s-xl);
 		font-size: 13px;
-		color: rgba(0, 0, 0, 0.5);
+		color: rgba(var(--ink-rgb), 0.5);
 	}
 	.note-hint {
 		padding: 4px var(--s-md);
 		font-size: 11px;
-		color: rgba(0, 0, 0, 0.4);
+		color: rgba(var(--ink-rgb), 0.4);
 		border-bottom: 1px solid var(--c-hairline);
 		flex: none;
 	}
 	.text-editor-hint {
 		padding: 4px var(--s-md);
 		font-size: 11px;
-		color: rgba(0, 0, 0, 0.4);
+		color: rgba(var(--ink-rgb), 0.4);
 		border-bottom: 1px solid var(--c-hairline);
 		flex: none;
 	}
@@ -463,6 +463,6 @@
 		box-sizing: border-box;
 	}
 	.text-editor::placeholder {
-		color: rgba(0, 0, 0, 0.3);
+		color: rgba(var(--ink-rgb), 0.3);
 	}
 </style>

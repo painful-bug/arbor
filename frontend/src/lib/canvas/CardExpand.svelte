@@ -153,7 +153,7 @@
 		height: 32px;
 		border-radius: var(--r-full);
 		border: none;
-		background: rgba(0, 0, 0, 0.08);
+		background: rgba(var(--ink-rgb), 0.08);
 		color: var(--c-ink);
 		font-size: 14px;
 		cursor: pointer;

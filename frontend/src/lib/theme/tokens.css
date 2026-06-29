@@ -14,6 +14,12 @@
 	--c-surface-soft: #f7f7f5;
 	--c-accent-magenta: #ff3d8b;
 	--c-success: #1ea64a;
+	--ink-rgb: 0, 0, 0;
+	--c-pattern: #ececec;
+	--glass-bg: rgba(255, 255, 255, 0.62);
+	--glass-border: rgba(255, 255, 255, 0.7);
+	--c-sidebar: rgba(248, 248, 248, 0.82);
+	color-scheme: light;
 
 	/* pastel sticky-card blocks */
 	--block-lime: #dceeb1;
@@ -58,12 +64,35 @@
 	--ease-glass: 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Dracula-slate dark theme */
+[data-theme="dark"] {
+	--c-primary: #f8f8f2;
+	--c-on-primary: #282a36;
+	--c-ink: #f8f8f2;
+	--c-canvas: #282a36;
+	--c-inverse-canvas: #f8f8f2;
+	--c-inverse-ink: #282a36;
+	--c-hairline: #44475a;
+	--c-hairline-soft: #3a3d4d;
+	--c-surface-soft: #21222c;
+	--c-accent-magenta: #ff79c6;
+	--c-success: #50fa7b;
+	--ink-rgb: 248, 248, 242;
+	--c-pattern: #3a3d4d;
+	--glass-bg: rgba(40, 42, 54, 0.62);
+	--glass-border: rgba(68, 71, 90, 0.7);
+	--c-sidebar: rgba(33, 34, 44, 0.82);
+	--elev-2: 0 4px 16px rgba(0, 0, 0, 0.4);
+	--elev-float: 0 8px 30px rgba(0, 0, 0, 0.55);
+	color-scheme: dark;
+}
+
 /* Liquid Glass material — translucent chrome (toolbar, panel, prompt bubble). */
 .glass {
-	background: rgba(255, 255, 255, 0.62);
+	background: var(--glass-bg);
 	backdrop-filter: saturate(180%) blur(20px);
 	-webkit-backdrop-filter: saturate(180%) blur(20px);
-	border: 1px solid rgba(255, 255, 255, 0.7);
+	border: 1px solid var(--glass-border);
 	box-shadow: var(--elev-float);
 }
 
@@ -95,4 +124,17 @@ body {
 	color: var(--c-ink);
 	background: var(--c-canvas);
 	-webkit-font-smoothing: antialiased;
+}
+
+/* View Transition: circular zwoop for theme toggle */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation: none;
+	mix-blend-mode: normal;
+}
+::view-transition-new(root) {
+	z-index: 1;
+}
+.vt-shrink::view-transition-old(root) {
+	z-index: 2;
 }

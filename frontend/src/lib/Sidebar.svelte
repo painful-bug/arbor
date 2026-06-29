@@ -116,8 +116,7 @@
 		gap: var(--s-xs);
 		padding: var(--s-md) var(--s-xs);
 		transition: width var(--spring-snappy);
-		/* override glass to stay opaque-ish on the pure white canvas */
-		background: rgba(248, 248, 248, 0.82);
+		background: var(--c-sidebar);
 		border-right: 1px solid var(--c-hairline);
 		border-radius: 0;
 	}
@@ -175,7 +174,7 @@
 		background: transparent;
 		text-align: left;
 		text-decoration: none;
-		color: rgba(0, 0, 0, 0.55);
+		color: rgba(var(--ink-rgb), 0.55);
 		font-family: var(--font-sans);
 		font-size: 14px;
 		font-weight: 500;

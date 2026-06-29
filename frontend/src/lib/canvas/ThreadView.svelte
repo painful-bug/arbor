@@ -36,7 +36,7 @@
 	}
 	.turn + .turn {
 		padding-top: var(--s-lg);
-		border-top: 1px solid rgba(0, 0, 0, 0.08);
+		border-top: 1px solid rgba(var(--ink-rgb), 0.08);
 	}
 	.prompt {
 		margin: 0;
@@ -48,7 +48,7 @@
 		margin: 0;
 		font-size: 14px;
 		line-height: 1.55;
-		color: rgba(0, 0, 0, 0.82);
+		color: rgba(var(--ink-rgb), 0.82);
 	}
 	.answer :global(p) {
 		margin: 0 0 0.5em;
@@ -60,7 +60,7 @@
 	.answer :global(pre) {
 		overflow-x: auto;
 		font-size: 12px;
-		background: rgba(0, 0, 0, 0.05);
+		background: rgba(var(--ink-rgb), 0.05);
 		padding: var(--s-sm);
 		border-radius: var(--r-sm);
 	}

@@ -175,7 +175,7 @@
 		margin: auto;
 		font-family: var(--font-mono);
 		font-size: 12px;
-		color: rgba(0, 0, 0, 0.3);
+		color: rgba(var(--ink-rgb), 0.3);
 	}
 	.name {
 		border: none;
@@ -197,7 +197,7 @@
 		justify-content: space-between;
 		font-family: var(--font-mono);
 		font-size: 11px;
-		color: rgba(0, 0, 0, 0.45);
+		color: rgba(var(--ink-rgb), 0.45);
 		padding: 0 4px;
 	}
 	.del {
@@ -208,7 +208,7 @@
 		height: 24px;
 		border: none;
 		border-radius: var(--r-full);
-		background: rgba(0, 0, 0, 0.06);
+		background: rgba(var(--ink-rgb), 0.06);
 		color: var(--c-ink);
 		font-size: 11px;
 		cursor: pointer;
