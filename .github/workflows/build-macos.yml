@@ -89,21 +89,10 @@ jobs:
 
       - name: Create DMG
         run: |
-          brew install create-dmg
           APP_PATH=$(find frontend/src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
-          # create-dmg returns 2 on hdiutil detach timeout (CI-only flake) but DMG is valid
-          create-dmg \
-            --volname "Arbor" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --no-internet-enable \
-            --app-drop-link 425 175 \
-            --icon "$(basename "$APP_PATH")" 175 175 \
-            "Arbor.dmg" \
-            "$APP_PATH" || true
-          # Verify DMG was actually created
-          test -f Arbor.dmg && echo "DMG created: $(du -h Arbor.dmg | cut -f1)"
+          APP_NAME=$(basename "$APP_PATH")
+          hdiutil create -volname "Arbor" -srcfolder "$APP_PATH" -ov -format UDZO "Arbor.dmg"
+          echo "DMG created: $(du -h Arbor.dmg | cut -f1)"
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4

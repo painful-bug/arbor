@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { SvelteFlow, Background, Controls, useSvelteFlow } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import CardNode from './CardNode.svelte';
 	import FileCard from './FileCard.svelte';
 	import WebCard from './WebCard.svelte';
@@ -109,6 +109,15 @@
 
 	// Chat panel open state lifted here so the flex layout can include it.
 	let chatOpen = $state(false);
+
+	let animatingCleanup = $state(false);
+	async function doCleanUp() {
+		if (reducedMotion()) { await cleanUp(); return; }
+		animatingCleanup = true;
+		await tick();
+		await cleanUp();
+		setTimeout(() => { animatingCleanup = false; }, 550);
+	}
 
 	function onDblClick(e: MouseEvent) {
 		// Only spawn prompt bubble in hand mode.
@@ -352,7 +361,7 @@
 				}
 				else if (e.key === 'c' || e.key === 'C') {
 					const now = Date.now();
-					if (now - lastC < 350) { lastC = 0; tool.active = 'hand'; tool.connectFrom = null; void cleanUp(); e.preventDefault(); return; }
+					if (now - lastC < 350) { lastC = 0; tool.active = 'hand'; tool.connectFrom = null; void doCleanUp(); e.preventDefault(); return; }
 					lastC = now;
 					tool.active = 'connect'; e.preventDefault();
 				}
@@ -560,6 +569,7 @@
 				<!-- capture phase: Svelte Flow's d3-zoom stops dblclick propagation in the bubble phase -->
 				<div
 					class="wrap"
+					class:cleanup-animating={animatingCleanup}
 					class:cursor-default={tool.active === 'select'}
 					class:cursor-text={tool.active === 'text'}
 					class:cursor-copy={tool.active === 'duplicate'}
@@ -633,7 +643,7 @@
 						>Ungroup</button>
 					{/if}
 
-					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => cleanUp()} />
+					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => doCleanUp()} />
 				</div>
 
 				{#if openFileId}
@@ -780,6 +790,18 @@
 	.wrap.cursor-text :global(.svelte-flow__pane) { cursor: text; }
 	.wrap.cursor-copy :global(.svelte-flow__pane) { cursor: copy; }
 	.wrap.cursor-crosshair :global(.svelte-flow__pane) { cursor: crosshair; }
+
+	/* Swoop animation for cards during Clean Up */
+	.wrap.cleanup-animating :global(.svelte-flow__node) {
+		transition: transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	/* Remove SvelteFlow's default border/padding/background on group nodes */
+	.wrap :global(.svelte-flow__node-group) {
+		border: none;
+		padding: 0;
+		background: transparent;
+	}
 
 	.selection-bar {
 		position: absolute;
