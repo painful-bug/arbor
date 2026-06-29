@@ -308,6 +308,8 @@ interface Settings {
 	workflow: string;
 	bashEnabled: boolean;
 	websearch: { enabled: boolean; backend: 'duckduckgo' | 'tavily' };
+	snapToGrid: boolean;
+	cleanupSemantic: boolean;
 }
 
 const FALLBACK_SETTINGS: Settings = {
@@ -316,6 +318,8 @@ const FALLBACK_SETTINGS: Settings = {
 	workflow: 'general',
 	bashEnabled: false,
 	websearch: { enabled: false, backend: 'duckduckgo' },
+	snapToGrid: false,
+	cleanupSemantic: true,
 };
 
 const LS_KEY = 'arbor:settings';
