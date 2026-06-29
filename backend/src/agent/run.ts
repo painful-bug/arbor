@@ -9,14 +9,16 @@ import {
 	webSearchTool,
 	scholarSearchTool,
 	researchPlanTool,
-	ragSearchTool,
+	knowledgeBaseSearchTool,
+	knowledgeBaseOverviewTool,
+	knowledgeBaseReadSourceTool,
 	createCardTool,
 	createNoteTool,
 	updateCardTool
 } from "./tools.ts";
-import { search as ragSearch } from "../rag/index.ts";
+import { search as kbSearch, addChat, contentsOf, readSource } from "../kb/index.ts";
 
-const SERVICE = "app.loom.canvas";
+const SERVICE = "app.arbor.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
 
 // One Agent per running card. Cancel aborts via agent.abort().
@@ -44,7 +46,7 @@ export interface PromptRequest {
 	bash?: boolean;
 	websearch?: boolean;
 	websearchBackend?: "duckduckgo" | "tavily";
-	canvas?: string; // which canvas's RAG index to search; defaults to "default"
+	canvas?: string; // which canvas's KB group to search; defaults to "default"
 	canvasTools?: boolean; // enable create_card / update_card (hub session only)
 }
 
@@ -93,7 +95,7 @@ export async function handlePrompt(
 	emit: (e: AgentEvent) => void
 ): Promise<void> {
 	const { cardId } = req;
-	const canvas = req.canvas ?? "default";
+	const canvas = req.canvas || "default";
 
 	try {
 		const apiKey = await key(req.provider);
@@ -114,14 +116,17 @@ export async function handlePrompt(
 			tools.push(webSearchTool(req.websearchBackend ?? "duckduckgo", tavilyKey));
 		}
 		tools.push(scholarSearchTool(), researchPlanTool());
-		// ragSearch is now in-process — no stdio, no HTTP bridge.
-		tools.push(ragSearchTool((query) => ragSearch(canvas, query)));
+		// KB search + overview + full-source read via local hybrid RAG (LanceDB).
+		tools.push(knowledgeBaseSearchTool((query) => kbSearch(canvas, query)));
+		tools.push(knowledgeBaseOverviewTool(() => contentsOf(canvas)));
+		tools.push(knowledgeBaseReadSourceTool((source) => readSource(canvas, source)));
 		if (req.canvasTools) tools.push(createCardTool(), createNoteTool(), updateCardTool());
 
 		const agent = new Agent({
 			streamFn: streamSimple,
 			getApiKey: () => effectiveKey,
 			convertToLlm: (messages) => messages as Message[],
+			toolExecution: "parallel",
 			initialState: {
 				systemPrompt: req.systemPrompt ?? "",
 				model,
@@ -132,14 +137,21 @@ export async function handlePrompt(
 
 		runs.set(cardId, agent);
 
+		// Accumulate the response text so we can ingest the turn into the KB.
+		let answerText = "";
+
 		agent.subscribe((ev: PiEvent) => {
 			switch (ev.type) {
 				case "message_update": {
 					const a = ev.assistantMessageEvent;
-					if (a.type === "text_delta") emit({ type: "text_delta", id: cardId, delta: a.delta });
-					else if (a.type === "thinking_delta") emit({ type: "thinking_delta", id: cardId, delta: a.delta });
-					else if (a.type === "error")
+					if (a.type === "text_delta") {
+						answerText += a.delta ?? "";
+						emit({ type: "text_delta", id: cardId, delta: a.delta });
+					} else if (a.type === "thinking_delta") {
+						emit({ type: "thinking_delta", id: cardId, delta: a.delta });
+					} else if (a.type === "error") {
 						emit({ type: "error", id: cardId, message: a.error?.errorMessage ?? a.reason ?? "stream error" });
+					}
 					break;
 				}
 				case "tool_execution_start":
@@ -153,8 +165,14 @@ export async function handlePrompt(
 
 		await agent.continue();
 		const err = agent.state.errorMessage;
-		if (err) emit({ type: "error", id: cardId, message: err });
-		else emit({ type: "done", id: cardId });
+		if (err) {
+			emit({ type: "error", id: cardId, message: err });
+		} else {
+			emit({ type: "done", id: cardId });
+			// Ingest this conversation turn into the canvas KB (fire-and-forget).
+			const userPrompt = [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+			if (userPrompt && answerText) void addChat(canvas, cardId, userPrompt, answerText);
+		}
 	} catch (err) {
 		emit({ type: "error", id: cardId, message: String((err as Error)?.message ?? err) });
 	} finally {

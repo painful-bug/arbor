@@ -2,7 +2,7 @@
 import type { Node, Edge, XYPosition } from '@xyflow/svelte';
 import {
 	runAgent,
-	ragRemove,
+	kbRemove,
 	PROVIDERS,
 	type Provider,
 	type ChatMessage,
@@ -315,11 +315,10 @@ const FALLBACK_SETTINGS: Settings = {
 	models: { ...DEFAULT_MODELS },
 	workflow: 'general',
 	bashEnabled: false,
-	websearch: { enabled: false, backend: 'duckduckgo' }
+	websearch: { enabled: false, backend: 'duckduckgo' },
 };
 
 const LS_KEY = 'arbor:settings';
-
 export const settings = $state<Settings>({ ...FALLBACK_SETTINGS, models: { ...DEFAULT_MODELS } });
 
 function applySettings(p: Record<string, unknown>): void {
@@ -366,7 +365,6 @@ export function persistSettings(): void {
 		bashEnabled: settings.bashEnabled,
 		websearch: { ...settings.websearch }
 	};
-	// Write localStorage first — survives even if backend request fails.
 	try {
 		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));
 	} catch {}
@@ -506,10 +504,28 @@ export function addTextCard(position: XYPosition, text = ''): string {
 	return id;
 }
 
+const _textIndexTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export function setCardText(id: string, text: string): void {
 	flow.nodes = flow.nodes.map((n) =>
 		n.id === id ? { ...n, data: { ...n.data, text } } : n
 	);
+	// Debounce KB indexing so we don't re-embed on every keystroke
+	const prev = _textIndexTimers.get(id);
+	if (prev) clearTimeout(prev);
+	_textIndexTimers.set(id, setTimeout(() => {
+		_textIndexTimers.delete(id);
+		if (text.trim()) {
+			void indexTextCard(id, text);
+		}
+	}, 2000));
+}
+
+async function indexTextCard(cardId: string, text: string): Promise<void> {
+	const { kbAdd } = await import('$lib/ai/client');
+	const canvas = currentCanvasId() || 'default';
+	const bytes = new TextEncoder().encode(text);
+	await kbAdd(canvas, `text:${cardId}`, 'text/plain', bytes.buffer as ArrayBuffer).catch(() => {});
 }
 
 export function setCardBlock(id: string, block: string): void {
@@ -578,7 +594,7 @@ function cleanupRemovedNodes(ids: Set<string>): void {
 	void import('$lib/files').then(({ deleteFileBlob }) => {
 		for (const n of fileNodes) {
 			const filename = (n.data as { filename?: string }).filename;
-			if (filename) void ragRemove(currentId, filename);
+			if (filename) void kbRemove(currentId, filename);
 			deleteFileBlob(n.id);
 		}
 	});
@@ -775,7 +791,8 @@ async function generateTitle(id: string, prompt: string, answer: string): Promis
 		messages,
 		{
 			provider: settings.provider,
-			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider]
+			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider],
+			canvas: currentId
 		},
 		(e) => {
 			if (e.type === 'text_delta') title += e.delta ?? '';
@@ -948,7 +965,7 @@ export async function runSession(prompt: string): Promise<void> {
 	const toolHint =
 		'\n\n## Hub Session Rules\n' +
 		'You are the canvas-level assistant. The full content of every canvas card is provided IN THIS SYSTEM PROMPT in the "Canvas cards" section below — read it directly to answer questions about card contents. ' +
-		'DO NOT call rag_search to find card content; rag_search only works for files the user has explicitly uploaded (PDFs, docx, images, etc.), not for canvas cards.\n\n' +
+		'DO NOT call knowledge_base_search to find card content; KB tools only work for files the user has explicitly uploaded (PDFs, docx, images, etc.), not for canvas cards.\n\n' +
 		'**Bias toward action over clarification.** If the user\'s intent is clear enough to attempt, execute it immediately without asking questions. ' +
 		'Call create_card once per card you want to create — do not batch them into one card. ' +
 		'Ask a question only if you genuinely cannot proceed without the answer.\n\n' +

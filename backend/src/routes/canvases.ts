@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db, metaGet, metaSet } from "../store/db.ts";
 import { canvases } from "../store/schema.ts";
+import { clearCanvas } from "../kb/index.ts";
 
 // Set the current-canvas pointer and the canvas ordering. Shared with the importer.
 export function setCurrentAndOrder(current: string, order: string[]): void {
@@ -93,5 +94,6 @@ canvasRoutes.delete("/:id", (c) => {
 	const id = c.req.param("id");
 	db.delete(canvases).where(eq(canvases.id, id)).run();
 	metaSet("order", JSON.stringify(getOrder().filter((x) => x !== id)));
+	void clearCanvas(id); // remove the canvas's KB group (fire-and-forget)
 	return c.json({ ok: true });
 });

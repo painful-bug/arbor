@@ -1,10 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { reconstructAbstract, mergePapers, formatPapers, ragSearchTool, type Paper } from "./tools.ts";
+import { reconstructAbstract, mergePapers, formatPapers, knowledgeBaseSearchTool, type Paper } from "./tools.ts";
 
-describe("ragSearchTool", () => {
+describe("knowledgeBaseSearchTool", () => {
 	it("calls search and joins chunks", async () => {
 		let asked = "";
-		const tool = ragSearchTool(async (q) => {
+		const tool = knowledgeBaseSearchTool(async (q) => {
 			asked = q;
 			return ["[a.pdf] alpha", "[b.pdf] beta"];
 		});
@@ -16,9 +16,9 @@ describe("ragSearchTool", () => {
 		expect(text).toContain("[b.pdf] beta");
 	});
 	it("reports when nothing is indexed instead of inventing a path", async () => {
-		const tool = ragSearchTool(async () => []);
+		const tool = knowledgeBaseSearchTool(async () => []);
 		const res = await tool.execute("id", { query: "missing" });
-		expect(res.content[0].text).toContain("No indexed file content matched");
+		expect(res.content[0].text).toContain("No results for");
 		expect(res.details.chunks).toEqual([]);
 	});
 });

@@ -40,7 +40,7 @@ export interface AgentOptions {
 	websearch?: boolean;
 	websearchBackend?: 'duckduckgo' | 'tavily';
 	canvasTools?: boolean;
-	canvas?: string; // which canvas's RAG index the agent searches
+	canvas?: string; // canvas id for KB group isolation
 }
 
 // Run an agent turn. `onEvent` fires for every streamed event until `done`/`error`.
@@ -139,10 +139,27 @@ export async function testConnection(provider: Provider): Promise<string | null>
 	}
 }
 
-// ── Per-canvas RAG ───────────────────────────────────────────────────────────
+// ── Per-canvas knowledge base ────────────────────────────────────────────────
 
-// Index a file in the backend RAG store. Works in both Tauri and browser dev.
-export async function ragAdd(
+// Clear all KB content for a canvas.
+export async function kbClear(canvas: string): Promise<void> {
+	const { apiFetch } = await import('$lib/api');
+	await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/files`, { method: 'DELETE' });
+}
+
+export async function kbContents(canvas: string): Promise<{ sources: string[]; chunks: number }> {
+	const { apiFetch } = await import('$lib/api');
+	try {
+		const res = await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/contents`);
+		if (!res.ok) return { sources: [], chunks: 0 };
+		return res.json() as Promise<{ sources: string[]; chunks: number }>;
+	} catch {
+		return { sources: [], chunks: 0 };
+	}
+}
+
+// Index a file in the canvas KB. Works in both Tauri and browser dev.
+export async function kbAdd(
 	canvas: string,
 	filename: string,
 	mime: string,
@@ -150,7 +167,7 @@ export async function ragAdd(
 ): Promise<number> {
 	const { apiFetch } = await import('$lib/api');
 	try {
-		const res = await apiFetch(`/api/rag/${encodeURIComponent(canvas)}/files`, {
+		const res = await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/files`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': mime || 'application/octet-stream',
@@ -160,21 +177,20 @@ export async function ragAdd(
 		});
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({} as { error?: string }));
-			throw new Error((body as { error?: string }).error ?? `RAG index failed (${res.status})`);
+			throw new Error((body as { error?: string }).error ?? `KB index failed (${res.status})`);
 		}
 		const data = (await res.json()) as { chunks?: number };
 		return data.chunks ?? 0;
 	} catch (err) {
-		if (err instanceof Error && err.message.startsWith('RAG index')) throw err;
-		return 0; // network unreachable — fail silently
+		if (err instanceof Error && err.message.startsWith('KB index')) throw err;
+		console.warn('[kbAdd] failed:', err);
+		return 0;
 	}
 }
 
-export async function ragRemove(canvas: string, filename: string): Promise<void> {
+export async function kbRemove(canvas: string, filename: string): Promise<void> {
 	const { apiFetch } = await import('$lib/api');
 	try {
-		await apiFetch(`/api/rag/${encodeURIComponent(canvas)}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
-	} catch {
-		// fail silently — stale chunks in the index are harmless
-	}
+		await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+	} catch {}
 }

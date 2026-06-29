@@ -7,7 +7,8 @@
 	import WebCard from './WebCard.svelte';
 	import UserTextCard from './UserTextCard.svelte';
 	import GroupNode from './GroupNode.svelte';
-		import CanvasToolbar from './CanvasToolbar.svelte';
+	import TextView from './TextView.svelte';
+	import CanvasToolbar from './CanvasToolbar.svelte';
 	import PromptBubble from './PromptBubble.svelte';
 	import CardExpand from './CardExpand.svelte';
 	import CardChatPanel from './CardChatPanel.svelte';
@@ -34,16 +35,16 @@
 		redo,
 		deleteNodes,
 		groupNodes,
-		currentCanvasId,
 		init
 	} from './store.svelte';
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
-	import { ragAdd, ragRemove } from '$lib/ai/client';
+	import { kbAdd, kbClear, kbContents, kbRemove } from '$lib/ai/client';
+	import { currentCanvasId } from './store.svelte';
 	import { scale } from 'svelte/transition';
-import { backOut } from 'svelte/easing';
+	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
 	// Swoop: spring scale + drop. Out = canvas falls away to the Library; in = a
@@ -234,7 +235,7 @@ import { backOut } from 'svelte/easing';
 		for (const node of nodes) {
 			if (node.type === 'file') {
 				const filename = (node.data as { filename?: string }).filename;
-				if (filename) void ragRemove(currentCanvasId(), filename);
+				if (filename) void kbRemove(currentCanvasId(), filename);
 				void deleteFileBlob(node.id);
 			}
 		}
@@ -404,8 +405,8 @@ import { backOut } from 'svelte/easing';
 							const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
 							putFileBlob(id, bytes, mime, name);
 							extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
-							await ragAdd(currentCanvasId(), name, mime, bytes);
-							setFileStatus(id, 'ready');
+							const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
+							setFileStatus(id, chunks > 0 ? 'ready' : 'error');
 						} catch (err) {
 							console.error('tauri file drop read failed', err);
 							setFileStatus(id, 'error');
@@ -471,18 +472,44 @@ import { backOut } from 'svelte/easing';
 				extractText(buf, kind)
 					.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
 					.catch(() => {});
-				await ragAdd(currentCanvasId(), file.name, file.type, buf);
-				setFileStatus(id, 'ready');
+				const chunks = await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
+				setFileStatus(id, chunks > 0 ? 'ready' : 'error');
 			} catch (err) {
-				console.error('rag index failed', err);
+				console.error('kb index failed', err);
 				setFileStatus(id, 'error');
 			}
 		}
 	}
 
 	let openFileId = $state<string | null>(null);
+	let viewTextId = $state<string | null>(null);
 	function onOpenFileEvent(e: Event) {
 		openFileId = (e as CustomEvent).detail.fileId;
+	}
+
+	// ── KB overlay ───────────────────────────────────────────────────────────────
+	let kbOpen = $state(false);
+	let kbData = $state<{ sources: string[]; chunks: number } | null>(null);
+	let kbLoading = $state(false);
+	let kbClearing = $state(false);
+	let kbClearConfirm = $state(false);
+
+	async function openKB() {
+		kbOpen = true;
+		kbData = null;
+		kbLoading = true;
+		kbClearConfirm = false;
+		kbData = await kbContents(currentCanvasId() || 'default');
+		kbLoading = false;
+	}
+
+	async function doKBClear() {
+		if (!kbClearConfirm) { kbClearConfirm = true; return; }
+		kbClearing = true;
+		await kbClear(currentCanvasId() || 'default');
+		kbClearConfirm = false;
+		kbData = await kbContents(currentCanvasId() || 'default');
+		kbClearing = false;
 	}
 
 	function submit(text: string) {
@@ -579,7 +606,7 @@ import { backOut } from 'svelte/easing';
 						</div>
 					{/if}
 
-					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} />
+					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} />
 				</div>
 
 				{#if openFileId}
@@ -592,6 +619,53 @@ import { backOut } from 'svelte/easing';
 
 			{#if expandId}
 				<CardExpand cardId={expandId} onclose={() => (expandId = null)} />
+			{/if}
+
+			{#if viewTextId}
+				<TextView cardId={viewTextId} onclose={() => (viewTextId = null)} />
+			{/if}
+
+			{#if kbOpen}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="kb-backdrop" onpointerdown={() => { kbOpen = false; kbClearConfirm = false; }}>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="kb-panel" onpointerdown={(e) => e.stopPropagation()}>
+						<header class="kb-header">
+							<span class="kb-title">Knowledge Base</span>
+							<div class="kb-actions">
+								<button
+									class="kb-btn kb-clear"
+									class:confirm={kbClearConfirm}
+									onclick={doKBClear}
+									disabled={kbClearing}
+								>
+									{kbClearing ? 'Clearing…' : kbClearConfirm ? 'Confirm clear?' : 'Clear KB'}
+								</button>
+								{#if kbClearConfirm}
+									<button class="kb-btn" onclick={() => (kbClearConfirm = false)}>Cancel</button>
+								{/if}
+								<button class="kb-btn" onclick={openKB} disabled={kbLoading} title="Refresh">↺</button>
+								<button class="kb-btn" onclick={() => { kbOpen = false; kbClearConfirm = false; }}>✕</button>
+							</div>
+						</header>
+						<div class="kb-body">
+							{#if kbLoading}
+								<div class="kb-empty">Loading…</div>
+							{:else if !kbData || kbData.sources.length === 0}
+								<div class="kb-empty">KB is empty — drop files onto the canvas to index them.</div>
+							{:else}
+								<section>
+									<h3>Indexed sources ({kbData.chunks} chunks)</h3>
+									<ul>
+										{#each kbData.sources as s (s)}
+											<li>{s}</li>
+										{/each}
+									</ul>
+								</section>
+							{/if}
+						</div>
+					</div>
+				</div>
 			{/if}
 		</div>
 	{/if}
@@ -679,6 +753,7 @@ import { backOut } from 'svelte/easing';
 	.wrap.cursor-text :global(.svelte-flow__pane) { cursor: text; }
 	.wrap.cursor-copy :global(.svelte-flow__pane) { cursor: copy; }
 	.wrap.cursor-crosshair :global(.svelte-flow__pane) { cursor: crosshair; }
+<<<<<<< HEAD
 	.wrap.cursor-default :global(.svelte-flow__pane) { cursor: default; }
 
 	.selection-bar {
@@ -717,4 +792,93 @@ import { backOut } from 'svelte/easing';
 	}
 	.sel-btn:hover { background: rgba(255,255,255,0.22); }
 	.sel-btn--danger:hover { background: rgba(255, 80, 80, 0.5); }
+
+	/* ── KB overlay ──────────────────────────────────────────────────────────── */
+	.kb-backdrop {
+		position: absolute;
+		inset: 0;
+		z-index: 80;
+		background: rgba(0, 0, 0, 0.28);
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		padding-top: 64px;
+	}
+	.kb-panel {
+		width: min(680px, 92vw);
+		max-height: 72vh;
+		background: var(--c-canvas);
+		border-radius: 14px;
+		border: 1px solid var(--c-hairline);
+		box-shadow: var(--elev-3, 0 12px 48px rgba(0,0,0,0.18));
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	.kb-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 16px;
+		border-bottom: 1px solid var(--c-hairline);
+		flex: none;
+	}
+	.kb-title {
+		font-weight: 600;
+		font-size: 14px;
+	}
+	.kb-actions {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+	.kb-btn {
+		border: 1px solid var(--c-hairline);
+		background: var(--c-surface-soft, #fff);
+		border-radius: 8px;
+		padding: 4px 10px;
+		font-size: 12px;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.kb-btn:disabled { opacity: 0.5; cursor: default; }
+	.kb-btn.kb-clear { color: #c0392b; border-color: #f5c6c6; }
+	.kb-btn.kb-clear.confirm { background: #c0392b; color: #fff; border-color: #c0392b; }
+	.kb-body {
+		flex: 1;
+		overflow-y: auto;
+		padding: 16px;
+		font-size: 13px;
+		line-height: 1.55;
+	}
+	.kb-empty {
+		color: rgba(0,0,0,0.45);
+		text-align: center;
+		padding: 32px 0;
+	}
+	.kb-body section { margin-bottom: 20px; }
+	.kb-body h3 {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.6px;
+		color: rgba(0,0,0,0.45);
+		margin: 0 0 8px;
+	}
+	.kb-body ul {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.kb-body li {
+		padding: 5px 10px;
+		background: var(--c-surface-soft, rgba(0,0,0,0.03));
+		border-radius: 6px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		word-break: break-word;
+	}
 </style>
