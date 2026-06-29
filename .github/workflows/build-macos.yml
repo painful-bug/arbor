@@ -82,6 +82,9 @@ jobs:
           cp "$BUN_REAL" "frontend/src-tauri/binaries/bun-$TRIPLE"
           chmod +x "frontend/src-tauri/binaries/bun-$TRIPLE"
 
+      - name: Install DMG bundler deps
+        run: brew install create-dmg
+
       - name: Build Tauri
         run: cd frontend && npx tauri build
         env:
