@@ -7,6 +7,8 @@
 		"dev:web": "cd frontend && npm run dev",
 		"dev:backend": "cd backend && bun run dev",
 		"build": "cd frontend && npx tauri build",
+		"build:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+		"build:macos": "bash scripts/build-macos.sh",
 		"test": "cd backend && bun test && cd ../frontend && npm test",
 		"test:backend": "cd backend && bun test",
 		"test:frontend": "cd frontend && npm test"

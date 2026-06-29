@@ -79,5 +79,19 @@ cd "$REPO_ROOT/frontend"
 npx tauri build 2>&1
 
 echo "=== Build complete ==="
-# Output location
-find "$TAURI_DIR/target/release/bundle" -name "*.dmg" -o -name "*.app" 2>/dev/null | head -5
+
+# --- 4. Install to /Applications ---
+APP_BUNDLE=$(find "$TAURI_DIR/target/release/bundle/macos" -name "*.app" -maxdepth 1 | head -1)
+if [ -n "$APP_BUNDLE" ]; then
+  APP_NAME=$(basename "$APP_BUNDLE")
+  echo "--- Installing $APP_NAME to /Applications ---"
+  # Kill running instance if any
+  pkill -f "$APP_NAME/Contents/MacOS" 2>/dev/null || true
+  sleep 1
+  rm -rf "/Applications/$APP_NAME"
+  cp -R "$APP_BUNDLE" "/Applications/$APP_NAME"
+  echo "Installed: /Applications/$APP_NAME"
+else
+  echo "WARNING: No .app bundle found, skipping install"
+  find "$TAURI_DIR/target/release/bundle" -name "*.dmg" -o -name "*.app" 2>/dev/null | head -5
+fi
