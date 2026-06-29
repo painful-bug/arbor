@@ -3,7 +3,6 @@
 	import { goto } from '$app/navigation';
 	import { ui, newCanvas } from '$lib/canvas/store.svelte';
 
-	let expanded = $state(false);
 	const onCanvas = $derived($page.url.pathname === '/');
 
 	async function showCanvas() {
@@ -32,9 +31,9 @@
 	}
 
 	function settingsIcon() {
-		return `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-			<circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.5"/>
-			<path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+		return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+			<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" stroke="currentColor" stroke-width="1.5"/>
+			<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
 		</svg>`;
 	}
 
@@ -53,52 +52,47 @@
 	}
 </script>
 
-<aside class="sidebar glass" class:expanded>
+<aside class="sidebar glass" class:expanded={ui.sidebarExpanded}>
 	<!-- toggle -->
 	<button
-		class="toggle"
-		onclick={() => (expanded = !expanded)}
-		aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+		class="nav-item toggle"
+		onclick={() => (ui.sidebarExpanded = !ui.sidebarExpanded)}
+		aria-label={ui.sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
 	>
-		{#if expanded}
-			<svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-				<path d="M11 4L6 9l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+		<span class="icon">
+			<svg width="20" height="20" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<path d="M14 22V14M14 14C14 10 9 9 9 5M14 14C14 10 19 9 19 5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"/>
+				<circle cx="9" cy="5" fill="currentColor" r="2.5"/>
+				<circle cx="19" cy="5" fill="currentColor" r="2.5"/>
+				<circle cx="14" cy="22" fill="currentColor" r="2.5"/>
 			</svg>
-		{:else}
-			<svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-				<path d="M7 4l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-			</svg>
-		{/if}
+		</span>
+		{#if ui.sidebarExpanded}<span class="label wordmark">Arbor</span>{/if}
 	</button>
-
-	<!-- wordmark — only when expanded -->
-	{#if expanded}
-		<div class="wordmark">Arbor</div>
-	{/if}
 
 	<nav>
 		<button class="nav-item" class:active={onCanvas && ui.view === 'canvas'} onclick={showCanvas}>
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<span class="icon">{@html canvasIcon()}</span>
-			{#if expanded}<span class="label">Canvas</span>{/if}
+			{#if ui.sidebarExpanded}<span class="label">Canvas</span>{/if}
 		</button>
 
 		<button class="nav-item" class:active={onCanvas && ui.view === 'library'} onclick={showLibrary}>
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<span class="icon">{@html libraryIcon()}</span>
-			{#if expanded}<span class="label">Library</span>{/if}
+			{#if ui.sidebarExpanded}<span class="label">Library</span>{/if}
 		</button>
 
 		<button class="nav-item" onclick={createCanvas}>
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<span class="icon">{@html plusIcon()}</span>
-			{#if expanded}<span class="label">New canvas</span>{/if}
+			{#if ui.sidebarExpanded}<span class="label">New canvas</span>{/if}
 		</button>
 
 		<a href="/settings" class="nav-item" class:active={$page.url.pathname === '/settings'}>
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<span class="icon">{@html settingsIcon()}</span>
-			{#if expanded}<span class="label">Settings</span>{/if}
+			{#if ui.sidebarExpanded}<span class="label">Settings</span>{/if}
 		</a>
 	</nav>
 </aside>
@@ -115,10 +109,12 @@
 		flex-direction: column;
 		gap: var(--s-xs);
 		padding: var(--s-md) var(--s-xs);
+		box-sizing: border-box;
 		transition: width var(--spring-snappy);
 		background: var(--c-sidebar);
 		border-right: 1px solid var(--c-hairline);
 		border-radius: 0;
+		overflow: hidden;
 	}
 	.sidebar.expanded {
 		width: 200px;
@@ -130,30 +126,16 @@
 		}
 	}
 
+	/* toggle glyph keeps full-ink color; wordmark sits in its label slot */
+	.toggle {
+		color: var(--c-ink);
+		margin-bottom: var(--s-xs);
+	}
 	.wordmark {
 		font-size: 22px;
 		font-weight: 700;
 		letter-spacing: -0.5px;
-		padding: 0 var(--s-xs) var(--s-xs);
 		color: var(--c-ink);
-	}
-
-	.toggle {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border-radius: var(--r-full);
-		border: none;
-		background: transparent;
-		color: var(--c-ink);
-		cursor: pointer;
-		transition: background var(--ease-glass);
-		flex-shrink: 0;
-	}
-	.toggle:hover {
-		background: var(--c-hairline-soft);
 	}
 
 	nav {
@@ -163,14 +145,17 @@
 		flex: 1;
 	}
 
+	/* one uniform rail button: --nav-btn square (collapsed), grows to a row when ui.sidebarExpanded */
 	.nav-item {
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: var(--s-sm);
 		width: 100%;
-		padding: 9px var(--s-xs);
+		height: var(--nav-btn);
+		padding: 0;
 		border: none;
-		border-radius: var(--r-md);
+		border-radius: var(--nav-radius);
 		background: transparent;
 		text-align: left;
 		text-decoration: none;
@@ -191,14 +176,18 @@
 		background: var(--c-primary);
 		color: var(--c-on-primary);
 	}
+	/* expanded: glyph + label as a left-aligned row */
+	.sidebar.expanded .nav-item {
+		justify-content: flex-start;
+	}
 
 	.icon {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
-		width: 36px;
-		height: 36px;
+		width: var(--nav-btn);
+		height: var(--nav-btn);
 	}
 
 	.label {

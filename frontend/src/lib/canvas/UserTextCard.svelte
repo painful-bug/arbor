@@ -72,6 +72,9 @@ import CardHandles from './CardHandles.svelte';
 		border: 1px solid rgba(0, 0, 0, 0.06);
 		cursor: pointer;
 		box-sizing: border-box;
+		color: rgba(0, 0, 0, 0.85);
+		--ink-rgb: 0, 0, 0;
+		color-scheme: light;
 		transition:
 			transform var(--ease-glass),
 			box-shadow var(--ease-glass);

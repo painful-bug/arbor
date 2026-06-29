@@ -16,6 +16,8 @@
 	--c-success: #1ea64a;
 	--ink-rgb: 0, 0, 0;
 	--c-pattern: #ececec;
+	--c-edge: #999;
+	--c-edge-selected: var(--c-accent-magenta);
 	--glass-bg: rgba(255, 255, 255, 0.62);
 	--glass-border: rgba(255, 255, 255, 0.7);
 	--c-sidebar: rgba(248, 248, 248, 0.82);
@@ -34,6 +36,11 @@
 	--font-sans:
 		-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
 	--font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+	/* sidebar / nav button geometry (shared across rail buttons) */
+	--nav-btn: 40px;
+	--nav-icon: 20px;
+	--nav-radius: 12px;
 
 	/* radii */
 	--r-xs: 2px;
@@ -79,6 +86,8 @@
 	--c-success: #50fa7b;
 	--ink-rgb: 248, 248, 242;
 	--c-pattern: #3a3d4d;
+	--c-edge: #8888a0;
+	--c-edge-selected: var(--c-accent-magenta);
 	--glass-bg: rgba(40, 42, 54, 0.62);
 	--glass-border: rgba(68, 71, 90, 0.7);
 	--c-sidebar: rgba(33, 34, 44, 0.82);

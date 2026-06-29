@@ -59,10 +59,6 @@
 
 <style>
 	.theme-toggle {
-		position: fixed;
-		top: 16px;
-		right: 68px;
-		z-index: 50;
 		width: 32px;
 		height: 32px;
 		border-radius: var(--r-full);

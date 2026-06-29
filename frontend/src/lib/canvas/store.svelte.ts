@@ -77,7 +77,10 @@ interface CanvasIndex {
 
 // Reactive registry + view state the Library/Sidebar bind to.
 export const library = $state<{ list: CanvasMeta[] }>({ list: [] });
-export const ui = $state<{ view: 'canvas' | 'library' }>({ view: 'canvas' });
+export const ui = $state<{ view: 'canvas' | 'library'; sidebarExpanded: boolean }>({
+	view: 'canvas',
+	sidebarExpanded: false
+});
 let currentId = '';
 export const currentCanvasId = () => currentId;
 

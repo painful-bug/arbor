@@ -1,7 +1,6 @@
 <script lang="ts">
 	import '$lib/theme/tokens.css';
 	import Sidebar from '$lib/Sidebar.svelte';
-	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import { onMount } from 'svelte';
 	import { apiJson } from '$lib/api';
@@ -29,7 +28,6 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<ThemeToggle />
 <Sidebar />
 
 <div class="content">

@@ -12,6 +12,7 @@
 	import PromptBubble from './PromptBubble.svelte';
 	import CardExpand from './CardExpand.svelte';
 	import CardChatPanel from './CardChatPanel.svelte';
+	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
 	import {
 		flow,
 		tool,
@@ -324,6 +325,12 @@
 				if (pendingBranch) { dismissBranch(); e.preventDefault(); return; }
 				if (openFileId) { openFileId = null; e.preventDefault(); return; }
 				if (expandId) { expandId = null; e.preventDefault(); return; }
+				if (chatOpen || ui.sidebarExpanded) {
+					chatOpen = false;
+					ui.sidebarExpanded = false;
+					e.preventDefault();
+					return;
+				}
 				if (tool.active !== 'hand' || tool.connectFrom) {
 					tool.active = 'hand';
 					tool.connectFrom = null;
@@ -380,6 +387,11 @@
 			goto('/settings');
 			return;
 		}
+		if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
+			e.preventDefault();
+			chatOpen = !chatOpen;
+			return;
+		}
 		if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
 			e.preventDefault();
 			if (e.shiftKey) redo();
@@ -387,10 +399,16 @@
 		}
 	}
 
-	// Click on the canvas region closes the file preview (FilePanel is a sibling,
-	// so its clicks don't bubble here).
-	function onWrapPointerDown() {
+	// Click on the empty canvas background collapses the chat panel + sidebar and
+	// closes the file preview. Clicks on a card are ignored so selecting a card
+	// (which retargets the chat) doesn't also close it. FilePanel is a sibling, so
+	// its clicks don't bubble here.
+	function onWrapPointerDown(e: PointerEvent) {
+		const t = e.target as HTMLElement;
+		if (t?.closest('.svelte-flow__node') || t?.closest('.canvas-actions')) return;
 		if (openFileId) openFileId = null;
+		chatOpen = false;
+		ui.sidebarExpanded = false;
 	}
 
 	onMount(() => {
@@ -645,6 +663,24 @@
 					{/if}
 
 					<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => doCleanUp()} />
+
+					<div class="canvas-actions">
+						<!-- theme toggle fades out while chat is open (panel "covers" it) -->
+						<div class="theme-slot" class:hidden={chatOpen}>
+							<ThemeToggle />
+						</div>
+						<button
+							class="canvas-action-btn glass"
+							class:active={chatOpen}
+							onclick={() => (chatOpen = !chatOpen)}
+							aria-label={chatOpen ? 'Close chat panel' : 'Open chat panel'}
+							title={chatOpen ? 'Close chat (⌘\\)' : 'Open chat (⌘\\)'}
+						>
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+								<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+							</svg>
+						</button>
+					</div>
 				</div>
 
 				{#if openFileId}
@@ -736,6 +772,9 @@
 		height: 100%;
 		overflow: hidden;
 		position: relative;
+		/* drives the toolbar's container queries — it squeezes as this shrinks */
+		container-type: inline-size;
+		container-name: canvasarea;
 	}
 	.hint {
 		position: fixed;
@@ -784,6 +823,20 @@
 		transform: translate(-50%, -50%) scale(0.82);
 		opacity: 0;
 		pointer-events: none;
+	}
+
+	/* Edge (connection line) visibility */
+	.wrap :global(.svelte-flow__edge-path) {
+		stroke: var(--c-edge);
+		stroke-width: 2;
+	}
+	.wrap :global(.svelte-flow__edge.selected .svelte-flow__edge-path) {
+		stroke: var(--c-edge-selected);
+		stroke-width: 2.5;
+	}
+	.wrap :global(.svelte-flow__connection-path) {
+		stroke: var(--c-edge);
+		stroke-width: 2;
 	}
 
 	/* Cursor overrides per tool */
@@ -948,5 +1001,41 @@
 		font-family: var(--font-mono);
 		font-size: 12px;
 		word-break: break-word;
+	}
+	.canvas-actions {
+		position: fixed;
+		top: 12px;
+		right: 16px;
+		z-index: 60;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.theme-slot {
+		display: flex;
+		transition: opacity var(--ease-glass);
+	}
+	.theme-slot.hidden {
+		opacity: 0;
+		pointer-events: none;
+	}
+	.canvas-action-btn {
+		width: 32px;
+		height: 32px;
+		border-radius: var(--r-full);
+		border: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--c-ink);
+		cursor: pointer;
+		transition: transform var(--ease-glass);
+	}
+	.canvas-action-btn:active {
+		transform: scale(0.88);
+	}
+	.canvas-action-btn.active {
+		background: var(--c-ink);
+		color: var(--c-on-primary);
 	}
 </style>

@@ -1,6 +1,4 @@
 <script lang="ts">
-	// Right collapsible sidebar in the tiled split layout: canvas | FilePanel | ChatPanel.
-	// Bound `open` is lifted to Canvas.svelte so the parent controls the flex column.
 	import { flow, continueCard, session, runSession } from './store.svelte';
 	import { resizable } from '$lib/actions/resizable';
 	import type { CardData } from './store.svelte';
@@ -50,122 +48,80 @@
 
 </script>
 
-<!-- pull-tab always visible; panel slides in when open -->
-<div class="col" class:open>
-	<button class="tab" onclick={() => (open = !open)} aria-label="Toggle chat panel">
-		<span class="chev">{open ? '›' : '‹'}</span>
-		<span class="tab-label">Chat</span>
-	</button>
+<!-- Always mounted; animates width 0↔chatWidth like the sidebar. Inner stays
+     fixed-width so content is clipped (not reflowed) during the slide. -->
+<aside class="panel" class:open style:width={open ? `${chatWidth}px` : '0px'}>
+	<div class="inner" style:width="{chatWidth}px">
+		<div class="grip" use:resizable={{ min: 260, max: 720, getWidth: () => chatWidth, onwidth: (w) => (chatWidth = w) }} role="separator" aria-label="Resize panel" tabindex="-1"></div>
 
-	{#if open}
-		<aside class="panel" style="width: {chatWidth}px">
-			<div class="grip" use:resizable={{ min: 260, max: 640, getWidth: () => chatWidth, onwidth: (w) => (chatWidth = w) }} role="separator" aria-label="Resize panel" tabindex="-1"></div>
-
-			{#if card && cardId}
-				<header>
-					<span class="dot" style="background: var(--block-{card.block})"></span>
-					<h3>{card.title}</h3>
-				</header>
-				<div class="body" bind:this={scroller}>
-					{#if plan}
-						<div class="plan">
-							<p class="plan-title">🔬 Research Plan</p>
-							<ol>
-								{#each plan as topic}
-									<li>{topic}</li>
-								{/each}
-							</ol>
-						</div>
-					{/if}
-					<ThreadView turns={card.turns} streaming={card.streaming} />
-				</div>
-				<div class="composer">
-					<Composer
-						placeholder={card.streaming ? 'Thinking…' : 'Message this card…'}
-						disabled={card.streaming}
-						onsend={send}
-					/>
-				</div>
-			{:else}
-				<header>
-					<span class="dot" style="background: var(--c-ink)"></span>
-					<h3>Canvas</h3>
-				</header>
-				<div class="body" bind:this={hubScroller}>
-					{#if session.turns.length === 0}
-						<div class="hub-empty">
-							<p>Ask anything about this canvas, or say <em>"save as a card"</em> to create one.</p>
-						</div>
-					{:else}
-						<ThreadView turns={session.turns} streaming={session.streaming} />
-					{/if}
-				</div>
-				<div class="composer">
-					<Composer
-						placeholder={session.streaming ? 'Thinking…' : 'Message the canvas…'}
-						disabled={session.streaming}
-						onsend={(text) => runSession(text)}
-					/>
-				</div>
-			{/if}
-		</aside>
-	{/if}
-</div>
+		{#if card && cardId}
+			<header>
+				<span class="dot" style="background: var(--block-{card.block})"></span>
+				<h3>{card.title}</h3>
+			</header>
+			<div class="body" bind:this={scroller}>
+				{#if plan}
+					<div class="plan">
+						<p class="plan-title">🔬 Research Plan</p>
+						<ol>
+							{#each plan as topic}
+								<li>{topic}</li>
+							{/each}
+						</ol>
+					</div>
+				{/if}
+				<ThreadView turns={card.turns} streaming={card.streaming} />
+			</div>
+			<div class="composer">
+				<Composer
+					placeholder={card.streaming ? 'Thinking…' : 'Message this card…'}
+					disabled={card.streaming}
+					onsend={send}
+				/>
+			</div>
+		{:else}
+			<header>
+				<span class="dot" style="background: var(--c-ink)"></span>
+				<h3>Canvas</h3>
+			</header>
+			<div class="body" bind:this={hubScroller}>
+				{#if session.turns.length === 0}
+					<div class="hub-empty">
+						<p>Ask anything about this canvas, or say <em>"save as a card"</em> to create one.</p>
+					</div>
+				{:else}
+					<ThreadView turns={session.turns} streaming={session.streaming} />
+				{/if}
+			</div>
+			<div class="composer">
+				<Composer
+					placeholder={session.streaming ? 'Thinking…' : 'Message the canvas…'}
+					disabled={session.streaming}
+					onsend={(text) => runSession(text)}
+				/>
+			</div>
+		{/if}
+	</div>
+</aside>
 
 <style>
-	.col {
-		flex: none;
-		height: 100%;
-		display: flex;
-		flex-direction: row;
-	}
-	/* pull-tab: magnetic squish on hover/press */
-	.tab {
-		flex: none;
-		width: 28px;
-		height: 100%;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 4px;
-		padding: 0;
-		border: none;
-		border-left: 1px solid var(--c-hairline);
-		background: var(--c-ink);
-		color: var(--c-on-primary);
-		cursor: pointer;
-		transition:
-			transform 320ms cubic-bezier(0.22, 1.4, 0.36, 1),
-			width 320ms cubic-bezier(0.22, 1.4, 0.36, 1);
-	}
-	.tab:hover {
-		transform: translateX(-3px) scaleX(1.1);
-		width: 32px;
-	}
-	.tab:active {
-		transform: scaleX(0.94) scaleY(0.97);
-	}
-	.chev {
-		font-size: 18px;
-		line-height: 1;
-	}
-	.tab-label {
-		writing-mode: vertical-rl;
-		font-family: var(--font-mono);
-		font-size: 11px;
-		letter-spacing: 1px;
-	}
+	/* outer animates width like the sidebar; clips the fixed-width inner */
 	.panel {
-		position: relative;
 		flex: none;
+		height: 100%;
+		overflow: hidden;
+		transition: width var(--spring-snappy);
+	}
+	.inner {
+		position: relative;
 		height: 100%;
 		display: flex;
 		flex-direction: column;
 		background: var(--c-canvas);
 		border-left: 1px solid var(--c-hairline);
+		border-radius: var(--r-lg) 0 0 var(--r-lg);
 		box-shadow: -12px 0 40px rgba(var(--ink-rgb), 0.08);
-		overflow: hidden;
+		box-sizing: border-box;
 	}
 	.grip {
 		position: absolute;
@@ -180,27 +136,29 @@
 		display: flex;
 		align-items: center;
 		gap: var(--s-sm);
-		padding: var(--s-md) var(--s-lg);
+		height: 56px;
+		padding: 0 var(--s-md);
+		box-sizing: border-box;
 		border-bottom: 1px solid var(--c-hairline);
 		flex: none;
 	}
 	.dot {
-		width: 12px;
-		height: 12px;
+		width: 10px;
+		height: 10px;
 		border-radius: var(--r-full);
 		flex: none;
 	}
 	h3 {
 		margin: 0;
-		font-size: 14px;
+		font-size: 13px;
 		font-weight: 600;
 		line-height: 1.3;
+		/* leave room for the fixed chat-toggle that sits over the header's right edge */
+		flex: 1;
+		padding-right: 40px;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		-webkit-box-orient: vertical;
+		white-space: nowrap;
 	}
 	.body {
 		flex: 1;
@@ -226,16 +184,6 @@
 		font-size: 13px;
 		line-height: 1.5;
 	}
-	.empty {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--s-xl);
-		text-align: center;
-		font-size: 13px;
-		color: rgba(var(--ink-rgb), 0.4);
-	}
 	.composer {
 		display: flex;
 		align-items: flex-end;
@@ -251,5 +199,4 @@
 		color: rgba(var(--ink-rgb), 0.45);
 		line-height: 1.5;
 	}
-	/* Composer defaults (14px, 36px btn) match CardChatPanel — no overrides needed. */
 </style>

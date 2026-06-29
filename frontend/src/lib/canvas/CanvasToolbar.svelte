@@ -38,6 +38,7 @@
 			<button
 				class="tool"
 				class:active={tool.active === t.id}
+				class:secondary={t.id === 'duplicate' || t.id === 'connect' || t.id === 'color'}
 				onclick={() => select(t.id)}
 				title={t.title}
 				aria-pressed={tool.active === t.id}
@@ -67,16 +68,16 @@
 			<span class="label">Fit</span>
 			<span class="key">F</span>
 		</button>
-		<button class="action" onclick={onCleanUp} title="Clean Up — group cards into clusters (CC)">
+		<button class="action secondary" onclick={onCleanUp} title="Clean Up — group cards into clusters (CC)">
 			<span class="icon">✦</span>
 			<span class="label">Clean Up</span>
 			<span class="key">CC</span>
 		</button>
-		<button class="action" onclick={onDeepResearch} title="Deep Research -- plan and search real papers">
+		<button class="action secondary" onclick={onDeepResearch} title="Deep Research -- plan and search real papers">
 			<span class="icon">🔬</span>
 			<span class="label">Research</span>
 		</button>
-		<button class="action" onclick={onKB} title="Knowledge Base -- view and clear indexed content">
+		<button class="action secondary" onclick={onKB} title="Knowledge Base -- view and clear indexed content">
 			<span class="icon">⬡</span>
 			<span class="label">KB</span>
 		</button>
@@ -123,7 +124,7 @@
 		font-weight: 500;
 		cursor: pointer;
 		color: var(--c-ink);
-		transition: background 0.12s, color 0.12s;
+		transition: background 0.12s, color 0.12s, padding var(--spring-snappy);
 		white-space: nowrap;
 	}
 	.tool:hover, .action:hover {
@@ -146,9 +147,14 @@
 	.tool.active .key {
 		opacity: 0.65;
 	}
-	/* Hide labels at narrow widths */
-	@media (max-width: 640px) {
-		.label { display: none; }
+	/* Progressive squeeze driven by the canvas area width (shrinks as the chat
+	   panel widens). Container query — not viewport — so it tracks the live drag. */
+	@container canvasarea (max-width: 1040px) {
+		.label, .key { display: none; }
 		.tool, .action { padding: 6px 8px; }
+	}
+	@container canvasarea (max-width: 760px) {
+		.secondary { display: none; }
+		.sep { display: none; }
 	}
 </style>
