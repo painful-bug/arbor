@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Loom",
+  "productName": "Arbor",
   "version": "0.1.0",
-  "identifier": "app.loom.canvas",
+  "identifier": "app.arbor.canvas",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Loom",
+        "title": "Arbor",
         "width": 1280,
         "height": 860,
         "minWidth": 800,
@@ -37,6 +37,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": ["binaries/bun"],
+    "resources": ["resources/backend/"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

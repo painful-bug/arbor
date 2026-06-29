@@ -1,11 +1,11 @@
 {
-	"name": "loom-backend",
+	"name": "arbor-backend",
 	"private": true,
 	"type": "module",
 	"scripts": {
 		"dev": "bun --watch src/server.ts",
 		"start": "bun src/server.ts",
-		"test": "LOOM_DIR=\"$(mktemp -d)\" bun test"
+		"test": "ARBOR_DIR=\"$(mktemp -d)\" bun test"
 	},
 	"dependencies": {
 		"@lancedb/lancedb": "^0.30.0",
@@ -23,6 +23,8 @@
 		"mupdf": "^1.27.0",
 		"officeparser": "^7.2.2",
 		"pdf-parse": "^2.4.5",
+		"regenerator-runtime": "^0.14.1",
+		"tesseract.js": "^7.0.0",
 		"typebox": "^1.3.0"
 	},
 	"devDependencies": {

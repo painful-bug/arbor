@@ -6,10 +6,10 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { mkdirSync } from "node:fs";
-import { DB_PATH, LOOM_DIR, BLOBS_DIR } from "../paths.ts";
+import { DB_PATH, ARBOR_DIR, BLOBS_DIR } from "../paths.ts";
 import * as schema from "./schema.ts";
 
-mkdirSync(LOOM_DIR, { recursive: true });
+mkdirSync(ARBOR_DIR, { recursive: true });
 mkdirSync(BLOBS_DIR, { recursive: true });
 
 const sqlite = new Database(DB_PATH);

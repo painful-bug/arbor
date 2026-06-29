@@ -34,13 +34,14 @@
 		redo,
 		deleteNodes,
 		groupNodes,
+		currentCanvasId,
 		init
 	} from './store.svelte';
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
 	import { asUrl } from '$lib/url';
-	import { putFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
-	import { ragAdd, ragRemove, DEFAULT_CANVAS } from '$lib/ai/client';
+	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
+	import { ragAdd, ragRemove } from '$lib/ai/client';
 	import { scale } from 'svelte/transition';
 import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
@@ -122,7 +123,7 @@ import { backOut } from 'svelte/easing';
 			const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
 			const id = addTextCard(pos);
 			flow.selected = id;
-			window.dispatchEvent(new CustomEvent('loom:openfile', { detail: { fileId: id } }));
+			window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
 			tool.active = 'hand';
 		} else {
 			flow.selected = null;
@@ -194,7 +195,7 @@ import { backOut } from 'svelte/easing';
 		const bw = 180;
 		const x = Math.max(bw, Math.min(window.innerWidth - bw, selCx + Math.cos(angle) * radius));
 		const y = Math.max(50, Math.min(window.innerHeight - 50, selCy + Math.sin(angle) * radius));
-		onBranchEvent(new CustomEvent('loom:branch', { detail: { x, y, parentId, quote, overModal } }));
+		onBranchEvent(new CustomEvent('arbor:branch', { detail: { x, y, parentId, quote, overModal } }));
 	}
 
 	function onSelectionChange() {
@@ -229,11 +230,12 @@ import { backOut } from 'svelte/easing';
 		return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
 	}
 
-	function onNodesDelete({ nodes }: { nodes: { id: string; type?: string; data: unknown }[] }) {
+	function onDelete({ nodes }: { nodes: { id: string; type?: string; data: unknown }[] }) {
 		for (const node of nodes) {
 			if (node.type === 'file') {
 				const filename = (node.data as { filename?: string }).filename;
-				if (filename) void ragRemove(DEFAULT_CANVAS, filename);
+				if (filename) void ragRemove(currentCanvasId(), filename);
+				void deleteFileBlob(node.id);
 			}
 		}
 	}
@@ -316,6 +318,19 @@ import { backOut } from 'svelte/easing';
 				if (sel.length) { deleteNodes(sel); e.preventDefault(); return; }
 			}
 
+			// Space: toggle the expanded preview of the selected card/file.
+			if (e.key === ' ') {
+				const multi = flow.nodes.filter((n) => n.selected);
+				const id = flow.selected ?? (multi.length === 1 ? multi[0].id : null);
+				const node = id ? flow.nodes.find((n) => n.id === id) : null;
+				if (node) {
+					e.preventDefault(); // stop page/canvas scroll
+					if (node.type === 'card') expandId = expandId === node.id ? null : node.id;
+					else openFileId = openFileId === node.id ? null : node.id; // file + text nodes
+					return;
+				}
+			}
+
 			// Tool hotkeys (no modifier).
 			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
 				if (e.key === 'h' || e.key === 'H') { tool.active = 'hand'; tool.connectFrom = null; e.preventDefault(); }
@@ -350,17 +365,17 @@ import { backOut } from 'svelte/easing';
 	}
 
 	onMount(() => {
-		// Async init: load canvas from ~/.loom, then hydrate file bytes.
+		// Async init: load canvas from ~/.arbor, then hydrate file bytes.
 		void init().then(() => {
 			const fileIds = flow.nodes.filter((n) => n.type === 'file').map((n) => n.id);
 			if (fileIds.length) void hydrateFileBlobs(fileIds);
 		});
 
-		window.addEventListener('loom:branch', onBranchEvent);
-		window.addEventListener('loom:continue', onContinueEvent);
-		window.addEventListener('loom:expand', onExpandEvent);
-		window.addEventListener('loom:weburl', onWebUrlEvent);
-		window.addEventListener('loom:openfile', onOpenFileEvent);
+		window.addEventListener('arbor:branch', onBranchEvent);
+		window.addEventListener('arbor:continue', onContinueEvent);
+		window.addEventListener('arbor:expand', onExpandEvent);
+		window.addEventListener('arbor:weburl', onWebUrlEvent);
+		window.addEventListener('arbor:openfile', onOpenFileEvent);
 		window.addEventListener('keydown', onKeydown);
 		document.addEventListener('mouseup', onDocSelect);
 		document.addEventListener('selectionchange', onSelectionChange);
@@ -389,7 +404,7 @@ import { backOut } from 'svelte/easing';
 							const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
 							putFileBlob(id, bytes, mime, name);
 							extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
-							await ragAdd(DEFAULT_CANVAS, name, mime, bytes);
+							await ragAdd(currentCanvasId(), name, mime, bytes);
 							setFileStatus(id, 'ready');
 						} catch (err) {
 							console.error('tauri file drop read failed', err);
@@ -401,11 +416,11 @@ import { backOut } from 'svelte/easing';
 		}
 
 		return () => {
-			window.removeEventListener('loom:branch', onBranchEvent);
-			window.removeEventListener('loom:continue', onContinueEvent);
-			window.removeEventListener('loom:expand', onExpandEvent);
-			window.removeEventListener('loom:weburl', onWebUrlEvent);
-			window.removeEventListener('loom:openfile', onOpenFileEvent);
+			window.removeEventListener('arbor:branch', onBranchEvent);
+			window.removeEventListener('arbor:continue', onContinueEvent);
+			window.removeEventListener('arbor:expand', onExpandEvent);
+			window.removeEventListener('arbor:weburl', onWebUrlEvent);
+			window.removeEventListener('arbor:openfile', onOpenFileEvent);
 			window.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('mouseup', onDocSelect);
 			document.removeEventListener('selectionchange', onSelectionChange);
@@ -456,7 +471,7 @@ import { backOut } from 'svelte/easing';
 				extractText(buf, kind)
 					.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
 					.catch(() => {});
-				await ragAdd(DEFAULT_CANVAS, file.name, file.type, buf);
+				await ragAdd(currentCanvasId(), file.name, file.type, buf);
 				setFileStatus(id, 'ready');
 			} catch (err) {
 				console.error('rag index failed', err);
@@ -518,7 +533,7 @@ import { backOut } from 'svelte/easing';
 						panOnDrag={tool.active === 'select' ? [1, 2] : true}
 						proOptions={{ hideAttribution: true }}
 						onnodedragstop={onNodeDragStop}
-					onnodesdelete={onNodesDelete}
+					ondelete={onDelete}
 						onpaneclick={onPaneClick}
 						onnodeclick={({ node }) => onNodeClick(node)}
 					>

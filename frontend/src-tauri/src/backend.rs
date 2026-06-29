@@ -1,7 +1,7 @@
 // Spawns the TypeScript backend (Bun) and learns how to reach it.
 //
 // The backend binds 127.0.0.1 on a free port and prints one handshake line:
-//   LOOM_BACKEND {"port":NNNN,"token":"..."}
+//   ARBOR_BACKEND {"port":NNNN,"token":"..."}
 // We block setup until that line arrives, store {port, token}, then drain the
 // rest of the child's stdout to the log so its pipe never fills. The token is
 // handed to the webview via `backend_info` and sent back as a Bearer header,
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 #[derive(Clone, serde::Serialize)]
 pub struct BackendInfo {
@@ -32,20 +32,35 @@ impl Backend {
     }
 }
 
-// Where the backend entry lives. In dev it's the source under ../../backend; in a
-// packaged build it's bundled JS in the app's resource dir (wired up in Phase 4).
-fn entry_path<R: Runtime>(_app: &AppHandle<R>) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../backend/src/server.ts")
+fn entry_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
+    if cfg!(debug_assertions) {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../backend/src/server.ts")
+    } else {
+        app.path()
+            .resource_dir()
+            .expect("resource dir")
+            .join("resources/backend/src/server.ts")
+    }
+}
+
+fn bun_path() -> PathBuf {
+    if cfg!(debug_assertions) {
+        PathBuf::from("bun")
+    } else {
+        let exe = std::env::current_exe().expect("current_exe");
+        exe.parent().unwrap().join("bun")
+    }
 }
 
 pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<Backend, String> {
     let entry = entry_path(app);
-    let mut child = Command::new("bun")
+    let bun = bun_path();
+    let mut child = Command::new(&bun)
         .arg(&entry)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| format!("spawn backend (bun {}): {e}", entry.display()))?;
+        .map_err(|e| format!("spawn backend ({} {}): {e}", bun.display(), entry.display()))?;
 
     let stdout = child.stdout.take().ok_or("backend stdout unavailable")?;
     let mut reader = BufReader::new(stdout);
@@ -57,7 +72,7 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<Backend, String> {
         if n == 0 {
             return Err("backend exited before handshake".into());
         }
-        if let Some(rest) = line.trim().strip_prefix("LOOM_BACKEND ") {
+        if let Some(rest) = line.trim().strip_prefix("ARBOR_BACKEND ") {
             let v: serde_json::Value = serde_json::from_str(rest).map_err(|e| e.to_string())?;
             let port = v["port"].as_u64().ok_or("handshake missing port")? as u16;
             let token = v["token"].as_str().ok_or("handshake missing token")?.to_string();

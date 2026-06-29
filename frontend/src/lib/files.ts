@@ -1,14 +1,20 @@
 // ── Blob registry ────────────────────────────────────────────────────────────
-// In-memory Map backed by the backend (~/.loom/blobs) so bytes survive restarts
+// In-memory Map backed by the backend (~/.arbor/blobs) so bytes survive restarts
 // without re-dropping. Bytes go over the wire raw; filename rides in X-Filename
 // (URI-encoded so non-ASCII names stay header-safe).
 import { apiFetch } from '$lib/api';
+import { currentCanvasId } from '$lib/canvas/store.svelte';
 
 const blobs = new Map<string, { bytes: ArrayBuffer; mime: string; name: string }>();
 
+// Blobs are keyed by canvas so per-canvas-reused node IDs (n1, n2, …) can't collide
+// across canvases — both in memory and on the backend (~/.arbor/blobs/<key>).
+const key = (id: string) => `${currentCanvasId()}:${id}`;
+const blobUrl = (id: string) => `/api/blobs/${encodeURIComponent(key(id))}`;
+
 export function putFileBlob(id: string, bytes: ArrayBuffer, mime: string, name: string): void {
-	blobs.set(id, { bytes, mime, name });
-	void apiFetch(`/api/blobs/${id}`, {
+	blobs.set(key(id), { bytes, mime, name });
+	void apiFetch(blobUrl(id), {
 		method: 'PUT',
 		headers: { 'Content-Type': mime || 'application/octet-stream', 'X-Filename': encodeURIComponent(name) },
 		body: bytes
@@ -16,24 +22,26 @@ export function putFileBlob(id: string, bytes: ArrayBuffer, mime: string, name: 
 }
 
 export function getFileBlob(id: string): { bytes: ArrayBuffer; mime: string; name: string } | undefined {
-	return blobs.get(id);
+	return blobs.get(key(id));
 }
 
-function hasFileBlob(id: string): boolean {
-	return blobs.has(id);
+// Drop a file's bytes from memory and the backend when its node is deleted.
+export function deleteFileBlob(id: string): void {
+	blobs.delete(key(id));
+	void apiFetch(blobUrl(id), { method: 'DELETE' }).catch(() => {});
 }
 
 // Load bytes from the backend for known file node IDs so re-drops aren't needed after restart.
 export async function hydrateFileBlobs(ids: string[]): Promise<void> {
 	await Promise.all(
 		ids.map(async (id) => {
-			if (blobs.has(id)) return;
-			const res = await apiFetch(`/api/blobs/${id}`);
+			if (blobs.has(key(id))) return;
+			const res = await apiFetch(blobUrl(id));
 			if (!res.ok) return; // 404 (never stored) or backend unreachable
 			const bytes = await res.arrayBuffer();
 			const mime = res.headers.get('Content-Type') ?? '';
 			const name = decodeURIComponent(res.headers.get('X-Filename') ?? id);
-			blobs.set(id, { bytes, mime, name });
+			blobs.set(key(id), { bytes, mime, name });
 		})
 	);
 }

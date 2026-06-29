@@ -64,7 +64,7 @@ import CardHandles from './CardHandles.svelte';
 	}
 
 	function open() {
-		window.dispatchEvent(new CustomEvent('loom:openfile', { detail: { fileId: id } }));
+		window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
 	}
 </script>
 

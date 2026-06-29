@@ -12,9 +12,9 @@
 		if (!import.meta.env.DEV) return;
 		try {
 			const ok = await apiJson<{ ok: boolean }>('/api/ping');
-			console.log('[loom] backend reachable:', ok);
+			console.log('[arbor] backend reachable:', ok);
 		} catch (e) {
-			console.error('[loom] backend unreachable:', e);
+			console.error('[arbor] backend unreachable:', e);
 		}
 	});
 </script>

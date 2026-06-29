@@ -34,16 +34,16 @@
 	// old TextView modal. "Edit ✎" switches to the raw textarea.
 	let textEditing = $state(false);
 	let noteHL = $state<string[]>([]);
-	$effect(() => { noteHL = loadHL<string>(`loom.highlights.${fileId}`); });
+	$effect(() => { noteHL = loadHL<string>(`arbor.highlights.${fileId}`); });
 
 	function saveNoteHL(updated: string[]) {
 		noteHL = updated;
-		saveHL(`loom.highlights.${fileId}`, updated);
+		saveHL(`arbor.highlights.${fileId}`, updated);
 	}
 
 	function clearNoteHL() {
 		noteHL = [];
-		saveHL(`loom.highlights.${fileId}`, []);
+		saveHL(`arbor.highlights.${fileId}`, []);
 	}
 
 
@@ -114,11 +114,11 @@
 	}
 	let pages = $state<number[]>([]);
 	let highlights = $state<HL[]>([]);
-	$effect(() => { if (!isText) highlights = loadHL<HL>(`loom.highlights.${fileId}`); });
+	$effect(() => { if (!isText) highlights = loadHL<HL>(`arbor.highlights.${fileId}`); });
 	let pagesEl = $state<HTMLDivElement>();
 
 	function saveHighlights() {
-		saveHL(`loom.highlights.${fileId}`, highlights);
+		saveHL(`arbor.highlights.${fileId}`, highlights);
 	}
 
 	async function renderPdf(container: HTMLDivElement) {

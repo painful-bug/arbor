@@ -1,4 +1,4 @@
-# Loom — codebase guide for Claude
+# Arbor — codebase guide for Claude
 
 ## Architecture
 
@@ -16,7 +16,7 @@ backend/    — TypeScript/Bun, all processing, local HTTP/SSE API
 Backend binds `127.0.0.1` on a free port (tries 8765+) and prints one handshake line:
 
 ```
-LOOM_BACKEND {"port":NNNN,"token":"<hex>"}
+ARBOR_BACKEND {"port":NNNN,"token":"<hex>"}
 ```
 
 Rust captures this on startup, stores `{port, token}`, exposes them via `backend_info()` Tauri command.
@@ -25,16 +25,16 @@ Frontend `src/lib/api.ts` → `apiFetch()` prefixes every request with `http://1
 
 Agent streaming uses SSE (`POST /api/agent/prompt` → `text/event-stream`). Cancel via `POST /api/agent/:cardId/cancel`.
 
-### Data dir: `~/.loom`
+### Data dir: `~/.arbor`
 
 ```
-~/.loom/loom.db          — SQLite (canvases, settings, blob metadata)
-~/.loom/lancedb/         — vector store (one table per canvas)
-~/.loom/blobs/           — raw file bytes
-~/.loom/models/          — transformers.js model cache (BGE-small-en-v1.5)
+~/.arbor/arbor.db          — SQLite (canvases, settings, blob metadata)
+~/.arbor/lancedb/         — vector store (one table per canvas)
+~/.arbor/blobs/           — raw file bytes
+~/.arbor/models/          — transformers.js model cache (BGE-small-en-v1.5)
 ```
 
-Legacy `~/.loom/canvases/*.json` + `settings.json` are imported once on first boot by `backend/src/store/import-legacy.ts` and left in place as backup.
+Legacy `~/.arbor/canvases/*.json` + `settings.json` are imported once on first boot by `backend/src/store/import-legacy.ts` and left in place as backup. If `~/.arbor` doesn't exist but `~/.loom` does, the app reads from `~/.loom` (backward compat after rebrand).
 
 ---
 
@@ -45,7 +45,7 @@ Runtime: **Bun**. Framework: **Hono**.
 ```
 src/
   server.ts              — app factory, port scan, handshake, spawn entry
-  paths.ts               — LOOM_DIR, BACKEND_HANDSHAKE_FILE
+  paths.ts               — ARBOR_DIR, BACKEND_HANDSHAKE_FILE
   routes/
     agent.ts             — POST /api/agent/prompt (SSE), POST /api/agent/:id/cancel
     rag.ts               — POST /api/rag/:canvas/files, GET /api/rag/:canvas/search
@@ -63,7 +63,7 @@ src/
     loaders.ts           — MIME→LangChain loader registry
   store/
     db.ts                — Drizzle schema + DB singleton
-    import-legacy.ts     — one-time ~/.loom JSON → SQLite import
+    import-legacy.ts     — one-time legacy JSON → SQLite import
   secrets/               — (keytar wrapper if extracted from routes/keys.ts)
 ```
 
@@ -71,10 +71,10 @@ src/
 | Purpose | Library |
 |---|---|
 | Vector store | `@lancedb/lancedb` (embedded, table per canvas) |
-| Embeddings | `@xenova/transformers` — `Xenova/bge-small-en-v1.5`, cache `~/.loom/models` |
+| Embeddings | `@xenova/transformers` — `Xenova/bge-small-en-v1.5`, cache `~/.arbor/models` |
 | Chunking | `RecursiveCharacterTextSplitter` (~800/120) |
 | Persistence | `bun:sqlite` + Drizzle ORM |
-| Secrets | `Bun.secrets` (OS keychain, service `"app.loom.canvas"`) |
+| Secrets | `Bun.secrets` (OS keychain, service `"app.arbor.canvas"`) |
 | Agent | `@mariozechner/pi-agent-core` + `pi-ai` + `pi-coding-agent` v0.73.1 |
 | Web framework | Hono |
 
@@ -163,5 +163,5 @@ Or just `npm run dev` from root which does both via `cd frontend && npx tauri de
 3. **Frontend = UI only** — no data processing, no secrets, no direct filesystem access except via backend API.
 4. **Human-readable, simple code** — shortest diff that works; no speculative abstractions.
 5. **Root-cause fixes** — never patch a bug with a workaround that hides the symptom.
-6. **`~/.loom` is the data dir** — never change this; existing users' data lives here.
+6. **`~/.arbor` is the data dir** — falls back to `~/.loom` if it exists (backward compat). New installs use `~/.arbor`.
 7. **Secrets never cross to the webview** — keys stay in `Bun.secrets`; UI only sees presence boolean.

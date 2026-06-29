@@ -1,4 +1,4 @@
-// Loom backend. A local HTTP/SSE API that does all processing for the app.
+// Arbor backend. A local HTTP/SSE API that does all processing for the app.
 // On startup it binds 127.0.0.1 on a free port, then prints one handshake line
 // to stdout so the Tauri shell learns the {port, token} to reach it. The token
 // gates /api/* so other local processes can't drive the backend.
@@ -15,7 +15,7 @@ import { agentRoutes } from "./routes/agent.ts";
 import { fileRoutes } from "./routes/files.ts";
 import { ollamaRoutes } from "./routes/ollama.ts";
 import { importLegacyIfNeeded } from "./store/import-legacy.ts";
-import { LOOM_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
+import { ARBOR_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
 
 const HOST = "127.0.0.1";
 const FIRST_PORT = 8765;
@@ -76,17 +76,17 @@ export function serveOnFreePort(
 
 if (import.meta.main) {
 	const imported = importLegacyIfNeeded();
-	if (imported) console.error(`[loom] legacy import: ${imported}`);
+	if (imported) console.error(`[arbor] legacy import: ${imported}`);
 
 	const token = randomBytes(24).toString("hex");
 	const app = createApp(token);
 	const { port } = serveOnFreePort(app.fetch);
 
-	// Write handshake to ~/.loom/backend.json so the sidecar bridge can read it
+	// Write handshake to ~/.arbor/backend.json so the sidecar bridge can read it
 	// without going through Tauri IPC (sidecar lives outside the Tauri webview).
-	mkdirSync(LOOM_DIR, { recursive: true });
+	mkdirSync(ARBOR_DIR, { recursive: true });
 	writeFileSync(BACKEND_HANDSHAKE_FILE, JSON.stringify({ port, token }));
 
 	// Handshake line — the Tauri shell parses exactly this prefix.
-	console.log(`LOOM_BACKEND ${JSON.stringify({ port, token })}`);
+	console.log(`ARBOR_BACKEND ${JSON.stringify({ port, token })}`);
 }

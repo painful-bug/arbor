@@ -1,5 +1,5 @@
-// Phase 1 routes: canvases, settings, blobs, keys. Runs against a temp LOOM_DIR
-// set by bunfig.toml preload (test-setup.ts) so the real ~/.loom is never touched.
+// Phase 1 routes: canvases, settings, blobs, keys. Runs against a temp ARBOR_DIR
+// set by bunfig.toml preload (test-setup.ts) so the real ~/.arbor is never touched.
 import { afterAll, describe, expect, test } from "bun:test";
 import { createApp } from "../server.ts";
 
@@ -67,8 +67,8 @@ describe("blobs", () => {
 });
 
 describe("keys (real OS keychain, throwaway provider)", () => {
-	const provider = `__loomtest_${Math.random().toString(36).slice(2)}`;
-	afterAll(() => Bun.secrets.delete({ service: "app.loom.canvas", name: provider }));
+	const provider = `__arbortest_${Math.random().toString(36).slice(2)}`;
+	afterAll(() => Bun.secrets.delete({ service: "app.arbor.canvas", name: provider }));
 
 	test("absent → set → present → test ok", async () => {
 		expect(await (await app.request(`/api/keys/${provider}`, { headers: auth })).json()).toEqual({ exists: false });

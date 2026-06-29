@@ -20,7 +20,7 @@ import CardHandles from './CardHandles.svelte';
 	// Branch trigger: right-click an image inside this card. (Text-highlight branching
 	// is handled globally in Canvas via a data-card-id host + document mouseup.)
 	function onBranch(detail: { x: number; y: number; quote: string }) {
-		window.dispatchEvent(new CustomEvent('loom:branch', { detail: { parentId: id, ...detail } }));
+		window.dispatchEvent(new CustomEvent('arbor:branch', { detail: { parentId: id, ...detail } }));
 	}
 
 	// Click a link in the answer → embed it as a web card next to this one (default),
@@ -35,7 +35,7 @@ import CardHandles from './CardHandles.svelte';
 		if (e.metaKey || e.ctrlKey) {
 			openExternal(href);
 		} else {
-			window.dispatchEvent(new CustomEvent('loom:weburl', { detail: { url: href, parentId: id } }));
+			window.dispatchEvent(new CustomEvent('arbor:weburl', { detail: { url: href, parentId: id } }));
 		}
 	}
 
@@ -74,7 +74,7 @@ import CardHandles from './CardHandles.svelte';
 
 	function onDblClick(e: MouseEvent) {
 		e.stopPropagation();
-		window.dispatchEvent(new CustomEvent('loom:expand', { detail: { cardId: id } }));
+		window.dispatchEvent(new CustomEvent('arbor:expand', { detail: { cardId: id } }));
 	}
 </script>
 
