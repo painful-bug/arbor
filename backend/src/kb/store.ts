@@ -37,6 +37,12 @@ export async function upsert(canvas: string, source: string, rows: Row[]): Promi
 	}
 }
 
+// chat:* and card:* rows are conversation/title scraps, not uploaded source material.
+// They must never surface in topic search — a raw "User: ... Assistant: ..." transcript
+// from an unrelated card, returned as a "knowledge_base_search" hit, reads to the LLM
+// like a live instruction and derails it into continuing that other conversation.
+const NOT_CHAT = "source NOT LIKE 'chat:%' AND source NOT LIKE 'card:%'";
+
 export async function hybridSearch(
 	canvas: string,
 	queryVec: number[],
@@ -54,12 +60,14 @@ export async function hybridSearch(
 	try {
 		const ftsResults = await tbl
 			.search(queryText)
+			.where(NOT_CHAT)
 			.select(["text"])
 			.limit(k)
 			.toArray();
 
 		const vecResults = await tbl
 			.search(queryVec)
+			.where(NOT_CHAT)
 			.select(["text"])
 			.limit(k)
 			.toArray();
@@ -70,6 +78,7 @@ export async function hybridSearch(
 		// FTS unavailable — pure vector fallback
 		const results = await tbl
 			.search(queryVec)
+			.where(NOT_CHAT)
 			.select(["text"])
 			.limit(k)
 			.toArray();

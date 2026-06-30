@@ -1,23 +1,24 @@
-import { loadText } from "./loaders.ts";
+import { extract, toMarkdown } from "@arbor/mosaic";
+import { cloudOcrImage } from "./cloud-ocr.ts";
+import { MODELS_DIR } from "../paths.ts";
 import { embed } from "./embeddings.ts";
 import { upsert, hybridSearch, clear, removeSource, sources as storeSources, sourceContent } from "./store.ts";
 import { contextualize } from "./contextualize.ts";
+import { rerank } from "./rerank.ts";
+import { chunkText } from "./chunk.ts";
 import { randomBytes } from "node:crypto";
 
-function splitText(text: string, size = 800, overlap = 120): string[] {
-	const paragraphs = text.split(/\n\n+/);
-	const chunks: string[] = [];
-	let buf = "";
-	for (const para of paragraphs) {
-		if (buf.length + para.length + 2 > size && buf) {
-			chunks.push(buf.trim());
-			buf = buf.slice(Math.max(0, buf.length - overlap));
-		}
-		buf += (buf ? "\n\n" : "") + para;
-	}
-	if (buf.trim()) chunks.push(buf.trim());
-	return chunks.length ? chunks : text.length ? [text.slice(0, size)] : [];
+export type Verdict = "strong" | "weak" | "none";
+export interface GradedSearch {
+	chunks: { text: string; score: number }[];
+	verdict: Verdict;
 }
+
+// Cross-encoder sigmoid score bands (calibrated on bge-reranker-base):
+// relevant pairs land ~0.9+, irrelevant ~0.0. A best hit below WEAK means the KB
+// almost certainly lacks the answer — the agent should fall back to web/tools.
+const STRONG = 0.5;
+const WEAK = 0.05;
 
 export async function addFile(
 	canvas: string,
@@ -26,11 +27,15 @@ export async function addFile(
 	bytes: Uint8Array,
 ): Promise<number> {
 	if (!canvas) { console.warn("[KB] addFile called with empty canvas id — skipping"); return 0; }
-	const text = await loadText(filename, mime, bytes);
+	// @arbor/mosaic: bytes → typed AST → Markdown (text layer + OCR + layout). Cloud
+	// VLM OCR is injected so keys stay in the backend (Bun.secrets), never the package.
+	const doc = await extract(bytes, { filename, mime, modelDir: MODELS_DIR, ocr: { cloudOcrImage } });
+	const text = toMarkdown(doc);
 	if (!text.trim()) return 0;
 
 	console.log(`[KB] addFile ${filename} (${canvas}): ${text.length} chars extracted`);
-	const chunks = splitText(text);
+	const chunks = await chunkText(text, filename);
+	if (chunks.length === 0) return 0;
 
 	// Contextual headers: prepend a 1-sentence situating header per chunk
 	const headers = await contextualize(filename, chunks).catch(() =>
@@ -83,10 +88,30 @@ export async function addCard(canvas: string, cardId: string, title: string): Pr
 	}]);
 }
 
-export async function search(canvas: string, query: string, k = 6): Promise<string[]> {
-	if (!canvas) return [];
+// Retrieve → rerank → grade. Over-fetch with hybrid search, rerank with the
+// cross-encoder, keep the top k, and grade sufficiency from the best score so the
+// agent knows whether to trust the KB or fall back to web/tools (CRAG).
+export async function searchGraded(canvas: string, query: string, k = 6): Promise<GradedSearch> {
+	if (!canvas) return { chunks: [], verdict: "none" };
 	const [queryVec] = await embed([query]);
-	return hybridSearch(canvas, queryVec, query, k);
+	const candidates = await hybridSearch(canvas, queryVec, query, Math.max(k * 3, 20));
+	if (candidates.length === 0) return { chunks: [], verdict: "none" };
+
+	const ranked = await rerank(query, candidates).catch(() => null);
+	if (!ranked) {
+		// Reranker unavailable — return hybrid order, score -1 signals "unscored".
+		return { chunks: candidates.slice(0, k).map((text) => ({ text, score: -1 })), verdict: "weak" };
+	}
+
+	const top = ranked.slice(0, k);
+	const best = top[0]?.score ?? 0;
+	const verdict: Verdict = best >= STRONG ? "strong" : best >= WEAK ? "weak" : "none";
+	return { chunks: top, verdict };
+}
+
+export async function search(canvas: string, query: string, k = 6): Promise<string[]> {
+	const { chunks } = await searchGraded(canvas, query, k);
+	return chunks.map((c) => c.text);
 }
 
 export async function removeFile(canvas: string, filename: string): Promise<void> {

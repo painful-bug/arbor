@@ -2,23 +2,26 @@ import { describe, it, expect } from "bun:test";
 import { reconstructAbstract, mergePapers, formatPapers, knowledgeBaseSearchTool, type Paper } from "./tools.ts";
 
 describe("knowledgeBaseSearchTool", () => {
-	it("calls search and joins chunks", async () => {
+	it("calls search, joins chunks, and surfaces the verdict", async () => {
 		let asked = "";
 		const tool = knowledgeBaseSearchTool(async (q) => {
 			asked = q;
-			return ["[a.pdf] alpha", "[b.pdf] beta"];
+			return { chunks: [{ text: "[a.pdf] alpha", score: 0.9 }, { text: "[b.pdf] beta", score: 0.7 }], verdict: "strong" };
 		});
 		const res = await tool.execute("id", { query: "3nf" });
 		expect(asked).toBe("3nf");
 		expect(res.details.chunks).toHaveLength(2);
+		expect(res.details.verdict).toBe("strong");
 		const text = res.content[0].text;
+		expect(text).toContain("Relevance verdict: strong");
 		expect(text).toContain("[a.pdf] alpha");
 		expect(text).toContain("[b.pdf] beta");
 	});
-	it("reports when nothing is indexed instead of inventing a path", async () => {
-		const tool = knowledgeBaseSearchTool(async () => []);
+	it("reports verdict none instead of inventing a path when nothing relevant", async () => {
+		const tool = knowledgeBaseSearchTool(async () => ({ chunks: [], verdict: "none" }));
 		const res = await tool.execute("id", { query: "missing" });
-		expect(res.content[0].text).toContain("No results for");
+		expect(res.content[0].text).toContain("verdict: none");
+		expect(res.details.verdict).toBe("none");
 		expect(res.details.chunks).toEqual([]);
 	});
 });

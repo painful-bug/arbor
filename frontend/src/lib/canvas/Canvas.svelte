@@ -45,7 +45,7 @@
 	import FilePanel from './FilePanel.svelte';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
-	import { kbAdd, kbClear, kbContents, kbRemove } from '$lib/ai/client';
+	import { kbAdd, kbClear, kbContents, kbRemove, kbSearch } from '$lib/ai/client';
 	import { currentCanvasId } from './store.svelte';
 	import { goto } from '$app/navigation';
 	import { scale } from 'svelte/transition';
@@ -437,26 +437,29 @@
 					const { paths, position } = event.payload as { paths: string[]; position: { x: number; y: number } };
 					if (!paths.length) return;
 					let pos = screenToFlowPosition({ x: position.x, y: position.y });
-					for (const filePath of paths) {
+					// Cards spawn synchronously; indexing runs in parallel across files.
+					await Promise.all(paths.map((filePath) => {
 						const name = filePath.split(/[/\\]/).pop() ?? filePath;
 						const ext = name.split('.').pop()?.toLowerCase() ?? '';
 						const mime = mimeFromExt(ext);
 						const kind = kindOf(name, mime);
 						const id = addFileCard(pos, name, { mime, kind, path: filePath });
 						pos = { x: pos.x + 30, y: pos.y + 30 };
-						try {
-							const res = await apiFetch(`/api/files/read-bytes?path=${encodeURIComponent(filePath)}`);
-							const b64 = await res.text();
-							const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
-							putFileBlob(id, bytes, mime, name);
-							extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
-							const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
-							setFileStatus(id, chunks > 0 ? 'ready' : 'error');
-						} catch (err) {
-							console.error('tauri file drop read failed', err);
-							setFileStatus(id, 'error');
-						}
-					}
+						return (async () => {
+							try {
+								const res = await apiFetch(`/api/files/read-bytes?path=${encodeURIComponent(filePath)}`);
+								const b64 = await res.text();
+								const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+								putFileBlob(id, bytes, mime, name);
+								extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
+								const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
+								setFileStatus(id, chunks > 0 ? 'ready' : 'error');
+							} catch (err) {
+								console.error('tauri file drop read failed', err);
+								setFileStatus(id, 'error');
+							}
+						})();
+					}));
 				});
 			})();
 		}
@@ -507,23 +510,26 @@
 		}
 		e.preventDefault();
 		let pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-		for (const file of files) {
+		// Cards spawn synchronously; indexing runs in parallel across files.
+		await Promise.all(files.map((file) => {
 			const kind = kindOf(file.name, file.type);
 			const id = addFileCard(pos, file.name, { mime: file.type, kind });
 			pos = { x: pos.x + 30, y: pos.y + 30 };
-			try {
-				const buf = await file.arrayBuffer();
-				putFileBlob(id, buf, file.type, file.name);
-				extractText(buf, kind)
-					.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
-					.catch(() => {});
-				const chunks = await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
-				setFileStatus(id, chunks > 0 ? 'ready' : 'error');
-			} catch (err) {
-				console.error('kb index failed', err);
-				setFileStatus(id, 'error');
-			}
-		}
+			return (async () => {
+				try {
+					const buf = await file.arrayBuffer();
+					putFileBlob(id, buf, file.type, file.name);
+					extractText(buf, kind)
+						.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
+						.catch(() => {});
+					const chunks = await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
+					setFileStatus(id, chunks > 0 ? 'ready' : 'error');
+				} catch (err) {
+					console.error('kb index failed', err);
+					setFileStatus(id, 'error');
+				}
+			})();
+		}));
 	}
 
 	let openFileId = $state<string | null>(null);
@@ -538,14 +544,31 @@
 	let kbLoading = $state(false);
 	let kbClearing = $state(false);
 	let kbClearConfirm = $state(false);
+	let kbQuery = $state('');
+	let kbResults = $state<string[] | null>(null);
+	let kbSearching = $state(false);
+	let kbSearchTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async function openKB() {
 		kbOpen = true;
 		kbData = null;
 		kbLoading = true;
 		kbClearConfirm = false;
+		kbQuery = '';
+		kbResults = null;
 		kbData = await kbContents(currentCanvasId() || 'default');
 		kbLoading = false;
+	}
+
+	function onKBQueryInput() {
+		clearTimeout(kbSearchTimer);
+		const q = kbQuery;
+		if (!q.trim()) { kbResults = null; kbSearching = false; return; }
+		kbSearching = true;
+		kbSearchTimer = setTimeout(async () => {
+			const results = await kbSearch(currentCanvasId() || 'default', q);
+			if (kbQuery === q) { kbResults = results; kbSearching = false; }
+		}, 250);
 	}
 
 	async function doKBClear() {
@@ -707,6 +730,13 @@
 						<header class="kb-header">
 							<span class="kb-title">Knowledge Base</span>
 							<div class="kb-actions">
+								<input
+									class="kb-search"
+									type="text"
+									placeholder="Search KB…"
+									bind:value={kbQuery}
+									oninput={onKBQueryInput}
+								/>
 								<button
 									class="kb-btn kb-clear"
 									class:confirm={kbClearConfirm}
@@ -723,7 +753,22 @@
 							</div>
 						</header>
 						<div class="kb-body">
-							{#if kbLoading}
+							{#if kbQuery.trim()}
+								{#if kbSearching}
+									<div class="kb-empty">Searching…</div>
+								{:else if !kbResults || kbResults.length === 0}
+									<div class="kb-empty">No matching chunks.</div>
+								{:else}
+									<section>
+										<h3>Matching chunks ({kbResults.length})</h3>
+										<ul class="kb-chunks">
+											{#each kbResults as chunk, i (i)}
+												<li class="kb-chunk">{chunk}</li>
+											{/each}
+										</ul>
+									</section>
+								{/if}
+							{:else if kbLoading}
 								<div class="kb-empty">Loading…</div>
 							{:else if !kbData || kbData.sources.length === 0}
 								<div class="kb-empty">KB is empty — drop files onto the canvas to index them.</div>
@@ -965,6 +1010,22 @@
 	.kb-btn:disabled { opacity: 0.5; cursor: default; }
 	.kb-btn.kb-clear { color: #c0392b; border-color: #f5c6c6; }
 	.kb-btn.kb-clear.confirm { background: #c0392b; color: #fff; border-color: #c0392b; }
+	.kb-search {
+		border: 1px solid var(--c-hairline);
+		background: var(--c-surface-soft, #fff);
+		border-radius: 8px;
+		padding: 4px 10px;
+		font-size: 12px;
+		width: 180px;
+	}
+	.kb-chunks { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+	.kb-chunk {
+		padding: 8px 10px;
+		border: 1px solid var(--c-hairline);
+		border-radius: 8px;
+		background: var(--c-surface-soft, #fff);
+		white-space: pre-wrap;
+	}
 	.kb-body {
 		flex: 1;
 		overflow-y: auto;

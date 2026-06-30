@@ -2,6 +2,7 @@
 	"name": "arbor",
 	"private": true,
 	"description": "Arbor — spatial research canvas. frontend/ = UI + thin Tauri shell, backend/ = all processing behind a local HTTP/SSE API.",
+	"workspaces": ["packages/*"],
 	"scripts": {
 		"dev": "cd frontend && npx tauri dev",
 		"dev:web": "cd frontend && npm run dev",
