@@ -138,7 +138,27 @@ jobs:
       - name: Create DMG
         run: |
           APP_PATH=$(find frontend/src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
-          hdiutil create -volname "Arbor" -srcfolder "$APP_PATH" -ov -format UDZO "Arbor.dmg"
+          rm -f "Arbor.dmg"
+
+          # hdiutil intermittently fails with "Resource busy" on GitHub-hosted
+          # macOS runners (diskarbitrationd/Spotlight race during the intermediate
+          # mount step) — retry with stale-mount cleanup between attempts.
+          for attempt in 1 2 3 4 5; do
+            for disk in $(hdiutil info | awk '/\/dev\/disk/{print $1}'); do
+              hdiutil detach "$disk" -force >/dev/null 2>&1 || true
+            done
+            if hdiutil create -volname "Arbor" -srcfolder "$APP_PATH" -ov -format UDZO "Arbor.dmg"; then
+              break
+            fi
+            echo "hdiutil create failed (attempt $attempt), retrying..."
+            rm -f "Arbor.dmg"
+            sleep $((attempt * 5))
+            if [ "$attempt" -eq 5 ]; then
+              echo "hdiutil create failed after 5 attempts" >&2
+              exit 1
+            fi
+          done
+
           echo "DMG created: $(du -h Arbor.dmg | cut -f1)"
 
       - name: Upload DMG
