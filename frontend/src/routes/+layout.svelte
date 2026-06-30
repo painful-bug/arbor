@@ -3,13 +3,28 @@
 	import Sidebar from '$lib/Sidebar.svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { apiJson } from '$lib/api';
 	import { settings, ui } from '$lib/canvas/store.svelte';
+	import { checkForUpdates, registerOnAction } from '$lib/updates/store.svelte';
 
 	let { children } = $props();
 
 	$effect(() => {
 		document.documentElement.setAttribute('data-theme', settings.theme);
+	});
+
+	// Auto-update: register the notification click handler, check at startup, then
+	// re-check every 6 hours. ponytail: fixed interval; make configurable if asked.
+	onMount(() => {
+		registerOnAction(async () => {
+			const { getCurrentWindow } = await import('@tauri-apps/api/window');
+			await getCurrentWindow().setFocus();
+			await goto('/settings#updates');
+		});
+		void checkForUpdates(true);
+		const id = setInterval(() => void checkForUpdates(true), 6 * 60 * 60 * 1000);
+		return () => clearInterval(id);
 	});
 
 	// Dev sanity check: confirm the UI can reach the backend over the API.

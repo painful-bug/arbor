@@ -30,8 +30,18 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEMjgxN0FBMDdCNUMxMEEKUldRS3diVUhxaGNvalRIZzBIY2FtVmY3SGJiMkVUczRIbFNvakR3OUhPL1h2OUR3eSt3cENIRk4K",
+      "endpoints": [
+        "https://github.com/painful-bug/arbor/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",

@@ -1,8 +1,24 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { settings, persistSettings, DEFAULT_MODELS } from '$lib/canvas/store.svelte';
 	import { testConnection, PROVIDERS, type Provider } from '$lib/ai/client';
 	import { WORKFLOWS } from '$lib/ai/workflows';
 	import { apiJson, apiPut } from '$lib/api';
+	import { updateState, checkForUpdates, installUpdate } from '$lib/updates/store.svelte';
+
+	let appVersion = $state('');
+	onMount(async () => {
+		try {
+			const { getVersion } = await import('@tauri-apps/api/app');
+			appVersion = await getVersion();
+		} catch {
+			appVersion = ''; // browser dev
+		}
+		// Land on the Updates section when opened from a notification (#updates).
+		if (location.hash === '#updates') {
+			document.getElementById('updates')?.scrollIntoView({ behavior: 'smooth' });
+		}
+	});
 
 	// pastel block per provider, cycled for visual variety
 	const BLOCKS = ['lilac', 'lime', 'cream', 'pink', 'mint', 'coral'];
@@ -150,6 +166,33 @@
 		<p class="eyebrow">ARBOR · SETTINGS</p>
 		<h1>Preferences</h1>
 	</header>
+
+	<section id="updates">
+		<h2>Updates</h2>
+		<p class="sub">
+			Arbor checks GitHub for new releases automatically.{#if appVersion}
+				Current version <strong>v{appVersion}</strong>.{/if}
+		</p>
+
+		{#if updateState.status === 'available'}
+			<p class="upd-line">Update available: <strong>v{updateState.version}</strong></p>
+			{#if updateState.notes}<p class="sub upd-notes">{updateState.notes}</p>{/if}
+			<button class="upd-btn" onclick={() => installUpdate()}>Update now</button>
+		{:else if updateState.status === 'downloading'}
+			<p class="upd-line">Downloading update…</p>
+			<div class="upd-progress"><div class="upd-bar" style="width:{Math.round(updateState.progress * 100)}%"></div></div>
+		{:else if updateState.status === 'ready'}
+			<p class="upd-line">Installed — restarting…</p>
+		{:else if updateState.status === 'error'}
+			<p class="upd-line err">Update failed: {updateState.error}</p>
+			<button class="upd-btn" onclick={() => checkForUpdates(false)}>Retry</button>
+		{:else}
+			<p class="upd-line">{updateState.status === 'checking' ? 'Checking…' : "You're up to date."}</p>
+			<button class="upd-btn ghost" onclick={() => checkForUpdates(false)} disabled={updateState.status === 'checking'}>
+				Check for updates
+			</button>
+		{/if}
+	</section>
 
 	<section>
 		<h2>Default Workflow</h2>
@@ -628,5 +671,46 @@
 		background: var(--c-hairline);
 		padding: 2px 8px;
 		border-radius: var(--r-full);
+	}
+
+	/* ── Updates section ── */
+	.upd-line {
+		font-size: 14px;
+		margin: 0;
+	}
+	.upd-line.err {
+		color: var(--c-accent-magenta);
+	}
+	.upd-notes {
+		white-space: pre-wrap;
+	}
+	.upd-btn {
+		align-self: flex-start;
+		padding: 7px 16px;
+		border-radius: var(--r-md, 8px);
+		border: 1px solid var(--c-hairline);
+		background: var(--c-primary);
+		color: var(--c-on-primary);
+		font-size: 13px;
+		cursor: pointer;
+	}
+	.upd-btn.ghost {
+		background: transparent;
+		color: inherit;
+	}
+	.upd-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.upd-progress {
+		height: 6px;
+		border-radius: var(--r-full);
+		background: var(--c-hairline);
+		overflow: hidden;
+	}
+	.upd-bar {
+		height: 100%;
+		background: var(--c-accent-magenta);
+		transition: width 0.2s ease;
 	}
 </style>

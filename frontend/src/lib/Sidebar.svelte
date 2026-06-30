@@ -2,8 +2,10 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { ui, newCanvas } from '$lib/canvas/store.svelte';
+	import { hasUpdate } from '$lib/updates/store.svelte';
 
 	const onCanvas = $derived($page.url.pathname === '/');
+	const updateReady = $derived(hasUpdate());
 
 	async function showCanvas() {
 		if ($page.url.pathname !== '/') await goto('/');
@@ -95,7 +97,10 @@
 
 		<a href="/settings" class="nav-item" class:active={$page.url.pathname === '/settings'} style="margin-top: auto">
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			<span class="icon">{@html settingsIcon()}</span>
+			<span class="icon">
+				{@html settingsIcon()}
+				{#if updateReady}<span class="update-dot" aria-label="Update available"></span>{/if}
+			</span>
 			{#if ui.sidebarExpanded}<span class="label">Settings</span>{/if}
 		</a>
 	</nav>
@@ -216,6 +221,7 @@
 	}
 
 	.icon {
+		position: relative;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -224,6 +230,18 @@
 		height: var(--nav-btn);
 		border-radius: var(--nav-radius);
 		transition: background var(--ease-glass);
+	}
+
+	/* Update-available indicator on the settings gear — persists until updated. */
+	.update-dot {
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--c-accent-magenta);
+		box-shadow: 0 0 0 2px var(--c-surface-soft);
 	}
 
 	.label {
