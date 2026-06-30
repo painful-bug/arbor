@@ -17,7 +17,8 @@ async function connect(): Promise<{ base: string; token: string }> {
 	}
 	// Browser dev fallback: run `bun src/server.ts` in backend/ and pass its token.
 	const token = (import.meta.env.VITE_BACKEND_TOKEN as string | undefined) ?? 'dev';
-	return { base: 'http://127.0.0.1:8765', token };
+	const port = (import.meta.env.VITE_BACKEND_PORT as string | undefined) ?? '8765';
+	return { base: `http://127.0.0.1:${port}`, token };
 }
 
 // Resolve (and memoize) the backend base URL + token.

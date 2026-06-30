@@ -16,7 +16,7 @@ import {
 	createNoteTool,
 	updateCardTool
 } from "./tools.ts";
-import { search as kbSearch, addChat, contentsOf, readSource } from "../kb/index.ts";
+import { searchGraded as kbSearchGraded, addChat, contentsOf, readSource } from "../kb/index.ts";
 
 const SERVICE = "app.arbor.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
@@ -117,7 +117,7 @@ export async function handlePrompt(
 		}
 		tools.push(scholarSearchTool(), researchPlanTool());
 		// KB search + overview + full-source read via local hybrid RAG (LanceDB).
-		tools.push(knowledgeBaseSearchTool((query) => kbSearch(canvas, query)));
+		tools.push(knowledgeBaseSearchTool((query) => kbSearchGraded(canvas, query)));
 		tools.push(knowledgeBaseOverviewTool(() => contentsOf(canvas)));
 		tools.push(knowledgeBaseReadSourceTool((source) => readSource(canvas, source)));
 		if (req.canvasTools) tools.push(createCardTool(), createNoteTool(), updateCardTool());

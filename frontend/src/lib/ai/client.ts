@@ -212,6 +212,22 @@ export async function cleanupRefine(
 	}
 }
 
+// Hybrid search over indexed KB chunks (same retrieval path used by the agent).
+export async function kbSearch(canvas: string, query: string, k = 8): Promise<string[]> {
+	const { apiFetch } = await import('$lib/api');
+	if (!query.trim()) return [];
+	try {
+		const res = await apiFetch(
+			`/api/kb/${encodeURIComponent(canvas)}/search?q=${encodeURIComponent(query)}&k=${k}`
+		);
+		if (!res.ok) return [];
+		const data = (await res.json()) as { results?: string[] };
+		return data.results ?? [];
+	} catch {
+		return [];
+	}
+}
+
 export async function kbRemove(canvas: string, filename: string): Promise<void> {
 	const { apiFetch } = await import('$lib/api');
 	try {

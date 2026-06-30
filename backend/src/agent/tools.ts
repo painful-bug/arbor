@@ -243,26 +243,41 @@ const kbSchema = Type.Object({
 	query: Type.String({ description: "Content-topic search terms (e.g. 'TCP handshake', 'mitochondria'), NOT meta like 'pdf' or 'file'." })
 });
 
+export interface GradedSearch {
+	chunks: { text: string; score: number }[];
+	verdict: "strong" | "weak" | "none";
+}
+
 export function knowledgeBaseSearchTool(
-	search: (query: string) => Promise<string[]>
+	search: (query: string) => Promise<GradedSearch>
 ): AgentTool<typeof kbSchema> {
 	return {
 		name: "knowledge_base_search",
 		label: "knowledge_base_search",
 		description:
-			"Search this canvas's indexed content (files, chats, notes) by topic. Returns top matching chunks. Use when the user references uploaded material or asks about content that may be in the KB. Search by subject keywords, not filenames. If no results, rephrase with broader terms and retry.",
+			"Search this canvas's indexed content (files, chats, notes) by topic. Returns top matching chunks reranked by a cross-encoder, plus a relevance verdict (strong/weak/none). Use when the user references uploaded material or asks about content that may be in the KB. Search by subject keywords, not filenames. Honor the verdict: on 'weak' rewrite the query once and retry, on 'none' fall back to web_search instead of forcing an answer.",
 		parameters: kbSchema,
-		async execute(_id, params): Promise<AgentToolResult<{ chunks: string[] }>> {
-			const chunks = await search(params.query);
-			if (chunks.length > 0) {
-				return { content: [{ type: "text", text: chunks.join("\n\n---\n\n") }], details: { chunks } };
+		async execute(_id, params): Promise<AgentToolResult<{ chunks: string[]; verdict: string }>> {
+			const { chunks, verdict } = await search(params.query);
+			const texts = chunks.map((c) => c.text);
+			if (chunks.length === 0 || verdict === "none") {
+				return {
+					content: [{
+						type: "text",
+						text: `Relevance verdict: none — the KB has no strong match for "${params.query}". Rewrite with broader subject terms and retry, or fall back to web_search. Do not answer from unrelated chunks.`
+					}],
+					details: { chunks: texts, verdict: "none" }
+				};
 			}
+			const body = chunks
+				.map((c, i) => `[${i + 1}]${c.score >= 0 ? ` (relevance ${c.score.toFixed(2)})` : ""}\n${c.text}`)
+				.join("\n\n---\n\n");
+			const hint = verdict === "weak"
+				? "\n\n(Verdict: weak — these may be partial or off-target. Rewrite the query once and retry; if still weak, use web_search and separate KB claims from web claims.)"
+				: "";
 			return {
-				content: [{
-					type: "text",
-					text: `No results for "${params.query}". Rephrase: use broader subject terms and call this tool again.`
-				}],
-				details: { chunks: [] }
+				content: [{ type: "text", text: `Relevance verdict: ${verdict}\n\n${body}${hint}` }],
+				details: { chunks: texts, verdict }
 			};
 		}
 	};

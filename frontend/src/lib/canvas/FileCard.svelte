@@ -96,6 +96,11 @@ import CardHandles from './CardHandles.svelte';
 		{/if}
 	</div>
 
+	<!-- indexing progress bar — eases toward ~90% then vanishes when indexed -->
+	{#if file.status === 'indexing'}
+		<div class="progress"><div class="progress-fill"></div></div>
+	{/if}
+
 	<!-- filename + status overlay bar at bottom -->
 	<div class="info-bar">
 		<span class="bar-icon">{icon}</span>
@@ -159,6 +164,29 @@ import CardHandles from './CardHandles.svelte';
 		font-size: 52px;
 		opacity: 0.35;
 		padding-bottom: 36px; /* shift up to account for info-bar */
+	}
+
+	/* ponytail: estimated progress — real per-stage % needs backend SSE, but the
+	   long pole (OCR/extract) is one opaque await, so an eased bar reads better.
+	   Sits just above the info-bar; unmounts when status leaves 'indexing'. */
+	.progress {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 36px;
+		height: 3px;
+		background: rgba(255, 255, 255, 0.25);
+		z-index: 1;
+	}
+	.progress-fill {
+		height: 100%;
+		width: 8%;
+		background: var(--c-ink, #2563eb);
+		animation: index-progress 12s cubic-bezier(0.15, 0.85, 0.3, 1) forwards;
+	}
+	@keyframes index-progress {
+		0%   { width: 8%; }
+		100% { width: 90%; }
 	}
 
 	/* Bottom overlay */
