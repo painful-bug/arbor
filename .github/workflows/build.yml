@@ -140,9 +140,13 @@ jobs:
           APP_PATH=$(find frontend/src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
           rm -f "Arbor.dmg"
 
-          # hdiutil intermittently fails with "Resource busy" on GitHub-hosted
-          # macOS runners (diskarbitrationd/Spotlight race during the intermediate
-          # mount step) — retry with stale-mount cleanup between attempts.
+          # Spotlight (mdworker) actively indexing the freshly-built .app's huge
+          # node_modules tree holds file handles open, which makes hdiutil's
+          # intermediate mount step fail with "Resource busy" on GitHub-hosted
+          # macOS runners. Disable indexing on the source tree, then retry with
+          # stale-mount cleanup as a second line of defense.
+          sudo mdutil -i off "$(dirname "$APP_PATH")" >/dev/null 2>&1 || true
+
           for attempt in 1 2 3 4 5; do
             for disk in $(hdiutil info | awk '/\/dev\/disk/{print $1}'); do
               hdiutil detach "$disk" -force >/dev/null 2>&1 || true
