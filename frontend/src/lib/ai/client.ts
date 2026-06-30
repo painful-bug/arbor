@@ -20,7 +20,7 @@ export interface ChatMessage {
 
 // One streamed agent event surfaced to the UI (text, reasoning, or a tool call).
 export interface AgentEvent {
-	type: 'text_delta' | 'thinking_delta' | 'tool_start' | 'tool_end' | 'done' | 'error';
+	type: 'text_delta' | 'thinking_delta' | 'tool_start' | 'tool_end' | 'provider_switch' | 'done' | 'error';
 	id: string;
 	delta?: string;
 	message?: string;
@@ -29,11 +29,12 @@ export interface AgentEvent {
 	args?: unknown;
 	ok?: boolean;
 	detail?: string;
+	provider?: string;
+	model?: string;
 }
 
 export interface AgentOptions {
-	provider: Provider;
-	model: string;
+	providers: { provider: Provider; model: string }[]; // ladder, tried in order; falls back on rate-limit
 	systemPrompt?: string;
 	workflow?: string;
 	bash?: boolean;
@@ -64,8 +65,7 @@ export async function runAgent(
 			body: JSON.stringify({
 				cardId,
 				messages,
-				provider: opts.provider,
-				model: opts.model,
+				providers: opts.providers,
 				systemPrompt: opts.systemPrompt,
 				workflow: opts.workflow,
 				bash: opts.bash ?? false,
@@ -82,7 +82,8 @@ export async function runAgent(
 	if (!res) {
 		// Browser fallback: synthetic echo when backend unreachable.
 		const last = messages.at(-1)?.content ?? '';
-		const text = `[Browser mode — no backend] Echo via ${opts.provider}/${opts.model}: "${last}"`;
+		const head = opts.providers[0];
+		const text = `[Browser mode — no backend] Echo via ${head?.provider}/${head?.model}: "${last}"`;
 		onEvent({ type: 'thinking_delta', id: cardId, delta: 'Considering how to answer…' });
 		onEvent({ type: 'tool_start', id: cardId, toolId: 'demo1', name: 'read', args: { path: '/tmp/example.txt' } });
 		onEvent({ type: 'tool_end', id: cardId, toolId: 'demo1', ok: true, detail: 'example file contents' });

@@ -28,6 +28,28 @@
 	const BLOCKS = ['lilac', 'lime', 'cream', 'pink', 'mint', 'coral'];
 	const providers = PROVIDERS.map((p, i) => ({ ...p, block: BLOCKS[i % BLOCKS.length] }));
 	const keyed = providers.filter((p) => p.requiresKey);
+	const providerName = (id: string) => providers.find((p) => p.id === id)?.name ?? id;
+
+	// Model ladder: drag to reorder, falls back to the next rung on rate-limit.
+	let dragIndex = $state(-1);
+	const unladdered = $derived(providers.filter((p) => !settings.providerLadder.includes(p.id)));
+	function reorderLadder(from: number, to: number) {
+		if (from < 0 || from === to) return;
+		const arr = [...settings.providerLadder];
+		const [moved] = arr.splice(from, 1);
+		arr.splice(to, 0, moved);
+		settings.providerLadder = arr;
+		persistSettings();
+	}
+	function addToLadder(id: Provider) {
+		settings.providerLadder = [...settings.providerLadder, id];
+		persistSettings();
+	}
+	function removeFromLadder(id: Provider) {
+		if (settings.providerLadder.length <= 1) return; // keep at least one rung
+		settings.providerLadder = settings.providerLadder.filter((p) => p !== id);
+		persistSettings();
+	}
 
 	type Status = 'idle' | 'saving' | 'saved' | 'error';
 	type TestStatus = 'idle' | 'testing' | 'ok' | 'fail';
@@ -232,15 +254,41 @@
 			</select>
 		</section>
 
-		<!-- AI Model Provider -->
+		<!-- Model Ladder -->
 		<section class="card">
-			<h2>AI Model Provider</h2>
-			<p class="sub">Provider used for all new cards.</p>
-			<select class="select" bind:value={settings.provider} onchange={persistSettings}>
-				{#each providers as p (p.id)}
-					<option value={p.id}>{p.name}{p.requiresKey ? '' : ' (local)'}</option>
+			<h2>Model Ladder</h2>
+			<p class="sub">Tried in order for every card. On rate-limit, falls back to the next rung. Drag to reorder.</p>
+			<div class="ladder-list" role="list">
+				{#each settings.providerLadder as pid, i (pid)}
+					<div
+						class="ladder-row"
+						role="listitem"
+						class:dragging={dragIndex === i}
+						draggable="true"
+						ondragstart={() => (dragIndex = i)}
+						ondragover={(e) => e.preventDefault()}
+						ondrop={() => { reorderLadder(dragIndex, i); dragIndex = -1; }}
+						ondragend={() => (dragIndex = -1)}
+					>
+						<span class="ladder-handle" aria-hidden="true">⠿</span>
+						<span class="ladder-rank">{i + 1}</span>
+						<span class="ladder-name">{providerName(pid)}{providers.find((p) => p.id === pid)?.requiresKey ? '' : ' (local)'}</span>
+						<button
+							class="ladder-remove"
+							onclick={() => removeFromLadder(pid)}
+							disabled={settings.providerLadder.length <= 1}
+							aria-label="Remove {providerName(pid)} from ladder"
+						>×</button>
+					</div>
 				{/each}
-			</select>
+			</div>
+			{#if unladdered.length}
+				<div class="ladder-add">
+					{#each unladdered as p (p.id)}
+						<button class="btn-ghost" onclick={() => addToLadder(p.id)}>+ {p.name}</button>
+					{/each}
+				</div>
+			{/if}
 		</section>
 
 		<!-- Appearance -->
@@ -675,6 +723,71 @@
 	.btn-ghost:disabled {
 		opacity: 0.4;
 		cursor: default;
+	}
+
+	/* ── Model ladder ── */
+	.ladder-list {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.ladder-row {
+		display: flex;
+		align-items: center;
+		gap: var(--s-sm);
+		height: 36px;
+		padding: 0 var(--s-sm);
+		border: 1px solid var(--c-hairline);
+		border-radius: var(--r-md);
+		background: var(--c-canvas);
+		cursor: grab;
+	}
+	.ladder-row.dragging {
+		opacity: 0.4;
+	}
+	.ladder-handle {
+		color: rgba(var(--ink-rgb), 0.35);
+		font-size: 13px;
+	}
+	.ladder-rank {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: rgba(var(--ink-rgb), 0.45);
+		min-width: 14px;
+	}
+	.ladder-name {
+		flex: 1;
+		font-size: 13px;
+		font-weight: 500;
+	}
+	.ladder-remove {
+		width: 22px;
+		height: 22px;
+		border: none;
+		border-radius: var(--r-full);
+		background: transparent;
+		color: rgba(var(--ink-rgb), 0.45);
+		font-size: 15px;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.ladder-remove:hover:not(:disabled) {
+		background: var(--c-hairline);
+		color: var(--c-ink);
+	}
+	.ladder-remove:disabled {
+		opacity: 0.25;
+		cursor: default;
+	}
+	.ladder-add {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--s-xs);
+	}
+	.ladder-add .btn-ghost {
+		height: 28px;
+		padding: 0 var(--s-sm);
+		font-size: 12px;
 	}
 
 	/* ── API Keys grid ── */

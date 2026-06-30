@@ -25,7 +25,7 @@ const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(
 export const runs = new Map<string, Agent>();
 
 export interface AgentEvent {
-	type: "text_delta" | "thinking_delta" | "tool_start" | "tool_end" | "done" | "error";
+	type: "text_delta" | "thinking_delta" | "tool_start" | "tool_end" | "provider_switch" | "done" | "error";
 	id: string;
 	delta?: string;
 	message?: string;
@@ -34,13 +34,14 @@ export interface AgentEvent {
 	args?: unknown;
 	ok?: boolean;
 	detail?: string;
+	provider?: string; // set on provider_switch: the rung being switched to
+	model?: string;
 }
 
 export interface PromptRequest {
 	cardId: string;
 	messages: { role: "user" | "assistant"; content: string }[];
-	provider: string;
-	model: string;
+	providers: { provider: string; model: string }[]; // ladder, tried in order; falls back on rate-limit
 	systemPrompt?: string;
 	workflow?: string;
 	bash?: boolean;
@@ -50,6 +51,10 @@ export interface PromptRequest {
 	canvasTools?: boolean; // enable create_card / update_card (hub session only)
 }
 
+// Matches provider rate-limit / quota errors only — other failures (bad key, bad
+// request, content filter) surface immediately instead of silently trying the next rung.
+const RATE_LIMIT_RE = /\b429\b|rate.?limit|too many requests|quota exceeded|RESOURCE_EXHAUSTED/i;
+
 // Condense a tool result into a one-line timeline detail.
 function detailOf(result: unknown): string | undefined {
 	const content = (result as { content?: { type: string; text?: string }[] })?.content;
@@ -57,6 +62,42 @@ function detailOf(result: unknown): string | undefined {
 	if (!text) return undefined;
 	const oneLine = text.replace(/\s+/g, " ").trim();
 	return oneLine.length > 200 ? oneLine.slice(0, 200) + "…" : oneLine;
+}
+
+// Rewrite the provider's raw "400 ... input tokens ... context length" error into
+// something a user can act on. Trimming above keeps this from firing in the normal
+// case; it's a backstop for single turns too big to trim (e.g. one huge paste).
+function friendlyError(message: string): string {
+	if (/input tokens|context length|maximum input length/i.test(message)) {
+		return "This conversation is too long for the model's context window, even after trimming older turns. Start a new conversation, or shorten this message — earlier turns are still searchable via the knowledge base.";
+	}
+	return message;
+}
+
+// ponytail: no real tokenizer wired in — ~4 chars/token is the standard rough
+// estimate, good enough to stay under context windows without truncating mid-word.
+function estimateTokens(text: string): number {
+	return Math.ceil(text.length / 4);
+}
+
+// Drop oldest turns until the conversation fits the model's context window. Safe to
+// lose old turns from the prompt: every turn is also ingested into the canvas KB
+// (see addChat below), so the agent can kb_search its way back to anything trimmed.
+function trimToContext(
+	msgs: { role: "user" | "assistant"; content: string }[],
+	systemPrompt: string,
+	model: Model<Api>
+): { role: "user" | "assistant"; content: string }[] {
+	const budget = (model.contextWindow ?? 128000) - (model.maxTokens ?? 16384) - 2000;
+	let total = estimateTokens(systemPrompt);
+	const kept: { role: "user" | "assistant"; content: string }[] = [];
+	for (let i = msgs.length - 1; i >= 0; i--) {
+		const t = estimateTokens(msgs[i].content);
+		if (kept.length > 0 && total + t > budget) break; // always keep at least the latest turn
+		total += t;
+		kept.unshift(msgs[i]);
+	}
+	return kept;
 }
 
 // The webview sends plain {role, content:string} messages. pi-ai wants assistant
@@ -96,20 +137,17 @@ export async function handlePrompt(
 ): Promise<void> {
 	const { cardId } = req;
 	const canvas = req.canvas || "default";
+	const ladder = req.providers ?? [];
+
+	if (ladder.length === 0) {
+		emit({ type: "error", id: cardId, message: "No provider configured. Add one in Settings." });
+		return;
+	}
 
 	try {
-		const apiKey = await key(req.provider);
-		if (!apiKey && req.provider !== "ollama") {
-			emit({ type: "error", id: cardId, message: `No API key saved for '${req.provider}'. Add it in Settings.` });
-			return;
-		}
-		// pi-ai rejects empty-string keys even for local providers; pass a dummy value.
-		const effectiveKey = apiKey ?? "ollama";
-
 		const tavilyKey = (await key("tavily")) ?? undefined;
-		const model = buildModel(req.provider, req.model);
 
-		// Build tools the same way the sidecar did.
+		// Tools are provider-independent — build once, reuse across ladder rungs.
 		const all = createCodingTools(process.cwd());
 		const tools = req.bash ? all : all.filter((t) => t.name !== "bash");
 		if (req.websearch) {
@@ -122,59 +160,93 @@ export async function handlePrompt(
 		tools.push(knowledgeBaseReadSourceTool((source) => readSource(canvas, source)));
 		if (req.canvasTools) tools.push(createCardTool(), createNoteTool(), updateCardTool());
 
-		const agent = new Agent({
-			streamFn: streamSimple,
-			getApiKey: () => effectiveKey,
-			convertToLlm: (messages) => messages as Message[],
-			toolExecution: "parallel",
-			initialState: {
-				systemPrompt: req.systemPrompt ?? "",
-				model,
-				tools,
-				messages: toLlmMessages(req.messages, model) as AgentMessage[]
+		const systemPrompt = req.systemPrompt ?? "";
+		let lastError: string | undefined;
+
+		for (let i = 0; i < ladder.length; i++) {
+			const rung = ladder[i];
+			const apiKey = await key(rung.provider);
+			if (!apiKey && rung.provider !== "ollama") {
+				lastError = `No API key saved for '${rung.provider}'.`;
+				continue; // auto-skip rungs with no saved key
 			}
-		});
+			// pi-ai rejects empty-string keys even for local providers; pass a dummy value.
+			const effectiveKey = apiKey ?? "ollama";
+			const model = buildModel(rung.provider, rung.model);
+			const trimmedMessages = trimToContext(req.messages, systemPrompt, model);
 
-		runs.set(cardId, agent);
-
-		// Accumulate the response text so we can ingest the turn into the KB.
-		let answerText = "";
-
-		agent.subscribe((ev: PiEvent) => {
-			switch (ev.type) {
-				case "message_update": {
-					const a = ev.assistantMessageEvent;
-					if (a.type === "text_delta") {
-						answerText += a.delta ?? "";
-						emit({ type: "text_delta", id: cardId, delta: a.delta });
-					} else if (a.type === "thinking_delta") {
-						emit({ type: "thinking_delta", id: cardId, delta: a.delta });
-					} else if (a.type === "error") {
-						emit({ type: "error", id: cardId, message: a.error?.errorMessage ?? a.reason ?? "stream error" });
-					}
-					break;
+			const agent = new Agent({
+				streamFn: streamSimple,
+				getApiKey: () => effectiveKey,
+				convertToLlm: (messages) => messages as Message[],
+				toolExecution: "parallel",
+				initialState: {
+					systemPrompt,
+					model,
+					tools,
+					messages: toLlmMessages(trimmedMessages, model) as AgentMessage[]
 				}
-				case "tool_execution_start":
-					emit({ type: "tool_start", id: cardId, toolId: ev.toolCallId, name: ev.toolName, args: ev.args });
-					break;
-				case "tool_execution_end":
-					emit({ type: "tool_end", id: cardId, toolId: ev.toolCallId, ok: !ev.isError, detail: detailOf(ev.result) });
-					break;
-			}
-		});
+			});
 
-		await agent.continue();
-		const err = agent.state.errorMessage;
-		if (err) {
-			emit({ type: "error", id: cardId, message: err });
-		} else {
-			emit({ type: "done", id: cardId });
-			// Ingest this conversation turn into the canvas KB (fire-and-forget).
-			const userPrompt = [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-			if (userPrompt && answerText) void addChat(canvas, cardId, userPrompt, answerText);
+			runs.set(cardId, agent);
+
+			// Accumulate the response text so we can ingest the turn into the KB.
+			let answerText = "";
+
+			agent.subscribe((ev: PiEvent) => {
+				switch (ev.type) {
+					case "message_update": {
+						const a = ev.assistantMessageEvent;
+						if (a.type === "text_delta") {
+							answerText += a.delta ?? "";
+							emit({ type: "text_delta", id: cardId, delta: a.delta });
+						} else if (a.type === "thinking_delta") {
+							emit({ type: "thinking_delta", id: cardId, delta: a.delta });
+						} else if (a.type === "error") {
+							emit({ type: "error", id: cardId, message: a.error?.errorMessage ?? a.reason ?? "stream error" });
+						}
+						break;
+					}
+					case "tool_execution_start":
+						emit({ type: "tool_start", id: cardId, toolId: ev.toolCallId, name: ev.toolName, args: ev.args });
+						break;
+					case "tool_execution_end":
+						emit({ type: "tool_end", id: cardId, toolId: ev.toolCallId, ok: !ev.isError, detail: detailOf(ev.result) });
+						break;
+				}
+			});
+
+			await agent.continue();
+			const err = agent.state.errorMessage;
+			if (!err) {
+				emit({ type: "done", id: cardId });
+				// Ingest this conversation turn into the canvas KB (fire-and-forget).
+				const userPrompt = [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+				if (userPrompt && answerText) void addChat(canvas, cardId, userPrompt, answerText);
+				return;
+			}
+
+			lastError = err;
+			const next = ladder[i + 1];
+			if (RATE_LIMIT_RE.test(err) && next) {
+				emit({
+					type: "provider_switch",
+					id: cardId,
+					provider: next.provider,
+					model: next.model,
+					message: `Rate-limited on ${rung.provider} — falling back to ${next.provider}.`
+				});
+				continue;
+			}
+			// Non-rate-limit error, or the last rung just failed: surface it and stop.
+			emit({ type: "error", id: cardId, message: friendlyError(err) });
+			return;
 		}
+
+		// Every rung was either skipped (no key) or rate-limited.
+		emit({ type: "error", id: cardId, message: friendlyError(lastError ?? "All providers in the ladder failed.") });
 	} catch (err) {
-		emit({ type: "error", id: cardId, message: String((err as Error)?.message ?? err) });
+		emit({ type: "error", id: cardId, message: friendlyError(String((err as Error)?.message ?? err)) });
 	} finally {
 		runs.delete(cardId);
 	}

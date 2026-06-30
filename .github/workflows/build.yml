@@ -35,14 +35,16 @@ jobs:
           bun-version: latest
 
       - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Cache Bun install cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            frontend/src-tauri/target
-          key: rust-macos-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
-          restore-keys: rust-macos-
+          path: ~/.bun/install/cache
+          key: bun-macos-${{ hashFiles('backend/bun.lock', 'packages/*/bun.lock') }}
+          restore-keys: bun-macos-
 
       - name: Install frontend deps
         run: cd frontend && npm ci
@@ -67,7 +69,7 @@ jobs:
             cp -r packages "$RESOURCES_DIR/packages"
             find "$RESOURCES_DIR/packages" -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
           fi
-          cd "$RESOURCES_DIR/backend" && bun install --frozen-lockfile 2>/dev/null || bun install
+          cd "$RESOURCES_DIR/backend" && bun install --frozen-lockfile
 
       - name: Prune bundled node_modules
         run: |
@@ -176,14 +178,16 @@ jobs:
           bun-version: latest
 
       - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Cache Bun install cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~\.cargo\registry
-            ~\.cargo\git
-            frontend\src-tauri\target
-          key: rust-windows-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
-          restore-keys: rust-windows-
+          path: ~\.bun\install\cache
+          key: bun-windows-${{ hashFiles('backend/bun.lock', 'packages/*/bun.lock') }}
+          restore-keys: bun-windows-
 
       - name: Install frontend deps
         run: cd frontend && npm ci
@@ -215,8 +219,7 @@ jobs:
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
           Push-Location "$ResourcesDir/backend"
-          bun install --frozen-lockfile 2>$null
-          if ($LASTEXITCODE -ne 0) { bun install }
+          bun install --frozen-lockfile
           Pop-Location
 
       - name: Prune bundled node_modules

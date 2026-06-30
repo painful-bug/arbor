@@ -111,22 +111,6 @@ pub fn run() {
             let backend = backend::spawn(app.handle())?;
             app.manage(backend);
 
-            // ── macOS vibrancy (sidebar NSVisualEffect) ──────────────────────────
-            // Applied after backend spawns; window is guaranteed ready in setup.
-            #[cfg(target_os = "macos")]
-            {
-                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
-                if let Some(win) = app.get_webview_window("main") {
-                    apply_vibrancy(
-                        &win,
-                        NSVisualEffectMaterial::Sidebar,
-                        Some(NSVisualEffectState::Active),
-                        None,
-                    )
-                    .expect("apply_vibrancy failed — macOS only");
-                }
-            }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

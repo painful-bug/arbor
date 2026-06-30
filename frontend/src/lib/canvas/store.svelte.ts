@@ -309,8 +309,12 @@ export const DEFAULT_MODELS = Object.fromEntries(
 
 const VALID_PROVIDERS = new Set(PROVIDERS.map((p) => p.id));
 
+// Model ladder: tried in order, falls back to the next rung on rate-limit.
+// Gemini first (generous free tier), then fast/cheap inference, then the rest.
+export const DEFAULT_LADDER: Provider[] = ['google', 'nim', 'groq', 'openrouter', 'anthropic', 'openai', 'ollama'];
+
 interface Settings {
-	provider: Provider;
+	providerLadder: Provider[];
 	models: Record<Provider, string>;
 	workflow: string;
 	bashEnabled: boolean;
@@ -322,7 +326,7 @@ interface Settings {
 }
 
 const FALLBACK_SETTINGS: Settings = {
-	provider: 'nim',
+	providerLadder: [...DEFAULT_LADDER],
 	models: { ...DEFAULT_MODELS },
 	workflow: 'general',
 	bashEnabled: false,
@@ -336,9 +340,23 @@ const FALLBACK_SETTINGS: Settings = {
 const LS_KEY = 'arbor:settings';
 export const settings = $state<Settings>({ ...FALLBACK_SETTINGS, models: { ...DEFAULT_MODELS } });
 
+// {provider, model} ladder ready to send to the backend, in user-chosen order.
+export function activeLadder(): { provider: Provider; model: string }[] {
+	return settings.providerLadder.map((provider) => ({
+		provider,
+		model: settings.models[provider] || DEFAULT_MODELS[provider]
+	}));
+}
+
 function applySettings(p: Record<string, unknown>): void {
-	if (typeof p.provider === 'string' && VALID_PROVIDERS.has(p.provider as Provider)) {
-		settings.provider = p.provider as Provider;
+	if (Array.isArray(p.providerLadder)) {
+		const ladder = p.providerLadder.filter(
+			(x, i, arr): x is Provider => typeof x === 'string' && VALID_PROVIDERS.has(x as Provider) && arr.indexOf(x) === i
+		);
+		if (ladder.length) settings.providerLadder = ladder;
+	} else if (typeof p.provider === 'string' && VALID_PROVIDERS.has(p.provider as Provider)) {
+		// Legacy single-provider settings — migrate to a one-rung ladder.
+		settings.providerLadder = [p.provider as Provider];
 	}
 	if (p.models && typeof p.models === 'object') {
 		const m = p.models as Record<string, string>;
@@ -379,7 +397,7 @@ async function loadSettingsAsync(): Promise<void> {
 
 export function persistSettings(): void {
 	const payload = {
-		provider: settings.provider,
+		providerLadder: [...settings.providerLadder],
 		models: { ...settings.models },
 		workflow: settings.workflow,
 		bashEnabled: settings.bashEnabled,
@@ -1048,8 +1066,7 @@ export async function runModel(id: string): Promise<void> {
 		id,
 		messages,
 		{
-			provider: settings.provider,
-			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider],
+			providers: activeLadder(),
 			systemPrompt,
 			workflow,
 			bash: settings.bashEnabled,
@@ -1099,8 +1116,7 @@ async function generateTitle(id: string, prompt: string, answer: string): Promis
 		`__title_${id}`,
 		messages,
 		{
-			provider: settings.provider,
-			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider],
+			providers: activeLadder(),
 			canvas: currentId
 		},
 		(e) => {
@@ -1135,7 +1151,7 @@ async function generateCanvasTitle(): Promise<void> {
 	await runAgent(
 		'__canvas_title__',
 		messages,
-		{ provider: settings.provider, model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider] },
+		{ providers: activeLadder() },
 		(e) => {
 			if (e.type === 'text_delta') title += e.delta ?? '';
 			else if (e.type === 'done' && title.trim()) {
@@ -1291,8 +1307,7 @@ export async function runSession(prompt: string): Promise<void> {
 		'__session__',
 		messages,
 		{
-			provider: settings.provider,
-			model: settings.models[settings.provider] || DEFAULT_MODELS[settings.provider],
+			providers: activeLadder(),
 			systemPrompt,
 			workflow,
 			bash: false,
