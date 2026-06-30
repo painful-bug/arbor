@@ -43,12 +43,17 @@ export async function upsert(canvas: string, source: string, rows: Row[]): Promi
 // like a live instruction and derails it into continuing that other conversation.
 const NOT_CHAT = "source NOT LIKE 'chat:%' AND source NOT LIKE 'card:%'";
 
+export interface Hit {
+	text: string;
+	source: string;
+}
+
 export async function hybridSearch(
 	canvas: string,
 	queryVec: number[],
 	queryText: string,
 	k = 6
-): Promise<string[]> {
+): Promise<Hit[]> {
 	const db = await getDb();
 	const name = tname(canvas);
 	const names = await db.tableNames();
@@ -61,14 +66,14 @@ export async function hybridSearch(
 		const ftsResults = await tbl
 			.search(queryText)
 			.where(NOT_CHAT)
-			.select(["text"])
+			.select(["text", "source"])
 			.limit(k)
 			.toArray();
 
 		const vecResults = await tbl
 			.search(queryVec)
 			.where(NOT_CHAT)
-			.select(["text"])
+			.select(["text", "source"])
 			.limit(k)
 			.toArray();
 
@@ -79,31 +84,35 @@ export async function hybridSearch(
 		const results = await tbl
 			.search(queryVec)
 			.where(NOT_CHAT)
-			.select(["text"])
+			.select(["text", "source"])
 			.limit(k)
 			.toArray();
-		return results.map((r: any) => r.text);
+		return results.map((r: any) => ({ text: r.text as string, source: r.source as string }));
 	}
 }
 
-// Reciprocal Rank Fusion: combine two ranked lists by 1/(rank+60) scoring
-function rrfFuse(vecResults: any[], ftsResults: any[], k: number): string[] {
+// Reciprocal Rank Fusion: combine two ranked lists by 1/(rank+60) scoring.
+// Keyed by chunk text (unique per chunk); source carried alongside for attribution.
+function rrfFuse(vecResults: any[], ftsResults: any[], k: number): Hit[] {
 	const scores = new Map<string, number>();
+	const sources = new Map<string, string>();
 	const RRF_K = 60;
 
 	for (let i = 0; i < vecResults.length; i++) {
 		const text = vecResults[i].text as string;
 		scores.set(text, (scores.get(text) ?? 0) + 1 / (i + RRF_K));
+		sources.set(text, vecResults[i].source as string);
 	}
 	for (let i = 0; i < ftsResults.length; i++) {
 		const text = ftsResults[i].text as string;
 		scores.set(text, (scores.get(text) ?? 0) + 1 / (i + RRF_K));
+		sources.set(text, ftsResults[i].source as string);
 	}
 
 	return [...scores.entries()]
 		.sort((a, b) => b[1] - a[1])
 		.slice(0, k)
-		.map(([text]) => text);
+		.map(([text]) => ({ text, source: sources.get(text) ?? "" }));
 }
 
 // Nearest *sources* (not chunks) to a query vector. Unlike hybridSearch this does

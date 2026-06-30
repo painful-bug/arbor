@@ -8,6 +8,8 @@ import CardHandles from './CardHandles.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import { getFileBlob } from '$lib/files';
+	import { searchHighlight } from './globalSearch.svelte';
+	import { markHTML } from './highlights';
 
 	let { id, data, selected }: NodeProps = $props();
 	const isSelected = $derived(flow.selected === id || selected);
@@ -22,12 +24,34 @@ import CardHandles from './CardHandles.svelte';
 		] ?? '📄'
 	);
 
+	// Global-search highlight: <mark> the matched word in filename + preview when active,
+	// threading the occurrence count filename→preview (segmentsOf order) so the focused
+	// word (activeOrd) gets the contrast colour.
+	const active = $derived(searchHighlight.nodeId === id);
+	const escapeHtml = (s: string) =>
+		s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	const nameRes = $derived(
+		active
+			? markHTML(escapeHtml(file.filename ?? ''), searchHighlight.terms, {
+					start: 0,
+					active: searchHighlight.activeOrd
+				})
+			: null
+	);
+	const nameHtml = $derived(nameRes ? nameRes.html : escapeHtml(file.filename ?? ''));
+	const hlPrev = (s: string) =>
+		active
+			? markHTML(s, searchHighlight.terms, { start: nameRes!.next, active: searchHighlight.activeOrd })
+					.html
+			: s;
+	const plainPreviewHtml = $derived(hlPrev(escapeHtml(file.preview ?? '')));
+
 	// Preview body: markdown → rendered, docx → raw HTML (mammoth), text/pdf → plain.
 	const previewHtml = $derived(
 		file.kind === 'markdown' && file.preview
-			? renderMarkdown(file.preview)
+			? hlPrev(renderMarkdown(file.preview))
 			: file.kind === 'docx'
-				? file.preview ?? ''
+				? hlPrev(file.preview ?? '')
 				: ''
 	);
 
@@ -94,7 +118,8 @@ import CardHandles from './CardHandles.svelte';
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<div class="doc">{@html previewHtml}</div>
 		{:else if file.preview}
-			<pre class="doc">{file.preview}</pre>
+			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+			<pre class="doc">{@html plainPreviewHtml}</pre>
 		{:else}
 			<div class="center-icon">{icon}</div>
 		{/if}
@@ -108,7 +133,8 @@ import CardHandles from './CardHandles.svelte';
 	<!-- filename + status overlay bar at bottom -->
 	<div class="info-bar">
 		<span class="bar-icon">{icon}</span>
-		<span class="bar-name" title={file.filename}>{file.filename}</span>
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+		<span class="bar-name" title={file.filename}>{@html nameHtml}</span>
 		<span class="bar-status" class:busy={file.status === 'indexing'} class:err={file.status === 'error'}>
 			{label}
 		</span>
@@ -213,9 +239,10 @@ import CardHandles from './CardHandles.svelte';
 		flex: 1;
 		font-size: 11px;
 		font-weight: 600;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		/* Show the whole filename — wrap instead of truncating with an ellipsis. */
+		white-space: normal;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 		text-shadow: 0 1px 3px rgba(0,0,0,0.5);
 	}
 	.bar-status {

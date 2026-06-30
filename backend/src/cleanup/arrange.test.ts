@@ -58,6 +58,30 @@ describe("arrange()", () => {
 		}
 	});
 
+	// Hard guarantee: rendered rectangles never overlap — at any gap, any sizes.
+	it("guarantees no two rectangles overlap (AABB, every gap)", () => {
+		// Dense mixed-size scope: one big cluster of 8 + a few outliers, varied w/h.
+		const nodes: ArrangeNode[] = [];
+		for (let i = 0; i < 8; i++)
+			nodes.push({ id: `c${i}`, vec: [1, 0.01 * i], w: 200 + i * 30, h: 140 + i * 20, x: i, y: i });
+		for (let i = 0; i < 4; i++)
+			nodes.push({ id: `o${i}`, vec: [0.01 * i, 1], w: 360, h: 90, x: -i, y: i });
+		const layout = arrange(nodes, []);
+		const wh = new Map(nodes.map((n) => [n.id, { w: n.w, h: n.h }]));
+		for (const gap of [0, 8, 40]) {
+			const p = place(layout, gap);
+			for (let i = 0; i < nodes.length; i++) {
+				for (let j = i + 1; j < nodes.length; j++) {
+					const a = nodes[i].id, b = nodes[j].id;
+					const sa = wh.get(a)!, sb = wh.get(b)!;
+					const overlapX = Math.abs(p[a].x - p[b].x) < (sa.w + sb.w) / 2;
+					const overlapY = Math.abs(p[a].y - p[b].y) < (sa.h + sb.h) / 2;
+					expect(overlapX && overlapY).toBe(false);
+				}
+			}
+		}
+	});
+
 	it("is deterministic — same input gives same output", () => {
 		const p1 = run(makeNodes(), [{ source: "a1", target: "b1" }]);
 		const p2 = run(makeNodes(), [{ source: "a1", target: "b1" }]);

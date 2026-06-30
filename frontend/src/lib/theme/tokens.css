@@ -217,3 +217,23 @@ body {
 .vt-shrink::view-transition-old(root) {
 	z-index: 2;
 }
+
+/* Find-in-view (FindBar): native CSS Custom Highlight API marks. Matches the
+   yellow <mark> used elsewhere; active hit is stronger. */
+::highlight(find) {
+	background: rgba(255, 222, 89, 0.4);
+}
+::highlight(find-active) {
+	background: rgba(255, 222, 89, 0.9);
+}
+
+/* Global-search active match: the occurrence the cursor is on (Enter/Shift+Enter steps
+   it). Deep violet + white reads with strong contrast against every pastel card block
+   AND the yellow base <mark>. Low specificity so scoped per-card mark rules still win
+   for the non-active marks. */
+mark.mark-active {
+	background: #6d28d9;
+	color: #fff;
+	border-radius: 2px;
+	box-shadow: 0 0 0 1px rgba(109, 40, 217, 0.45);
+}

@@ -9,13 +9,52 @@ import CardHandles from './CardHandles.svelte';
 	import { openExternal } from '$lib/web';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import AgentTimeline from './AgentTimeline.svelte';
+	import { searchHighlight } from './globalSearch.svelte';
+	import { markHTML } from './highlights';
 
 	let { id, data, selected: nativeSelected }: NodeProps = $props();
 	const card = $derived(data as CardData);
 	const selected = $derived(flow.selected === id || !!nativeSelected);
 	const turn = $derived(lastTurn(card)); // card face shows the latest exchange
-	const answerHtml = $derived(renderMarkdown(turn?.answer ?? ''));
+	// Highlight title + answer body when this is the active global-search match. Thread
+	// one running occurrence count title→answer (segmentsOf uses the same order) so the
+	// focused word (searchHighlight.activeOrd) gets the contrast colour.
+	const hlActive = $derived(searchHighlight.nodeId === id);
+	const escapeHtml = (s: string) =>
+		s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	const hlParts = $derived.by(() => {
+		if (!hlActive) return null;
+		const titleRes = markHTML(escapeHtml(card.title ?? ''), searchHighlight.terms, {
+			start: 0,
+			active: searchHighlight.activeOrd
+		});
+		const answerRes = markHTML(renderMarkdown(turn?.answer ?? ''), searchHighlight.terms, {
+			start: titleRes.next,
+			active: searchHighlight.activeOrd
+		});
+		return { title: titleRes.html, answer: answerRes.html };
+	});
+	const answerHtml = $derived(hlParts ? hlParts.answer : renderMarkdown(turn?.answer ?? ''));
+	const titleHtml = $derived(hlParts ? hlParts.title : '');
 	const moreTurns = $derived((card.turns?.length ?? 0) - 1); // earlier turns hidden on the face
+
+	// Scroll the focused occurrence into view within the scrollable answer body (the active
+	// <mark> may sit below the fold). Body-only scroll — scrollIntoView would pan the canvas.
+	let answerEl = $state<HTMLDivElement | null>(null);
+	$effect(() => {
+		if (!hlActive) return;
+		searchHighlight.activeOrd; // re-run when the focused occurrence changes
+		const body = answerEl;
+		if (!body) return;
+		requestAnimationFrame(() => {
+			const mark = body.querySelector('mark.mark-active') as HTMLElement | null;
+			if (!mark) return;
+			const mr = mark.getBoundingClientRect();
+			const br = body.getBoundingClientRect();
+			const delta = mr.top - br.top - (body.clientHeight - mr.height) / 2;
+			body.scrollTo({ top: body.scrollTop + delta, behavior: reducedMotion() ? 'auto' : 'smooth' });
+		});
+	});
 
 	// Branch trigger: right-click an image inside this card. (Text-highlight branching
 	// is handled globally in Canvas via a data-card-id host + document mouseup.)
@@ -107,6 +146,9 @@ import CardHandles from './CardHandles.svelte';
 			onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitRename(); } else if (e.key === 'Escape') renaming = false; }}
 			onclick={(e) => e.stopPropagation()}
 		/>
+	{:else if hlActive}
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+		<p class="prompt nodrag" ondblclick={startRename}>{@html titleHtml}</p>
 	{:else}
 		<p class="prompt nodrag" ondblclick={startRename}>{card.title}</p>
 	{/if}
@@ -116,7 +158,7 @@ import CardHandles from './CardHandles.svelte';
 	<AgentTimeline events={turn?.events ?? []} streaming={card.streaming} />
 	<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by DOMPurify -->
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-	<div class="answer nodrag nowheel" onclick={onAnswerClick}>
+	<div class="answer nodrag nowheel" bind:this={answerEl} onclick={onAnswerClick}>
 		{@html answerHtml}{#if card.streaming}<span class="caret"></span>{/if}
 	</div>
 </div>

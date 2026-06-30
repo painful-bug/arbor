@@ -10,7 +10,7 @@ import { randomBytes } from "node:crypto";
 
 export type Verdict = "strong" | "weak" | "none";
 export interface GradedSearch {
-	chunks: { text: string; score: number }[];
+	chunks: { text: string; score: number; source: string }[];
 	verdict: Verdict;
 }
 
@@ -86,13 +86,18 @@ export async function searchGraded(canvas: string, query: string, k = 6): Promis
 	const candidates = await hybridSearch(canvas, queryVec, query, Math.max(k * 3, 20));
 	if (candidates.length === 0) return { chunks: [], verdict: "none" };
 
-	const ranked = await rerank(query, candidates).catch(() => null);
+	// rerank works on chunk text; re-attach source by text after ranking.
+	const sourceOf = new Map(candidates.map((c) => [c.text, c.source]));
+	const ranked = await rerank(query, candidates.map((c) => c.text)).catch(() => null);
 	if (!ranked) {
 		// Reranker unavailable — return hybrid order, score -1 signals "unscored".
-		return { chunks: candidates.slice(0, k).map((text) => ({ text, score: -1 })), verdict: "weak" };
+		return {
+			chunks: candidates.slice(0, k).map((c) => ({ text: c.text, score: -1, source: c.source })),
+			verdict: "weak",
+		};
 	}
 
-	const top = ranked.slice(0, k);
+	const top = ranked.slice(0, k).map((r) => ({ ...r, source: sourceOf.get(r.text) ?? "" }));
 	const best = top[0]?.score ?? 0;
 	const verdict: Verdict = best >= STRONG ? "strong" : best >= WEAK ? "weak" : "none";
 	return { chunks: top, verdict };
@@ -101,6 +106,17 @@ export async function searchGraded(canvas: string, query: string, k = 6): Promis
 export async function search(canvas: string, query: string, k = 6): Promise<string[]> {
 	const { chunks } = await searchGraded(canvas, query, k);
 	return chunks.map((c) => c.text);
+}
+
+// Like search() but keeps source + score, so the frontend can attribute a
+// file-content hit to its file node and focus/highlight it.
+export async function searchHits(
+	canvas: string,
+	query: string,
+	k = 8,
+): Promise<{ text: string; source: string; score: number }[]> {
+	const { chunks } = await searchGraded(canvas, query, k);
+	return chunks.map((c) => ({ text: c.text, source: c.source, score: c.score }));
 }
 
 // Semantic neighbors of a node, for background auto-linking. Embeds the node's

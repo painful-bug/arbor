@@ -89,6 +89,21 @@ describe("KB routes", () => {
 		expect(results.join(" ").toLowerCase()).toMatch(/3nf|normal form/);
 	}, 120_000);
 
+	it("GET /search?detail=1 → results carry source + numeric score", async () => {
+		const canvas = "detail-canvas";
+		await api(`/api/kb/${canvas}/files`, {
+			method: "POST",
+			headers: { "Content-Type": "text/plain", "X-Filename": "notes.txt" },
+			body: new TextEncoder().encode(NOTES)
+		});
+		const res = await api(`/api/kb/${canvas}/search?q=third+normal+form&k=4&detail=1`);
+		expect(res.status).toBe(200);
+		const { results } = (await res.json()) as { results: { text: string; source: string; score: number }[] };
+		expect(results.length).toBeGreaterThan(0);
+		expect(results[0].source).toBe("notes.txt");
+		expect(typeof results[0].score).toBe("number");
+	}, 120_000);
+
 	it("excludes other cards' chat history from topic search (no cross-card contamination)", async () => {
 		const canvas = "no-chat-leak-canvas";
 		// Card A's exchange happens to be lexically close to the query below —

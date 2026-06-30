@@ -6,6 +6,7 @@
 	import { flow } from './store.svelte';
 	import type { TextData } from './store.svelte';
 	import { renderMarkdown } from '$lib/markdown';
+	import FindBar from './FindBar.svelte';
 
 	let { cardId, onclose }: { cardId: string; onclose: () => void } = $props();
 
@@ -85,6 +86,7 @@
 		style="background: var(--block-{card?.block ?? 'cream'})"
 		onclick={(e) => e.stopPropagation()}
 	>
+		<FindBar target={bodyEl ?? null} />
 		<header>
 			<span class="title">{card?.text?.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'Note'}</span>
 			<div class="actions">
@@ -117,6 +119,7 @@
 		padding: var(--s-xl);
 	}
 	.modal {
+		position: relative;
 		width: min(780px, 90vw);
 		max-height: 80vh;
 		border-radius: var(--r-lg);

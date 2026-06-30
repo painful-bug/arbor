@@ -11,6 +11,7 @@
 	import { loadHL, saveHL } from './highlights';
 	import MarkdownBody from './MarkdownBody.svelte';
 	import PdfViewer from './PdfViewer.svelte';
+	import FindBar from './FindBar.svelte';
 	import { resizable } from '$lib/actions/resizable';
 
 	let { fileId, onclose }: { fileId: string; onclose: () => void } = $props();
@@ -28,6 +29,7 @@
 
 	let width = $state(Math.min(720, Math.round(window.innerWidth * 0.5)));
 	let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	let contentEl = $state<HTMLDivElement>();
 
 	// ── Text note: view ↔ edit toggle + persisted highlights ──────────────────
 	// Panel opens in view mode (rendered markdown + highlights), matching the
@@ -137,6 +139,13 @@
 		</div>
 	</header>
 
+	{#if file?.kind !== 'pdf'}
+		<!-- ponytail: PDF has its own positional find (PdfViewer); FindBar for the rest.
+		     CSS Highlight API can't reach textarea content, so edit-mode find is a gap. -->
+		<FindBar target={contentEl ?? null} />
+	{/if}
+
+	<div class="content" bind:this={contentEl}>
 	{#if isText}
 		{#if textEditing}
 			<div class="text-editor-hint">Markdown — renders live on the card</div>
@@ -178,6 +187,7 @@
 	{:else}
 		<div class="empty">No preview for this file type. Use "Open file".</div>
 	{/if}
+	</div>
 </aside>
 
 <style>
@@ -189,6 +199,13 @@
 		flex-direction: column;
 		background: var(--c-canvas);
 		border-left: 1px solid var(--c-hairline);
+		overflow: hidden;
+	}
+	.content {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
 		overflow: hidden;
 	}
 	.grip {

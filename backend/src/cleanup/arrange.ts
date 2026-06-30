@@ -236,9 +236,55 @@ export function arrange(nodes: ArrangeNode[], edges: ArrangeEdge[]): ArrangeLayo
 
 	for (let i = 0; i < TICKS; i++) sim.tick();
 
+	// forceCollide is a soft circle constraint (capped iterations, fighting the center
+	// pull), so cards can still overlap. Resolve it HARD per cluster: iterative AABB
+	// separation on the real rectangles guarantees no two cards overlap. Members are
+	// pushed apart along their axis of least penetration; deterministic, so the layout
+	// stays reproducible. ponytail: O(members² · iters) per cluster, caps at 200 iters —
+	// switch to a sweep-and-prune grid if a cluster ever holds thousands of cards.
+	const byId = new Map(simNodes.map((n) => [n.id, n]));
+	const GAP = PAD; // min empty gutter between any two card rectangles (px)
+	function separate(members: string[]): void {
+		const ms = members.map((id) => byId.get(id)!);
+		for (let iter = 0; iter < 200; iter++) {
+			let moved = false;
+			for (let i = 0; i < ms.length; i++) {
+				for (let j = i + 1; j < ms.length; j++) {
+					const a = ms[i];
+					const b = ms[j];
+					const sa = sizeById.get(a.id)!;
+					const sb = sizeById.get(b.id)!;
+					const minDX = (sa.w + sb.w) / 2 + GAP;
+					const minDY = (sa.h + sb.h) / 2 + GAP;
+					let dx = (b.x ?? 0) - (a.x ?? 0);
+					let dy = (b.y ?? 0) - (a.y ?? 0);
+					// Exactly coincident → deterministic nudge so the push has a direction.
+					if (dx === 0 && dy === 0) dx = a.id < b.id ? -1 : 1;
+					const ox = minDX - Math.abs(dx);
+					const oy = minDY - Math.abs(dy);
+					if (ox <= 0 || oy <= 0) continue; // not overlapping on at least one axis
+					if (ox < oy) {
+						const push = (ox / 2) * (dx < 0 ? -1 : 1);
+						a.x = (a.x ?? 0) - push;
+						b.x = (b.x ?? 0) + push;
+					} else {
+						const push = (oy / 2) * (dy < 0 ? -1 : 1);
+						a.y = (a.y ?? 0) - push;
+						b.y = (b.y ?? 0) + push;
+					}
+					moved = true;
+				}
+			}
+			if (!moved) break;
+		}
+	}
+	for (const [, members] of comms) separate(members);
+
 	// Record each card as its cell + offset from that cell's center. Because the
 	// clusters are decoupled, these offsets hold for any gap — place() just rescales.
-	const byId = new Map(simNodes.map((n) => [n.id, n]));
+	// cellBase is recomputed from the ACTUAL post-separation cluster extent (not the
+	// pre-sim heuristic) so adjacent cells never overlap, even at gap 0.
+	let maxExtent = 0;
 	const out: ArrangeLayout = { cellBase, unit: avgR, cols, nodes: {} };
 	comms.forEach(([, members], ci) => {
 		const col = ci % cols;
@@ -247,8 +293,12 @@ export function arrange(nodes: ArrangeNode[], edges: ArrangeEdge[]): ArrangeLayo
 		const cy = row * cell;
 		for (const id of members) {
 			const n = byId.get(id)!;
-			out.nodes[id] = { col, row, lx: (n.x ?? cx) - cx, ly: (n.y ?? cy) - cy };
+			const lx = (n.x ?? cx) - cx;
+			const ly = (n.y ?? cy) - cy;
+			out.nodes[id] = { col, row, lx, ly };
+			maxExtent = Math.max(maxExtent, Math.hypot(lx, ly) + radiusOf(id));
 		}
 	});
+	out.cellBase = Math.max(cellBase, 2 * maxExtent);
 	return out;
 }

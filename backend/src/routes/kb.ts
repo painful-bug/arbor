@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { addFile, search, clearCanvas, contentsOf, removeFile, relateNode } from "../kb/index.ts";
+import { addFile, search, searchHits, clearCanvas, contentsOf, removeFile, relateNode } from "../kb/index.ts";
 
 export const kbRoutes = new Hono();
 
@@ -22,6 +22,11 @@ kbRoutes.get("/:canvas/search", async (c) => {
 	const q = c.req.query("q") ?? "";
 	const k = Math.min(Number(c.req.query("k") ?? 6), 20);
 	if (!q) return c.json({ results: [] });
+	// detail=1: keep source + score so the UI can map a hit to its file node.
+	if (c.req.query("detail")) {
+		const results = await searchHits(canvas, q, k);
+		return c.json({ results });
+	}
 	const results = await search(canvas, q, k);
 	return c.json({ results });
 });

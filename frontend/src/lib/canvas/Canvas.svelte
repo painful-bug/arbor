@@ -15,6 +15,16 @@
 	import ConnectedEdge from './ConnectedEdge.svelte';
 	import CardChatPanel from './CardChatPanel.svelte';
 	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
+	import GlobalSearchBar from './GlobalSearchBar.svelte';
+	import CommandPalette, { type Command } from './CommandPalette.svelte';
+	import {
+		searchState,
+		openSearch,
+		closeSearch,
+		next as searchNext,
+		prev as searchPrev
+	} from './globalSearch.svelte';
+	import { persistSettings } from './store.svelte';
 	import {
 		flow,
 		tool,
@@ -70,7 +80,7 @@
 		};
 	}
 
-	const { screenToFlowPosition, fitView } = useSvelteFlow();
+	const { screenToFlowPosition, fitView, setCenter, getZoom } = useSvelteFlow();
 	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode, tag: UserTagCard };
 	// 'bezier' isn't a built-in xyflow edge-type key (only 'default' is) — manual
 	// connect-tool edges and autolink semantic edges both set type:'bezier'
@@ -99,6 +109,57 @@
 			void fitView({ duration: 300, padding: 0.18 });
 		});
 	}
+
+	// Global search: swoop the viewport to the active match's node. Only animates when
+	// the *target node* changes — otherwise every keystroke (which rebuilds the match
+	// list) would restart an in-flight setCenter animation, making the canvas judder.
+	let lastSwoopId: string | null = null;
+	$effect(() => {
+		const matches = searchState.matches;
+		const id = searchState.open && matches.length ? matches[searchState.cursor]?.nodeId : null;
+		if (!id) {
+			lastSwoopId = null;
+			return;
+		}
+		if (id === lastSwoopId) return; // same node — don't re-animate
+		const node = flow.nodes.find((n) => n.id === id);
+		if (!node) return;
+		lastSwoopId = id;
+		const { x, y } = nodeCenter(node);
+		// Keep the current zoom if already readable; only zoom in when far out.
+		const cur = getZoom();
+		const zoom = cur < 0.7 ? 1 : cur;
+		void setCenter(x, y, { zoom, duration: reducedMotion() ? 0 : 450 });
+	});
+
+	let paletteOpen = $state(false);
+
+	// Command palette registry — Utilities pinned on top, then tools and actions.
+	const commands: Command[] = [
+		{ id: 'cleanup', group: 'Utilities', icon: '✦', label: 'Clean Up', hint: 'CC', run: () => doCleanUp() },
+		{ id: 'fit', group: 'Utilities', icon: '⊡', label: 'Fit to view', hint: 'F', run: doFitView },
+		{ id: 'search', group: 'Utilities', icon: '⌕', label: 'Search canvas', run: () => openSearch() },
+		{ id: 'tool-hand', group: 'Tools', icon: '✋', label: 'Hand tool', hint: 'H', run: () => { tool.active = 'hand'; tool.connectFrom = null; } },
+		{ id: 'tool-select', group: 'Tools', icon: '↖', label: 'Select tool', hint: 'V', run: () => { tool.active = 'select'; tool.connectFrom = null; } },
+		{ id: 'tool-text', group: 'Tools', icon: 'T', label: 'Text tool', hint: 'T', run: () => { tool.active = 'text'; } },
+		{ id: 'tool-duplicate', group: 'Tools', icon: '⧉', label: 'Duplicate tool', hint: 'D', run: () => { tool.active = 'duplicate'; } },
+		{ id: 'tool-connect', group: 'Tools', icon: '↗', label: 'Connect tool', hint: 'C', run: () => { tool.active = 'connect'; } },
+		{ id: 'tool-color', group: 'Tools', icon: '◐', label: 'Color tool', run: () => { tool.active = 'color'; } },
+		{ id: 'new-note', group: 'Create', icon: '＋', label: 'New note', run: () => {
+			const pos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+			tool.active = 'select';
+			addTextCard(pos);
+		} },
+		{ id: 'research', group: 'Create', icon: '🔬', label: 'Deep Research', run: startDeepResearch },
+		{ id: 'kb', group: 'Knowledge', icon: '⬡', label: 'Search knowledge base', run: openKB },
+		{ id: 'undo', group: 'Edit', icon: '↩', label: 'Undo', hint: 'U', run: doUndo },
+		{ id: 'redo', group: 'Edit', icon: '↪', label: 'Redo', hint: 'R', run: doRedo },
+		{ id: 'theme', group: 'App', icon: '◐', label: 'Toggle theme', run: () => {
+			settings.theme = settings.theme === 'dark' ? 'light' : 'dark';
+			persistSettings();
+		} },
+		{ id: 'settings', group: 'App', icon: '⚙', label: 'Open settings', hint: '⌘,', run: () => goto('/settings') }
+	];
 
 	function startDeepResearch() {
 		const x = window.innerWidth / 2;
@@ -310,6 +371,39 @@
 			tag === 'INPUT' ||
 			tag === 'TEXTAREA' ||
 			(e.target as HTMLElement)?.isContentEditable;
+
+		const mod = e.metaKey || e.ctrlKey;
+
+		// Global search (⌘⇧F) and command palette (⌘⇧P) — work regardless of focus.
+		if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+			e.preventDefault();
+			if (searchState.open) closeSearch();
+			else openSearch();
+			return;
+		}
+		if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+			e.preventDefault();
+			paletteOpen = !paletteOpen;
+			return;
+		}
+		// Platform find-next secondary bindings, active while global search is open.
+		if (searchState.open && searchState.matches.length) {
+			if ((mod && (e.key === 'g' || e.key === 'G')) || e.key === 'F3') {
+				e.preventDefault();
+				if (e.shiftKey) searchPrev();
+				else searchNext();
+				return;
+			}
+		}
+
+		// Escape closes search / palette first (works whether or not their field has
+		// focus); return so it doesn't also close an underlying preview in the same press.
+		if (e.key === 'Escape' && (searchState.open || paletteOpen)) {
+			if (searchState.open) closeSearch();
+			paletteOpen = false;
+			e.preventDefault();
+			return;
+		}
 
 		if (!inInput) {
 			if (e.key === 'Enter' && pendingBranch) { e.preventDefault(); confirmBranch(); return; }
@@ -718,6 +812,9 @@
 			{#if viewTextId}
 				<TextView cardId={viewTextId} onclose={() => (viewTextId = null)} />
 			{/if}
+
+			<GlobalSearchBar />
+			<CommandPalette open={paletteOpen} {commands} onclose={() => (paletteOpen = false)} />
 
 			{#if kbOpen}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->

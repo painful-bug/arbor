@@ -236,6 +236,27 @@ export async function kbSearch(canvas: string, query: string, k = 8): Promise<st
 	}
 }
 
+// Like kbSearch but keeps source + score, so a file-content hit can be mapped
+// back to its file node and focused/highlighted (drives global search).
+export async function kbSearchHits(
+	canvas: string,
+	query: string,
+	k = 8
+): Promise<{ text: string; source: string; score: number }[]> {
+	const { apiFetch } = await import('$lib/api');
+	if (!query.trim()) return [];
+	try {
+		const res = await apiFetch(
+			`/api/kb/${encodeURIComponent(canvas)}/search?q=${encodeURIComponent(query)}&k=${k}&detail=1`
+		);
+		if (!res.ok) return [];
+		const data = (await res.json()) as { results?: { text: string; source: string; score: number }[] };
+		return data.results ?? [];
+	} catch {
+		return [];
+	}
+}
+
 // Semantic neighbors of a node's text — drives background auto-linking.
 export async function kbRelate(
 	canvas: string,
