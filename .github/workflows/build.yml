@@ -264,10 +264,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: arbor-windows-nsis
+          # Tauri 2.11 signs the NSIS .exe directly (no .nsis.zip wrapper) — the
+          # updater artifact is the installer itself plus its sibling .sig.
           path: |
             frontend/src-tauri/target/release/bundle/nsis/*.exe
-            frontend/src-tauri/target/release/bundle/nsis/*.nsis.zip
-            frontend/src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
+            frontend/src-tauri/target/release/bundle/nsis/*.exe.sig
           if-no-files-found: error
 
   release:
@@ -302,15 +303,14 @@ jobs:
           WIN_EXE=$(find artifacts/arbor-windows-nsis -name "*.exe" -not -name "*.sig" -type f | head -1)
           cp "$WIN_EXE" "release/Arbor-${VERSION}-windows-setup.exe"
 
-          # Tauri v2 NSIS updater uses .nsis.zip (not .exe) — copy for release
-          WIN_ZIP=$(find artifacts/arbor-windows-nsis -name "*.nsis.zip" -not -name "*.sig" -type f | head -1)
-          WIN_ZIP_SIG_FILE=$(find artifacts/arbor-windows-nsis -name "*.nsis.zip.sig" -type f | head -1)
-          cp "$WIN_ZIP" "release/Arbor-${VERSION}-windows-setup.nsis.zip"
+          # Tauri 2.11 signs the NSIS .exe directly — its sibling .exe.sig is
+          # the updater signature, no .nsis.zip wrapper involved.
+          WIN_SIG_FILE=$(find artifacts/arbor-windows-nsis -name "*.exe.sig" -type f | head -1)
+          WIN_SIG=$(cat "$WIN_SIG_FILE")
 
           # macOS updater artifacts
           cp artifacts/arbor-macos-updater/*.app.tar.gz "release/Arbor.app.tar.gz"
           MAC_SIG=$(cat artifacts/arbor-macos-updater/*.app.tar.gz.sig)
-          WIN_SIG=$(cat "$WIN_ZIP_SIG_FILE")
 
           # latest.json — endpoint the app polls. URLs use releases/latest/download
           # so they survive the v{version}-{sha} tag scheme.
@@ -320,7 +320,7 @@ jobs:
             --arg ms "$MAC_SIG" \
             --arg mu "$BASE/Arbor.app.tar.gz" \
             --arg ws "$WIN_SIG" \
-            --arg wu "$BASE/Arbor-${VERSION}-windows-setup.nsis.zip" \
+            --arg wu "$BASE/Arbor-${VERSION}-windows-setup.exe" \
             '{version:$v, pub_date:(now|todateiso8601),
               platforms:{
                 "darwin-aarch64":{signature:$ms,url:$mu},
