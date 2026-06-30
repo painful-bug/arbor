@@ -90,8 +90,11 @@ jobs:
           # Remove .bin symlinks (bun resolves modules directly, broken symlinks crash Tauri bundler)
           rm -rf "$NM/.bin" 2>/dev/null || true
 
-          # Remove packages not needed at runtime (~100MB+)
-          rm -rf "$NM/onnxruntime-web" "$NM/onnx-proto" "$NM/playwright-core" 2>/dev/null || true
+          # Remove packages not needed at runtime (~100MB+).
+          # NOTE: onnxruntime-web/onnx-proto must stay — @xenova/transformers'
+          # onnx.js does an unconditional `import * as ONNX_WEB from 'onnxruntime-web'`
+          # at module load even on Bun/Node, so deleting it crashes backend startup.
+          rm -rf "$NM/playwright-core" 2>/dev/null || true
 
           # Remove pdfjs-dist legacy build (not used)
           rm -rf "$NM/pdfjs-dist/legacy" 2>/dev/null || true
@@ -225,8 +228,11 @@ jobs:
               Where-Object { $_.Name -in @("linux","darwin","macos") } |
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-            # Remove packages not needed at runtime
-            @("onnxruntime-web","onnx-proto","playwright-core") | ForEach-Object {
+            # Remove packages not needed at runtime.
+            # NOTE: onnxruntime-web/onnx-proto must stay — @xenova/transformers'
+            # onnx.js does an unconditional `import * as ONNX_WEB from 'onnxruntime-web'`
+            # at module load even on Bun/Node, so deleting it crashes backend startup.
+            @("playwright-core") | ForEach-Object {
               $p = Join-Path $NM $_
               if (Test-Path $p) { Remove-Item -Recurse -Force $p }
             }
