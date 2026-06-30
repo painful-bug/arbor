@@ -44,6 +44,8 @@
 
 	function onDelete(id: string, e: MouseEvent) {
 		e.stopPropagation();
+		const name = library.list.find((c) => c.id === id)?.name ?? 'this canvas';
+		if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
 		deleteCanvas(id);
 	}
 

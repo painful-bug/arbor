@@ -7,6 +7,7 @@
 	import WebCard from './WebCard.svelte';
 	import UserTextCard from './UserTextCard.svelte';
 	import GroupNode from './GroupNode.svelte';
+	import UserTagCard from './UserTagCard.svelte';
 	import TextView from './TextView.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
 	import PromptBubble from './PromptBubble.svelte';
@@ -38,7 +39,10 @@
 		deleteNodes,
 		groupNodes,
 		cleanUp,
-		ungroupCleanup,
+		nodeCenter,
+		facingSide,
+		remapEdgeSides,
+		repositionTags,
 		settings,
 		init
 	} from './store.svelte';
@@ -67,7 +71,7 @@
 	}
 
 	const { screenToFlowPosition, fitView } = useSvelteFlow();
-	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode };
+	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode, tag: UserTagCard };
 	// 'bezier' isn't a built-in xyflow edge-type key (only 'default' is) — manual
 	// connect-tool edges and autolink semantic edges both set type:'bezier'
 	// explicitly (see addManualEdge / autolink.ts), so register it too.
@@ -180,10 +184,6 @@
 	}
 
 	const selectedNodes = $derived(flow.nodes.filter((n) => n.selected));
-	const selectedCleanupGroup = $derived(
-		selectedNodes.length === 1 && selectedNodes[0].type === 'group' && (selectedNodes[0].data as Record<string, unknown>).cleanup
-			? selectedNodes[0] : null
-	);
 
 	// Node click: duplicate / color / connect tool dispatch.
 	function onNodeClick(node: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }) {
@@ -203,7 +203,7 @@
 				if (src && tgt) {
 					const sc = nodeCenter(src);
 					const tc = nodeCenter(tgt);
-					addManualEdge(tool.connectFrom, node.id, bestSide(sc, tc) + '-s', bestSide(tc, sc) + '-t');
+					addManualEdge(tool.connectFrom, node.id, facingSide(sc, tc) + '-s', facingSide(tc, sc) + '-t');
 				}
 				tool.connectFrom = null;
 			}
@@ -266,23 +266,6 @@
 		expandId = (e as CustomEvent).detail.cardId;
 	}
 
-	// Auto-reconnect edges to the nearest side handle when a node is dragged.
-	// All node types (card, file, web) now share the same handle ID convention:
-	// top-s/top-t, right-s/right-t, bottom-s/bottom-t, left-s/left-t.
-	const SIDE_HANDLE_RE = /^(top|right|bottom|left)-(s|t)$/;
-
-	function nodeCenter(node: { position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }) {
-		const w = (node.measured?.width ?? node.width ?? 400);
-		const h = (node.measured?.height ?? node.height ?? 200);
-		return { x: node.position.x + w / 2, y: node.position.y + h / 2 };
-	}
-
-	function bestSide(from: { x: number; y: number }, to: { x: number; y: number }): string {
-		const dx = to.x - from.x;
-		const dy = to.y - from.y;
-		return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
-	}
-
 	function onDelete({ nodes }: { nodes: { id: string; type?: string; data: unknown }[] }) {
 		for (const node of nodes) {
 			if (node.type === 'file') {
@@ -293,28 +276,11 @@
 		}
 	}
 
-	function onNodeDragStop({ nodes }: { targetNode: unknown; nodes: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }[]; event: MouseEvent | TouchEvent }) {
-		const movedIds = new Set<string>(nodes.map((n) => n.id));
-		flow.edges = flow.edges.map((edge) => {
-			if (!movedIds.has(edge.source) && !movedIds.has(edge.target)) return edge;
-			const src = flow.nodes.find((n) => n.id === edge.source);
-			const tgt = flow.nodes.find((n) => n.id === edge.target);
-			if (!src || !tgt) return edge;
-			// Only remap side handles (named or null/undefined from old saves).
-			// Skip corner handles and any other custom handles.
-			const srcHandle = edge.sourceHandle;
-			const tgtHandle = edge.targetHandle;
-			const srcOk = srcHandle == null || SIDE_HANDLE_RE.test(srcHandle);
-			const tgtOk = tgtHandle == null || SIDE_HANDLE_RE.test(tgtHandle);
-			if (!srcOk || !tgtOk) return edge;
-			const sc = nodeCenter(src);
-			const tc = nodeCenter(tgt);
-			return {
-				...edge,
-				sourceHandle: bestSide(sc, tc) + '-s',
-				targetHandle: bestSide(tc, sc) + '-t'
-			};
-		});
+	// Re-anchor edges to the facing sides whenever a node is dragged. Shared with CC.
+	// Also reflow any cluster tags whose cluster just moved.
+	function onNodeDragStop({ nodes }: { targetNode: unknown; nodes: { id: string }[]; event: MouseEvent | TouchEvent }) {
+		remapEdgeSides(new Set<string>(nodes.map((n) => n.id)));
+		repositionTags();
 	}
 
 	function onWebUrlEvent(e: Event) {
@@ -715,13 +681,6 @@
 						</div>
 					{/if}
 
-					{#if selectedCleanupGroup}
-						<button
-							class="ungroup-trigger glass"
-							onclick={() => ungroupCleanup(selectedCleanupGroup.id)}
-						>Ungroup</button>
-					{/if}
-
 					<div class="topbar">
 						<span class="topbar-spacer"></span>
 						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} />
@@ -1033,25 +992,6 @@
 	.sel-btn:hover { background: rgba(255,255,255,0.22); }
 	.sel-btn--danger:hover { background: rgba(255, 80, 80, 0.5); }
 
-	.ungroup-trigger {
-		position: absolute;
-		bottom: 64px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 40;
-		padding: 8px 18px;
-		border-radius: var(--r-pill, 999px);
-		border: none;
-		font-size: 14px;
-		font-family: var(--font-sans);
-		font-weight: 500;
-		color: var(--c-ink);
-		cursor: pointer;
-		white-space: nowrap;
-		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
-	}
-	.ungroup-trigger:hover { transform: translateX(-50%) scale(1.04); }
-	.ungroup-trigger:active { transform: translateX(-50%) scale(0.95); }
 
 	/* ── KB overlay ──────────────────────────────────────────────────────────── */
 	.kb-backdrop {

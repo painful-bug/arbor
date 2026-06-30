@@ -263,10 +263,6 @@
 				<span>Snap nodes to grid</span>
 			</label>
 			<label class="toggle-row">
-				<input type="checkbox" bind:checked={settings.cleanupSemantic} onchange={persistSettings} />
-				<span>Use AI to refine Clean Up clusters</span>
-			</label>
-			<label class="toggle-row">
 				<input type="checkbox" checked={settings.autoConnect} onchange={onAutoConnectChange} />
 				<span>Auto-connect related cards, notes & files</span>
 			</label>

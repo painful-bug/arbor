@@ -188,27 +188,35 @@ export async function kbAdd(
 	}
 }
 
-// ── Clean Up — LLM-based semantic refinement ───────────────────────────────
+// ── Clean Up — semantic force-clustering ───────────────────────────────────
 
-export async function cleanupRefine(
+// Spacing-independent layout: cluster grid + each card's offset from its cell
+// center. place(layout, gap) (in the canvas store) turns it into pixel positions.
+export interface ArrangeLayout {
+	cellBase: number;
+	unit: number;
+	cols: number;
+	nodes: Record<string, { col: number; row: number; lx: number; ly: number }>;
+}
+
+export async function cleanupArrange(
 	canvas: string,
-	items: { id: string; group: string; title: string; snippet: string }[],
-	provider: string,
-	model: string,
-): Promise<Record<string, string>> {
+	nodes: { id: string; text: string; w: number; h: number; x: number; y: number }[],
+	edges: { source: string; target: string }[],
+): Promise<ArrangeLayout | null> {
 	const { apiFetch } = await import('$lib/api');
 	try {
-		const res = await apiFetch(`/api/cleanup/${encodeURIComponent(canvas)}`, {
+		const res = await apiFetch(`/api/cleanup/${encodeURIComponent(canvas)}/arrange`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ provider, model, items }),
-			signal: AbortSignal.timeout(6000),
+			body: JSON.stringify({ nodes, edges }),
+			signal: AbortSignal.timeout(15000),
 		});
-		if (!res.ok) return {};
-		const data = (await res.json()) as { labels?: Record<string, string> };
-		return data.labels ?? {};
+		if (!res.ok) return null;
+		const data = (await res.json()) as { layout?: ArrangeLayout | null };
+		return data.layout ?? null;
 	} catch {
-		return {};
+		return null;
 	}
 }
 
