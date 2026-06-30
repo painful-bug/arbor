@@ -135,41 +135,22 @@ jobs:
             frontend/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
 
-      - name: Create DMG
+      - name: Zip .app for manual download
         run: |
           APP_PATH=$(find frontend/src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
-          rm -f "Arbor.dmg"
+          # ditto, not hdiutil: a plain zip needs no virtual disk image, so there's
+          # no mount/unmount step to race with Spotlight indexing the freshly-built
+          # node_modules tree (the "Resource busy" hdiutil kept hitting). This is
+          # the manual-download asset only — the in-app updater never touches it,
+          # it always installs Arbor.app.tar.gz directly.
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "Arbor-macos.zip"
+          echo "Zip created: $(du -h Arbor-macos.zip | cut -f1)"
 
-          # Spotlight (mdworker) actively indexing the freshly-built .app's huge
-          # node_modules tree holds file handles open, which makes hdiutil's
-          # intermediate mount step fail with "Resource busy" on GitHub-hosted
-          # macOS runners. Disable indexing on the source tree, then retry with
-          # stale-mount cleanup as a second line of defense.
-          sudo mdutil -i off "$(dirname "$APP_PATH")" >/dev/null 2>&1 || true
-
-          for attempt in 1 2 3 4 5; do
-            for disk in $(hdiutil info | awk '/\/dev\/disk/{print $1}'); do
-              hdiutil detach "$disk" -force >/dev/null 2>&1 || true
-            done
-            if hdiutil create -volname "Arbor" -srcfolder "$APP_PATH" -ov -format UDZO "Arbor.dmg"; then
-              break
-            fi
-            echo "hdiutil create failed (attempt $attempt), retrying..."
-            rm -f "Arbor.dmg"
-            sleep $((attempt * 5))
-            if [ "$attempt" -eq 5 ]; then
-              echo "hdiutil create failed after 5 attempts" >&2
-              exit 1
-            fi
-          done
-
-          echo "DMG created: $(du -h Arbor.dmg | cut -f1)"
-
-      - name: Upload DMG
+      - name: Upload macOS zip
         uses: actions/upload-artifact@v4
         with:
-          name: arbor-macos-dmg
-          path: Arbor.dmg
+          name: arbor-macos-zip
+          path: Arbor-macos.zip
           if-no-files-found: error
 
   build-windows:
@@ -327,7 +308,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p release
 
-          cp artifacts/arbor-macos-dmg/Arbor.dmg "release/Arbor-${VERSION}-macos.dmg"
+          cp artifacts/arbor-macos-zip/Arbor-macos.zip "release/Arbor-${VERSION}-macos.zip"
 
           # Windows: find setup exe (robust against multiple files)
           WIN_EXE=$(find artifacts/arbor-windows-nsis -name "*.exe" -not -name "*.sig" -type f | head -1)
@@ -365,5 +346,11 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Arbor ${{ steps.version.outputs.version }} (${{ steps.version.outputs.tag }})
+          body: |
+            ## Install
+
+            **macOS:** download `Arbor-${{ steps.version.outputs.version }}-macos.zip`, double-click to unzip, then drag `Arbor.app` into `/Applications`.
+
+            **Windows:** download `Arbor-${{ steps.version.outputs.version }}-windows-setup.exe` and run it.
           generate_release_notes: true
           files: release/*
