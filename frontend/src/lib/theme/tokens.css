@@ -36,6 +36,11 @@
 	--block-coral: #f3c9b6;
 	--block-navy: #1f1d3d;
 
+	/* ink for content painted on top of a pastel block surface — block colors stay
+	   light in both themes, so this stays dark in both themes too (not theme-aware). */
+	--c-on-block: #1c1c1c;
+	--c-on-block-rgb: 28, 28, 28;
+
 	/* type */
 	--font-sans:
 		-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
@@ -100,6 +105,42 @@
 	--elev-2: 0 4px 16px rgba(0, 0, 0, 0.4);
 	--elev-float: 0 8px 30px rgba(0, 0, 0, 0.55);
 	color-scheme: dark;
+}
+
+/* Glowing gradient breathing border for a selected node — replaces the flat
+   box-shadow ring. ::after so it doesn't fight the node's own border-radius/overflow. */
+@keyframes ring-breathe {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+.node-glow-selected {
+	position: relative;
+}
+.node-glow-selected::after {
+	content: '';
+	position: absolute;
+	inset: -3px;
+	border-radius: inherit;
+	padding: 2.5px;
+	pointer-events: none;
+	background: linear-gradient(135deg, var(--c-edge-selected), var(--c-edge-semantic));
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	filter: drop-shadow(0 0 6px var(--c-edge-selected));
+	animation: ring-breathe 2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.node-glow-selected::after {
+		animation: none;
+	}
 }
 
 /* Liquid Glass material — translucent chrome (toolbar, panel, prompt bubble). */

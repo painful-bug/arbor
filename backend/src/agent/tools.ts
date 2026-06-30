@@ -2,6 +2,7 @@
 // research plan, and canvas knowledge base search (in-process via kb/index.ts).
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { GradedSearch } from "../kb/index.ts";
 
 export type WebBackend = "tavily" | "duckduckgo";
 
@@ -242,11 +243,6 @@ export function researchPlanTool(): AgentTool<typeof planSchema> {
 const kbSchema = Type.Object({
 	query: Type.String({ description: "Content-topic search terms (e.g. 'TCP handshake', 'mitochondria'), NOT meta like 'pdf' or 'file'." })
 });
-
-export interface GradedSearch {
-	chunks: { text: string; score: number }[];
-	verdict: "strong" | "weak" | "none";
-}
 
 export function knowledgeBaseSearchTool(
 	search: (query: string) => Promise<GradedSearch>

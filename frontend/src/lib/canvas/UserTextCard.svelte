@@ -31,7 +31,7 @@ import CardHandles from './CardHandles.svelte';
 
 <div
 	class="card"
-	class:selected
+	class:node-glow-selected={selected}
 	data-card-id={id}
 	style="background: var(--block-{card.block})"
 	in:scale={reducedMotion() ? { duration: 0 } : { duration: 480, start: 0.6, opacity: 0, easing: backOut }}
@@ -83,9 +83,6 @@ import CardHandles from './CardHandles.svelte';
 		transform: translateY(-2px);
 		box-shadow: var(--elev-2);
 	}
-	.card.selected {
-		box-shadow: 0 0 0 2px var(--c-ink);
-	}
 	.header {
 		display: flex;
 		align-items: center;
@@ -112,7 +109,7 @@ import CardHandles from './CardHandles.svelte';
 		color: var(--c-ink);
 	}
 	.card:hover .edit-btn,
-	.card.selected .edit-btn {
+	.card.node-glow-selected .edit-btn {
 		opacity: 1;
 	}
 	.nodrag {

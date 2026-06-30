@@ -4,8 +4,11 @@
 // (URI-encoded so non-ASCII names stay header-safe).
 import { apiFetch } from '$lib/api';
 import { currentCanvasId } from '$lib/canvas/store.svelte';
+import { SvelteMap } from 'svelte/reactivity';
 
-const blobs = new Map<string, { bytes: ArrayBuffer; mime: string; name: string }>();
+// Reactive map: FileCard reads getFileBlob() inside a $derived, so writes here
+// (putFileBlob / hydrateFileBlobs, both async/late) must trigger a re-render.
+const blobs = new SvelteMap<string, { bytes: ArrayBuffer; mime: string; name: string }>();
 
 // Blobs are keyed by canvas so per-canvas-reused node IDs (n1, n2, …) can't collide
 // across canvases — both in memory and on the backend (~/.arbor/blobs/<key>).

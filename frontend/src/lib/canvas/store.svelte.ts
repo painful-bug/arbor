@@ -31,7 +31,7 @@ export interface CardData {
 // Last turn helper — the one being streamed / replied to.
 export const lastTurn = (d: CardData): Turn => d.turns[d.turns.length - 1];
 
-export const BLOCKS = ['lime', 'lilac', 'cream', 'pink', 'mint', 'coral'];
+const BLOCKS = ['lime', 'lilac', 'cream', 'pink', 'mint', 'coral'];
 let blockIdx = 0;
 
 // ── Tool state (shared by toolbar + canvas) ──────────────────────────────────
@@ -469,6 +469,18 @@ export function continueCard(id: string, prompt: string): void {
 	void runModel(id);
 }
 
+// Re-run the last turn from scratch (clears its answer + events).
+export function retryCard(id: string): void {
+	flow.nodes = flow.nodes.map((n) => {
+		if (n.id !== id) return n;
+		const turns = n.data.turns as Turn[];
+		const last = turns[turns.length - 1];
+		const fresh = [...turns.slice(0, -1), { prompt: last.prompt, answer: '', events: [] }];
+		return { ...n, data: { ...n.data, turns: fresh, streaming: true } };
+	});
+	void runModel(id);
+}
+
 // Web embed card: an interactive iframe of a URL pasted/dropped/clicked onto the canvas.
 interface WebData {
 	url: string;
@@ -592,7 +604,7 @@ async function indexTextCard(cardId: string, text: string): Promise<void> {
 	triggerAutolink(cardId);
 }
 
-export function setCardBlock(id: string, block: string): void {
+function setCardBlock(id: string, block: string): void {
 	flow.nodes = flow.nodes.map((n) =>
 		n.id === id ? { ...n, data: { ...n.data, block } } : n
 	);
@@ -699,7 +711,7 @@ export function deleteNodes(ids: string[]): void {
 
 // ── Group nodes ─────────────────────────────────────────────────────────────
 // ponytail: parent-node approach — SvelteFlow handles drag-together natively.
-export interface GroupData { block: string; label?: string; cleanup?: boolean; [key: string]: unknown }
+interface GroupData { block: string; label?: string; cleanup?: boolean; [key: string]: unknown }
 
 export function groupNodes(ids: string[]): string {
 	const selected = flow.nodes.filter((n) => ids.includes(n.id));
@@ -992,10 +1004,10 @@ export async function runModel(id: string): Promise<void> {
 	messages.push({ role: 'user', content: base });
 
 	const workflow = selfData.workflow ?? settings.workflow;
-	const digest = canvasDigest(id);
-	const systemPrompt = digest
-		? `${workflowSystemPrompt(workflow)}\n\n${digest}`
-		: workflowSystemPrompt(workflow);
+	const ancestorIds = new Set(ancestry(id));
+	const connected = connectedDigest(id, ancestorIds); // ancestors already sent as full message history
+	const digest = canvasDigest(id, new Set([...ancestorIds, ...connectedIds(id, flow.edges)]));
+	const systemPrompt = [workflowSystemPrompt(workflow), connected, digest].filter(Boolean).join('\n\n');
 
 	let answer = '';
 	await runAgent(
@@ -1112,7 +1124,7 @@ export function renameCard(id: string, title: string): void {
 
 // Create a finished Q&A card from agent output — no streaming, placed to the right
 // of the rightmost existing node.
-export function createCardFromAgent(title: string, content: string): string {
+function createCardFromAgent(title: string, content: string): string {
 	const id = nextId();
 	const block = BLOCKS[blockIdx++ % BLOCKS.length];
 	const maxX = flow.nodes.reduce((m, n) => Math.max(m, n.position.x + (n.width ?? 400)), 0);
@@ -1131,7 +1143,7 @@ export function createCardFromAgent(title: string, content: string): string {
 
 // Replace an existing card's content. ref = node id OR case-insensitive title match.
 // Q&A card → overwrites last turn's answer. Text card → overwrites body.
-export function updateCardContent(ref: string, content: string): boolean {
+function updateCardContent(ref: string, content: string): boolean {
 	const node =
 		flow.nodes.find((n) => n.id === ref) ??
 		flow.nodes.find((n) => {
@@ -1291,9 +1303,72 @@ function pushTurns(messages: ChatMessage[], d: CardData): void {
 	}
 }
 
-function canvasDigest(excludeId: string): string {
+// Nodes directly linked to `id` by any edge (manual or semantic), either direction.
+export function connectedIds(id: string, edges: Edge[]): Set<string> {
+	const ids = new Set<string>();
+	for (const e of edges) {
+		if (e.source === id) ids.add(e.target);
+		else if (e.target === id) ids.add(e.source);
+	}
+	ids.delete(id);
+	return ids;
+}
+
+export interface ConnectedItem {
+	kind: 'card' | 'text' | 'file';
+	title: string; // card title / filename ('' for notes)
+	body: string; // pre-truncated content to show
+}
+
+// Richer, higher-priority context block for nodes directly connected to this card —
+// fuller text than the generic one-line digest, since the user wired them together.
+export function connectedDigestFrom(items: ConnectedItem[]): string {
+	const sections = items
+		.map((it) => {
+			const body = it.body.trim();
+			if (it.kind === 'card') return body ? `### "${it.title || '(untitled card)'}"\n${body}` : '';
+			if (it.kind === 'text') return body ? `### [note]\n${body}` : '';
+			return `### [file: ${it.title}]\n${body || '(not yet indexed)'}`;
+		})
+		.filter(Boolean);
+	if (!sections.length) return '';
+	return (
+		'## Connected to this card\n' +
+		'The user directly linked these on the canvas — prioritize them over the "Other threads" section below.\n\n' +
+		sections.join('\n\n')
+	);
+}
+
+function connectedDigest(id: string, skip: Set<string>): string {
+	const ids = [...connectedIds(id, flow.edges)].filter((cid) => !skip.has(cid));
+	const items: ConnectedItem[] = ids
+		.map((cid) => flow.nodes.find((n) => n.id === cid))
+		.filter((n): n is Node => !!n && (n.type === 'card' || n.type === 'text' || n.type === 'file'))
+		.map((n) => {
+			if (n.type === 'card') {
+				const d = n.data as CardData;
+				const t = lastTurn(d);
+				const body = [t?.prompt, t?.answer].filter(Boolean).join('\n').replace(/\s+/g, ' ').trim().slice(0, 800);
+				return { kind: 'card' as const, title: d.title ?? '', body };
+			}
+			if (n.type === 'text') {
+				const d = n.data as TextData;
+				return { kind: 'text' as const, title: '', body: (d.text ?? '').slice(0, 1500) };
+			}
+			const d = n.data as FileData;
+			return { kind: 'file' as const, title: d.filename ?? '', body: (d.preview ?? '').slice(0, 1500) };
+		});
+	return connectedDigestFrom(items);
+}
+
+function canvasDigest(excludeId: string, skip: Set<string> = new Set()): string {
 	const cards = flow.nodes
-		.filter((n) => (n.type === 'card' || n.type === 'text' || n.type === 'file') && n.id !== excludeId)
+		.filter(
+			(n) =>
+				(n.type === 'card' || n.type === 'text' || n.type === 'file') &&
+				n.id !== excludeId &&
+				!skip.has(n.id)
+		)
 		.map((n) => {
 			if (n.type === 'text') {
 				const d = n.data as TextData;

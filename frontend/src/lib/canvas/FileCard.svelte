@@ -31,11 +31,15 @@ import CardHandles from './CardHandles.svelte';
 				: ''
 	);
 
-	const imgSrc = $derived(
-		file.kind === 'image' && blob
-			? URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }))
-			: null
-	);
+	// One object URL per blob, revoked on change/teardown (was leaking one per
+	// $derived recompute — harmless until blobs became reactive, see files.ts).
+	let imgSrc = $state<string | null>(null);
+	$effect(() => {
+		if (file.kind !== 'image' || !blob) { imgSrc = null; return; }
+		const url = URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }));
+		imgSrc = url;
+		return () => URL.revokeObjectURL(url);
+	});
 
 	let pdfThumbCanvas = $state<HTMLCanvasElement | null>(null);
 
@@ -72,7 +76,7 @@ import CardHandles from './CardHandles.svelte';
 <CardHandles />
 <div
 	class="file"
-	class:selected={isSelected}
+	class:node-glow-selected={isSelected}
 	style="background: var(--block-{file.block})"
 	onclick={select}
 	ondblclick={open}
@@ -122,10 +126,6 @@ import CardHandles from './CardHandles.svelte';
 		overflow: hidden;
 		cursor: pointer;
 	}
-	.file.selected {
-		box-shadow: 0 0 0 2px var(--c-ink);
-	}
-
 	/* Preview fills the entire card */
 	.preview {
 		position: absolute;

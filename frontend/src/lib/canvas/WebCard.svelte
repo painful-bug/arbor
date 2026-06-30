@@ -84,7 +84,7 @@ import CardHandles from './CardHandles.svelte';
 
 <CardHandles />
 <!-- bind:this needed for outside-click detection -->
-<div class="web" class:selected bind:this={host}>
+<div class="web" class:node-glow-selected={selected} bind:this={host}>
 	<NodeResizer minWidth={320} minHeight={240} isVisible={selected} />
 
 	<!-- nodrag only on individual interactive elements, not the whole bar, so the
@@ -167,9 +167,7 @@ import CardHandles from './CardHandles.svelte';
 		box-shadow: var(--elev-2);
 		box-sizing: border-box;
 		background: var(--c-surface, #fff);
-	}
-	.web.selected {
-		box-shadow: 0 0 0 2px var(--c-ink);
+		position: relative;
 	}
 	.bar {
 		display: flex;

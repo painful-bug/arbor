@@ -81,7 +81,7 @@ import CardHandles from './CardHandles.svelte';
 <!-- Bouncy spring entrance (Liquid Glass motion); disabled under reduced-motion via tokens.css -->
 <div
 	class="card"
-	class:selected
+	class:node-glow-selected={selected}
 	data-card-id={id}
 	style="background: var(--block-{card.block})"
 	in:scale={reducedMotion() ? { duration: 0 } : { duration: 480, start: 0.6, opacity: 0, easing: backOut }}
@@ -136,6 +136,10 @@ import CardHandles from './CardHandles.svelte';
 		box-sizing: border-box;
 		color: rgba(0, 0, 0, 0.85);
 		--ink-rgb: 0, 0, 0;
+		/* Block surfaces are always a light pastel (tokens.css), in both themes, so
+		   content painted on them (caret, activity dot) must stay dark in both themes
+		   too — override the theme's --c-ink instead of inheriting the white dark-mode one. */
+		--c-ink: var(--c-on-block);
 		color-scheme: light;
 		transition:
 			transform var(--ease-glass),
@@ -144,9 +148,6 @@ import CardHandles from './CardHandles.svelte';
 	.card:hover {
 		transform: translateY(-2px);
 		box-shadow: var(--elev-2);
-	}
-	.card.selected {
-		box-shadow: 0 0 0 2px var(--c-ink);
 	}
 	/* nodrag elements: let the user select text (to branch) instead of dragging the node */
 	/* -webkit- prefix needed: base.css sets -webkit-user-select:none on .svelte-flow__node,

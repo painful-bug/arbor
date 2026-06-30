@@ -4,7 +4,13 @@
 	import { testConnection, PROVIDERS, type Provider } from '$lib/ai/client';
 	import { WORKFLOWS } from '$lib/ai/workflows';
 	import { apiJson, apiPut } from '$lib/api';
-	import { updateState, checkForUpdates, installUpdate } from '$lib/updates/store.svelte';
+	import {
+		updateState,
+		checkForUpdates,
+		installUpdate,
+		forceUpdateCheck,
+		setForceUpdateCheck
+	} from '$lib/updates/store.svelte';
 
 	let appVersion = $state('');
 	onMount(async () => {
@@ -204,6 +210,15 @@
 					Check for updates
 				</button>
 			{/if}
+
+			<label class="toggle-row dev-only">
+				<input
+					type="checkbox"
+					checked={forceUpdateCheck.enabled}
+					onchange={(e) => setForceUpdateCheck((e.currentTarget as HTMLInputElement).checked)}
+				/>
+				<span>Force-pull latest release (dev/testing — same version OK)</span>
+			</label>
 		</section>
 
 		<!-- Default Workflow -->
@@ -782,6 +797,14 @@
 		height: 100%;
 		background: var(--c-accent-magenta);
 		transition: width 0.2s ease;
+	}
+
+	/* Dev/testing-only toggle — remove with the rest of this feature before public release. */
+	.dev-only {
+		margin-top: var(--s-sm);
+		padding-top: var(--s-sm);
+		border-top: 1px dashed var(--c-hairline);
+		opacity: 0.7;
 	}
 
 	/* ── Future ── */
