@@ -47,6 +47,12 @@ jobs:
       - name: Install frontend deps
         run: cd frontend && npm ci
 
+      - name: Build workspace packages
+        run: |
+          if [ -d packages/mosaic ]; then
+            cd packages/mosaic && bun install && bun run build && cd ../..
+          fi
+
       - name: Stage backend
         run: |
           RESOURCES_DIR=frontend/src-tauri/resources
@@ -56,6 +62,11 @@ jobs:
           cp backend/package.json "$RESOURCES_DIR/backend/"
           cp backend/bun.lock "$RESOURCES_DIR/backend/" 2>/dev/null || true
           if [ -d backend/native ]; then cp -r backend/native "$RESOURCES_DIR/backend/native"; fi
+          # Copy local workspace packages so file: deps resolve correctly
+          if [ -d packages ]; then
+            cp -r packages "$RESOURCES_DIR/packages"
+            find "$RESOURCES_DIR/packages" -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
+          fi
           cd "$RESOURCES_DIR/backend" && bun install --frozen-lockfile 2>/dev/null || bun install
 
       - name: Prune bundled node_modules
@@ -169,6 +180,16 @@ jobs:
       - name: Install frontend deps
         run: cd frontend && npm ci
 
+      - name: Build workspace packages
+        shell: pwsh
+        run: |
+          if (Test-Path "packages/mosaic") {
+            Push-Location "packages/mosaic"
+            bun install
+            bun run build
+            Pop-Location
+          }
+
       - name: Stage backend
         shell: pwsh
         run: |
@@ -179,6 +200,12 @@ jobs:
           Copy-Item "backend/package.json" "$ResourcesDir/backend/"
           if (Test-Path "backend/bun.lock") { Copy-Item "backend/bun.lock" "$ResourcesDir/backend/" }
           if (Test-Path "backend/native") { Copy-Item -Recurse "backend/native" "$ResourcesDir/backend/native" }
+          # Copy local workspace packages so file: deps resolve correctly
+          if (Test-Path "packages") {
+            Copy-Item -Recurse "packages" "$ResourcesDir/packages"
+            Get-ChildItem -Path "$ResourcesDir/packages" -Recurse -Directory -Filter "node_modules" |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          }
           Push-Location "$ResourcesDir/backend"
           bun install --frozen-lockfile 2>$null
           if ($LASTEXITCODE -ne 0) { bun install }
