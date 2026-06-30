@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { settings, persistSettings, DEFAULT_MODELS } from '$lib/canvas/store.svelte';
+	import { settings, persistSettings, purgeSemanticEdges, DEFAULT_MODELS } from '$lib/canvas/store.svelte';
 	import { testConnection, PROVIDERS, type Provider } from '$lib/ai/client';
 	import { WORKFLOWS } from '$lib/ai/workflows';
 	import { apiJson, apiPut } from '$lib/api';
@@ -84,6 +84,24 @@
 
 	function onModelInput() {
 		persistSettings();
+	}
+
+	// Auto-connect toggle: turning on backfills existing nodes; turning off asks
+	// whether to drop the semantic edges already drawn.
+	let showAutoConnectOff = $state(false);
+	function onAutoConnectChange(e: Event) {
+		const on = (e.currentTarget as HTMLInputElement).checked;
+		settings.autoConnect = on;
+		persistSettings();
+		if (on) {
+			void import('$lib/canvas/autolink').then((m) => m.autolinkAll());
+		} else {
+			showAutoConnectOff = true;
+		}
+	}
+	function resolveAutoConnectOff(remove: boolean) {
+		showAutoConnectOff = false;
+		if (remove) void purgeSemanticEdges();
 	}
 
 	let ollamaModels = $state<string[]>([]);
@@ -233,6 +251,11 @@
 				<input type="checkbox" bind:checked={settings.cleanupSemantic} onchange={persistSettings} />
 				<span>Use AI to refine Clean Up clusters</span>
 			</label>
+			<label class="toggle-row">
+				<input type="checkbox" checked={settings.autoConnect} onchange={onAutoConnectChange} />
+				<span>Auto-connect related cards, notes & files</span>
+			</label>
+			<p class="sub">Draws dashed links between items about the same topic, in the background as you work.</p>
 		</section>
 
 		<!-- Tools -->
@@ -412,6 +435,22 @@
 
 	</div>
 </div>
+
+{#if showAutoConnectOff}
+	<div class="modal-backdrop" onpointerdown={() => resolveAutoConnectOff(false)}>
+		<div class="modal" role="dialog" aria-modal="true" tabindex="-1" onpointerdown={(e) => e.stopPropagation()}>
+			<h2>Remove existing connections?</h2>
+			<p class="sub">
+				Auto-connect is off. Keep the dashed links already drawn between related items, or
+				remove them from every canvas?
+			</p>
+			<div class="modal-actions">
+				<button class="btn-ghost" onclick={() => resolveAutoConnectOff(false)}>Keep them</button>
+				<button class="btn-primary danger" onclick={() => resolveAutoConnectOff(true)}>Remove all</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.page {
@@ -694,6 +733,38 @@
 		word-break: break-all;
 	}
 	.pull-progress.pull-error { color: #a02020; }
+
+	/* ── Auto-connect off modal ── */
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 100;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.35);
+	}
+	.modal {
+		width: min(420px, calc(100vw - 48px));
+		display: flex;
+		flex-direction: column;
+		gap: var(--s-md);
+		padding: var(--s-lg);
+		background: var(--c-surface-soft);
+		border: 1px solid var(--c-hairline);
+		border-radius: var(--r-lg);
+		box-shadow: var(--elev-float);
+	}
+	.modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--s-sm);
+	}
+	.btn-primary.danger {
+		background: #c0392b;
+		border-color: #c0392b;
+		color: #fff;
+	}
 
 	/* ── Updates ── */
 	.upd-line {

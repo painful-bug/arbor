@@ -19,7 +19,19 @@ $TargetTriple = "$Arch-pc-windows-msvc"
 
 Write-Host "=== Arbor Windows build ($TargetTriple) ==="
 
-# --- 1. Stage backend into tauri resources ---
+# --- 1. Build local workspace packages (backend depends on file:../packages/*) ---
+$PackagesSrc = Join-Path $RepoRoot "packages"
+$MosaicSrc = Join-Path $PackagesSrc "mosaic"
+if (Test-Path $MosaicSrc) {
+    Write-Host "--- Building @arbor/mosaic ---"
+    Push-Location $MosaicSrc
+    try {
+        & bun install
+        & bun run build
+    } finally { Pop-Location }
+}
+
+# --- 2. Stage backend into tauri resources ---
 Write-Host "--- Staging backend ---"
 $BackendDest = Join-Path $ResourcesDir "backend"
 if (Test-Path $BackendDest) { Remove-Item -Recurse -Force $BackendDest }
@@ -33,6 +45,14 @@ if (Test-Path (Join-Path $BackendSrc "bun.lock")) {
 }
 if (Test-Path (Join-Path $BackendSrc "native")) {
     Copy-Item -Recurse (Join-Path $BackendSrc "native") (Join-Path $BackendDest "native")
+}
+
+# Copy workspace packages so the backend's file:../packages/* dep resolves
+# once it's staged into resources/backend (a different relative location).
+if (Test-Path $PackagesSrc) {
+    Copy-Item -Recurse $PackagesSrc (Join-Path $ResourcesDir "packages")
+    Get-ChildItem -Path (Join-Path $ResourcesDir "packages") -Recurse -Directory -Filter "node_modules" -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "Installing production deps..."

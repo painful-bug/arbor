@@ -106,6 +106,43 @@ function rrfFuse(vecResults: any[], ftsResults: any[], k: number): string[] {
 		.map(([text]) => text);
 }
 
+// Nearest *sources* (not chunks) to a query vector. Unlike hybridSearch this does
+// NOT apply NOT_CHAT — semantic auto-linking must compare cards/notes (chat:/card:/
+// text:) too. Aggregates chunk hits to the best cosine per source. Vectors are
+// normalized, so cosine = 1 - L2²/2 (lancedb returns L2 _distance).
+export async function relate(
+	canvas: string,
+	queryVec: number[],
+	k: number,
+	exclude: string[],
+): Promise<{ source: string; score: number }[]> {
+	const db = await getDb();
+	const name = tname(canvas);
+	const names = await db.tableNames();
+	if (!names.includes(name)) return [];
+
+	const tbl = await db.openTable(name);
+	const rows = await tbl
+		.search(queryVec)
+		.select(["source"])
+		.limit(Math.max(k * 8, 24))
+		.toArray();
+
+	const skip = new Set(exclude);
+	const best = new Map<string, number>();
+	for (const r of rows as { source: string; _distance: number }[]) {
+		if (skip.has(r.source)) continue;
+		const cosine = 1 - r._distance / 2;
+		const prev = best.get(r.source);
+		if (prev === undefined || cosine > prev) best.set(r.source, cosine);
+	}
+
+	return [...best.entries()]
+		.map(([source, score]) => ({ source, score }))
+		.sort((a, b) => b.score - a.score)
+		.slice(0, k);
+}
+
 export async function removeSource(canvas: string, source: string): Promise<void> {
 	const db = await getDb();
 	const name = tname(canvas);

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { addFile, search, clearCanvas, contentsOf, removeFile } from "../kb/index.ts";
+import { addFile, search, clearCanvas, contentsOf, removeFile, relateNode } from "../kb/index.ts";
 
 export const kbRoutes = new Hono();
 
@@ -24,6 +24,25 @@ kbRoutes.get("/:canvas/search", async (c) => {
 	if (!q) return c.json({ results: [] });
 	const results = await search(canvas, q, k);
 	return c.json({ results });
+});
+
+kbRoutes.post("/:canvas/relate", async (c) => {
+	const canvas = c.req.param("canvas");
+	const body = (await c.req.json().catch(() => ({}))) as {
+		text?: string;
+		exclude?: string;
+		k?: number;
+		minScore?: number;
+	};
+	if (!body.text?.trim()) return c.json({ neighbors: [] });
+	const neighbors = await relateNode(
+		canvas,
+		body.text,
+		body.exclude ?? "",
+		Math.min(body.k ?? 3, 10),
+		body.minScore ?? 0.62,
+	);
+	return c.json({ neighbors });
 });
 
 kbRoutes.delete("/:canvas/files/:filename", async (c) => {

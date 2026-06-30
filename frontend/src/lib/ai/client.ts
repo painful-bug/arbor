@@ -228,6 +228,28 @@ export async function kbSearch(canvas: string, query: string, k = 8): Promise<st
 	}
 }
 
+// Semantic neighbors of a node's text — drives background auto-linking.
+export async function kbRelate(
+	canvas: string,
+	text: string,
+	opts: { exclude?: string; k?: number; minScore?: number } = {}
+): Promise<{ source: string; score: number }[]> {
+	const { apiFetch } = await import('$lib/api');
+	if (!text.trim()) return [];
+	try {
+		const res = await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/relate`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ text, exclude: opts.exclude ?? '', k: opts.k ?? 3, minScore: opts.minScore ?? 0.62 })
+		});
+		if (!res || !res.ok) return [];
+		const data = (await res.json()) as { neighbors?: { source: string; score: number }[] };
+		return data.neighbors ?? [];
+	} catch {
+		return [];
+	}
+}
+
 export async function kbRemove(canvas: string, filename: string): Promise<void> {
 	const { apiFetch } = await import('$lib/api');
 	try {

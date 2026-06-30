@@ -164,6 +164,10 @@ function applyDoc(doc: CanvasDoc | null): void {
 	setTimeout(() => {
 		_histLock = false;
 		pushHistory();
+		// Backfill: link any nodes that aren't semantically connected yet.
+		if (settings.autoConnect) {
+			void import('./autolink').then((m) => m.autolinkAll()).catch(() => {});
+		}
 	}, 10);
 }
 
@@ -313,6 +317,7 @@ interface Settings {
 	websearch: { enabled: boolean; backend: 'duckduckgo' | 'tavily' };
 	snapToGrid: boolean;
 	cleanupSemantic: boolean;
+	autoConnect: boolean;
 	theme: 'light' | 'dark';
 }
 
@@ -324,6 +329,7 @@ const FALLBACK_SETTINGS: Settings = {
 	websearch: { enabled: false, backend: 'duckduckgo' },
 	snapToGrid: false,
 	cleanupSemantic: true,
+	autoConnect: true,
 	theme: 'dark',
 };
 
@@ -349,6 +355,7 @@ function applySettings(p: Record<string, unknown>): void {
 	}
 	if (typeof p.snapToGrid === 'boolean') settings.snapToGrid = p.snapToGrid;
 	if (typeof p.cleanupSemantic === 'boolean') settings.cleanupSemantic = p.cleanupSemantic;
+	if (typeof p.autoConnect === 'boolean') settings.autoConnect = p.autoConnect;
 	if (p.theme === 'light' || p.theme === 'dark') settings.theme = p.theme;
 }
 
@@ -378,12 +385,35 @@ export function persistSettings(): void {
 		websearch: { ...settings.websearch },
 		snapToGrid: settings.snapToGrid,
 		cleanupSemantic: settings.cleanupSemantic,
+		autoConnect: settings.autoConnect,
 		theme: settings.theme,
 	};
 	try {
 		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));
 	} catch {}
 	void apiPut('/api/settings', payload);
+}
+
+// ── Semantic auto-linking ─────────────────────────────────────────────────────
+// Dynamic import breaks the store↔autolink cycle (autolink imports this module).
+function triggerAutolink(nodeId: string): void {
+	if (!settings.autoConnect) return;
+	void import('./autolink').then((m) => m.scheduleAutolink(nodeId)).catch(() => {});
+}
+
+// Remove every auto semantic edge across all canvases (current + stored docs).
+// Called when the user turns the feature off and chooses to drop existing links.
+export async function purgeSemanticEdges(): Promise<void> {
+	const isAuto = (e: Edge) => !!(e.data as { auto?: boolean } | undefined)?.auto;
+	flow.edges = flow.edges.filter((e) => !isAuto(e));
+	saveCanvas();
+	for (const meta of library.list) {
+		if (meta.id === currentId) continue;
+		const doc = await loadDoc(meta.id);
+		if (!doc) continue;
+		const edges = (doc.edges ?? []).filter((e) => !isAuto(e));
+		if (edges.length !== (doc.edges?.length ?? 0)) writeDoc({ ...doc, edges });
+	}
 }
 
 // ── Canvas actions ───────────────────────────────────────────────────────────
@@ -559,6 +589,7 @@ async function indexTextCard(cardId: string, text: string): Promise<void> {
 	const canvas = currentCanvasId() || 'default';
 	const bytes = new TextEncoder().encode(text);
 	await kbAdd(canvas, `text:${cardId}`, 'text/plain', bytes.buffer as ArrayBuffer).catch(() => {});
+	triggerAutolink(cardId);
 }
 
 export function setCardBlock(id: string, block: string): void {
@@ -747,7 +778,7 @@ const CATEGORY_ORDER = [
 	'Markdown', 'Text Files', 'Images', 'Web', 'Files', 'Other',
 ];
 
-function snippetOf(node: Node): string {
+export function snippetOf(node: Node): string {
 	const d = node.data as Record<string, unknown>;
 	if (node.type === 'card') {
 		const turns = d.turns as Turn[] | undefined;
@@ -1005,6 +1036,7 @@ export async function runModel(id: string): Promise<void> {
 						void generateTitle(id, active.prompt, answer);
 						void generateCanvasTitle();
 					}
+					triggerAutolink(id);
 					break;
 			}
 		}
@@ -1093,6 +1125,7 @@ export function createCardFromAgent(title: string, content: string): string {
 	};
 	flow.nodes = [...flow.nodes, { id, type: 'card', position, data, width: 400 }];
 	saveCanvas();
+	triggerAutolink(id);
 	return id;
 }
 
@@ -1171,8 +1204,9 @@ function applyCanvasTool(ev: AgentEvent): void {
 	} else if (ev.name === 'create_note') {
 		const maxX = flow.nodes.reduce((m, n) => Math.max(m, n.position.x + (n.width ?? 400)), 0);
 		const pos = { x: maxX > 0 ? maxX + 40 : 80, y: 80 };
-		addTextCard(pos, args.content ?? '');
+		const noteId = addTextCard(pos, args.content ?? '');
 		saveCanvas();
+		triggerAutolink(noteId);
 	} else if (ev.name === 'update_card') {
 		updateCardContent(args.card ?? '', args.content ?? '');
 	}

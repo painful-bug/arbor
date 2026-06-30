@@ -55,9 +55,18 @@ export async function checkForUpdates(notify = false): Promise<void> {
 			updateState.notes = null;
 		}
 	} catch (e) {
-		// A failed check must never crash the app or spam the user.
-		updateState.status = 'error';
-		updateState.error = e instanceof Error ? e.message : String(e);
+		// Background checks (startup + interval, notify=true) fail silently —
+		// e.g. no release has published a manifest yet, or a transient network
+		// blip. Surfacing that as a red error on every app launch is misleading
+		// when nothing the user did is actually broken. Only an explicit,
+		// user-clicked "Check for updates" (notify=false) shows the failure.
+		if (notify) {
+			console.warn('[updates] background check failed:', e);
+			updateState.status = 'idle';
+		} else {
+			updateState.status = 'error';
+			updateState.error = e instanceof Error ? e.message : String(e);
+		}
 	}
 }
 

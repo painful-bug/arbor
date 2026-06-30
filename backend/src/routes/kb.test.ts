@@ -137,6 +137,36 @@ describe("KB routes", () => {
 		expect(verdict).toBe("strong");
 	}, 120_000);
 
+	it("POST /relate ranks the semantically related source first and excludes self", async () => {
+		const canvas = "relate-canvas";
+		const enc = (s: string) => new TextEncoder().encode(s);
+		await addFile(canvas, "photosynthesis.txt", "text/plain", enc(
+			"Photosynthesis converts sunlight, water and carbon dioxide into glucose and oxygen inside plant chloroplasts."
+		));
+		await addFile(canvas, "chlorophyll.txt", "text/plain", enc(
+			"Chlorophyll is the green pigment in chloroplasts that absorbs light to drive photosynthesis in plants."
+		));
+		await addFile(canvas, "taxes.txt", "text/plain", enc(
+			"Quarterly estimated tax payments are due to the IRS in April, June, September and January."
+		));
+
+		const res = await api(`/api/kb/${canvas}/relate`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				text: "how plants use sunlight to make glucose in chloroplasts",
+				exclude: "photosynthesis.txt",
+				k: 3,
+				minScore: 0.3,
+			}),
+		});
+		expect(res.status).toBe(200);
+		const { neighbors } = (await res.json()) as { neighbors: { source: string; score: number }[] };
+		const sources = neighbors.map((n) => n.source);
+		expect(sources).not.toContain("photosynthesis.txt"); // self excluded
+		expect(neighbors[0]?.source).toBe("chlorophyll.txt"); // most related ranks first
+	}, 120_000);
+
 	it("grades verdict 'none' when the KB has no relevant content", async () => {
 		const empty = await searchGraded("graded-empty-canvas", "anything at all", 6);
 		expect(empty.chunks.length).toBe(0);

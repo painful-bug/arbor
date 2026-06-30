@@ -18,6 +18,8 @@
 	--c-pattern: #ececec;
 	--c-edge: #999;
 	--c-edge-selected: var(--c-accent-magenta);
+	/* auto semantic links — vivid violet, clearly visible on white canvas */
+	--c-edge-semantic: #6d4bff;
 	--glass-bg: rgba(255, 255, 255, 0.62);
 	--glass-border: rgba(255, 255, 255, 0.7);
 	/* Sidebar uses NSVisualEffect Sidebar material (vibrancy) in the Tauri app.
@@ -90,6 +92,8 @@
 	--c-pattern: #3a3d4d;
 	--c-edge: #8888a0;
 	--c-edge-selected: var(--c-accent-magenta);
+	/* auto semantic links — light violet, clearly visible on dark slate */
+	--c-edge-semantic: #bd93f9;
 	--glass-bg: rgba(40, 42, 54, 0.62);
 	--glass-border: rgba(68, 71, 90, 0.7);
 	--c-sidebar: rgba(33, 34, 44, 0.72);

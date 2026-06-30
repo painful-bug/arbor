@@ -47,6 +47,7 @@
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
 	import { kbAdd, kbClear, kbContents, kbRemove, kbSearch } from '$lib/ai/client';
 	import { currentCanvasId } from './store.svelte';
+	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
 	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
@@ -454,6 +455,7 @@
 								extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
 								const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
 								setFileStatus(id, chunks > 0 ? 'ready' : 'error');
+								if (chunks > 0) scheduleAutolink(id);
 							} catch (err) {
 								console.error('tauri file drop read failed', err);
 								setFileStatus(id, 'error');
@@ -524,6 +526,7 @@
 						.catch(() => {});
 					const chunks = await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
 					setFileStatus(id, chunks > 0 ? 'ready' : 'error');
+					if (chunks > 0) scheduleAutolink(id);
 				} catch (err) {
 					console.error('kb index failed', err);
 					setFileStatus(id, 'error');

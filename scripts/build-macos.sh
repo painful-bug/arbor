@@ -15,7 +15,13 @@ esac
 
 echo "=== Arbor macOS build ($TARGET_TRIPLE) ==="
 
-# --- 1. Stage backend into tauri resources ---
+# --- 1. Build local workspace packages (backend depends on file:../packages/*) ---
+if [ -d "$REPO_ROOT/packages/mosaic" ]; then
+  echo "--- Building @arbor/mosaic ---"
+  (cd "$REPO_ROOT/packages/mosaic" && bun install && bun run build)
+fi
+
+# --- 2. Stage backend into tauri resources ---
 echo "--- Staging backend ---"
 rm -rf "$RESOURCES_DIR/backend"
 mkdir -p "$RESOURCES_DIR/backend"
@@ -24,6 +30,13 @@ cp -r "$REPO_ROOT/backend/src" "$RESOURCES_DIR/backend/src"
 cp "$REPO_ROOT/backend/package.json" "$RESOURCES_DIR/backend/"
 cp "$REPO_ROOT/backend/bun.lock" "$RESOURCES_DIR/backend/" 2>/dev/null || true
 cp -r "$REPO_ROOT/backend/native" "$RESOURCES_DIR/backend/native"
+
+# Copy workspace packages so the backend's file:../packages/* dep resolves
+# once it's staged into resources/backend (a different relative location).
+if [ -d "$REPO_ROOT/packages" ]; then
+  cp -r "$REPO_ROOT/packages" "$RESOURCES_DIR/packages"
+  find "$RESOURCES_DIR/packages" -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
+fi
 
 echo "Installing production deps..."
 cd "$RESOURCES_DIR/backend"

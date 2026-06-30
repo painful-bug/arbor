@@ -2,7 +2,7 @@ import { extract, toMarkdown } from "@arbor/mosaic";
 import { cloudOcrImage } from "./cloud-ocr.ts";
 import { MODELS_DIR } from "../paths.ts";
 import { embed } from "./embeddings.ts";
-import { upsert, hybridSearch, clear, removeSource, sources as storeSources, sourceContent } from "./store.ts";
+import { upsert, hybridSearch, clear, removeSource, relate, sources as storeSources, sourceContent } from "./store.ts";
 import { contextualize } from "./contextualize.ts";
 import { rerank } from "./rerank.ts";
 import { chunkText } from "./chunk.ts";
@@ -112,6 +112,22 @@ export async function searchGraded(canvas: string, query: string, k = 6): Promis
 export async function search(canvas: string, query: string, k = 6): Promise<string[]> {
 	const { chunks } = await searchGraded(canvas, query, k);
 	return chunks.map((c) => c.text);
+}
+
+// Semantic neighbors of a node, for background auto-linking. Embeds the node's
+// representative text fresh (works even before the node's own indexing lands) and
+// finds the nearest other sources above minScore.
+export async function relateNode(
+	canvas: string,
+	text: string,
+	exclude: string,
+	k = 3,
+	minScore = 0.62,
+): Promise<{ source: string; score: number }[]> {
+	if (!canvas || !text.trim()) return [];
+	const [vec] = await embed([text]);
+	const neighbors = await relate(canvas, vec, k, exclude ? [exclude] : []);
+	return neighbors.filter((n) => n.score >= minScore);
 }
 
 export async function removeFile(canvas: string, filename: string): Promise<void> {
