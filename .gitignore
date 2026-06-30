@@ -21,6 +21,7 @@ backend/dist
 frontend/src-tauri/target/
 frontend/src-tauri/binaries/
 frontend/src-tauri/resources/backend/
+frontend/src-tauri/resources/packages/
 
 # OS
 .DS_Store
