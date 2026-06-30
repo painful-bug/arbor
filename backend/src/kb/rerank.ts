@@ -1,18 +1,22 @@
 // Local cross-encoder reranker. A bi-encoder (the embedder) is fast but coarse;
 // a cross-encoder reads query + passage together and scores true relevance, so we
 // over-fetch with hybrid search then rerank down to the few chunks the LLM sees.
-import { AutoTokenizer, AutoModelForSequenceClassification, env } from "@xenova/transformers";
 import { MODELS_DIR } from "../paths.ts";
 
-env.cacheDir = MODELS_DIR;
-
+// Dynamic import: see embeddings.ts — defers onnxruntime-node's native addon
+// (and its thread pools) until a rerank actually runs.
+let _mod: typeof import("@xenova/transformers") | null = null;
 let _tok: any = null;
 let _model: any = null;
 
 async function load() {
+	if (!_mod) {
+		_mod = await import("@xenova/transformers");
+		_mod.env.cacheDir = MODELS_DIR;
+	}
 	if (!_tok || !_model) {
-		_tok = await AutoTokenizer.from_pretrained("Xenova/bge-reranker-base");
-		_model = await AutoModelForSequenceClassification.from_pretrained("Xenova/bge-reranker-base");
+		_tok = await _mod.AutoTokenizer.from_pretrained("Xenova/bge-reranker-base");
+		_model = await _mod.AutoModelForSequenceClassification.from_pretrained("Xenova/bge-reranker-base");
 	}
 	return { tok: _tok, model: _model };
 }

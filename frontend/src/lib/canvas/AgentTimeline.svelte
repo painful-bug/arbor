@@ -41,7 +41,8 @@
 				done: boolean;
 				ok: boolean;
 				detail?: string;
-		  };
+		  }
+		| { kind: 'fallback'; provider: string; message: string };
 
 	// Recomputes whenever the events array is replaced (store pushes immutably).
 	const items = $derived.by(() => {
@@ -70,6 +71,8 @@
 					it.ok = e.ok ?? true;
 					it.detail = e.detail;
 				}
+			} else if (e.type === 'provider_switch') {
+				out.push({ kind: 'fallback', provider: e.provider ?? '', message: e.message ?? '' });
 			}
 		}
 		return out;
@@ -96,6 +99,11 @@
 							<span class="dot think"></span>
 							<span class="label">Thinking</span>
 							<p class="think-text nowheel">{it.text}</p>
+						</li>
+					{:else if it.kind === 'fallback'}
+						<li class="row">
+							<span class="dot err"></span>
+							<span class="label">{it.message || `Switched to ${it.provider}`}</span>
 						</li>
 					{:else}
 						<li class="row">

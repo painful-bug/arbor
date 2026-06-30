@@ -65,7 +65,7 @@
 	import { currentCanvasId } from './store.svelte';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
-	import { scale } from 'svelte/transition';
+	import { scale, fade } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
@@ -192,11 +192,14 @@
 	let chatOpen = $state(false);
 
 	let animatingCleanup = $state(false);
+	let cleaningUp = $state(false);
 	async function doCleanUp() {
-		if (reducedMotion()) { await cleanUp(); return; }
+		cleaningUp = true;
+		if (reducedMotion()) { await cleanUp(); cleaningUp = false; return; }
 		animatingCleanup = true;
 		await tick();
 		await cleanUp();
+		cleaningUp = false;
 		setTimeout(() => { animatingCleanup = false; }, 550);
 	}
 
@@ -382,6 +385,22 @@
 			else openSearch();
 			return;
 		}
+		// ⌘F (no shift): focus the KB modal's search field if it's open; otherwise,
+		// with nothing selected on canvas, open global search instead.
+		if (mod && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+			if (kbOpen) {
+				e.preventDefault();
+				kbInputEl?.focus();
+				kbInputEl?.select();
+				return;
+			}
+			if (!selectedNodes.length) {
+				e.preventDefault();
+				if (searchState.open) closeSearch();
+				else openSearch();
+				return;
+			}
+		}
 		if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
 			e.preventDefault();
 			paletteOpen = !paletteOpen;
@@ -399,9 +418,11 @@
 
 		// Escape closes search / palette first (works whether or not their field has
 		// focus); return so it doesn't also close an underlying preview in the same press.
-		if (e.key === 'Escape' && (searchState.open || paletteOpen)) {
+		if (e.key === 'Escape' && (searchState.open || paletteOpen || kbOpen)) {
 			if (searchState.open) closeSearch();
 			paletteOpen = false;
+			kbOpen = false;
+			kbClearConfirm = false;
 			e.preventDefault();
 			return;
 		}
@@ -650,6 +671,7 @@
 
 	// ── KB overlay ───────────────────────────────────────────────────────────────
 	let kbOpen = $state(false);
+	let kbInputEl = $state<HTMLInputElement | null>(null);
 	let kbData = $state<{ sources: string[]; chunks: number } | null>(null);
 	let kbLoading = $state(false);
 	let kbClearing = $state(false);
@@ -811,6 +833,13 @@
 					</div>
 				</div>
 
+					{#if cleaningUp}
+						<div class="cleanup-toast" transition:scale={reducedMotion() ? { duration: 0 } : { duration: 180, start: 0.94, easing: backOut, opacity: 0 }}>
+							<span class="spinner"></span>
+							Cleaning up…
+						</div>
+					{/if}
+
 				{#if openFileId}
 					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onclose={() => { openFileId = null; previewQuery = ''; previewPage = 0; }} />
 				{/if}
@@ -832,13 +861,25 @@
 
 			{#if kbOpen}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div class="kb-backdrop" onpointerdown={() => { kbOpen = false; kbClearConfirm = false; }}>
+				<div
+					class="kb-backdrop"
+					transition:fade={{ duration: reducedMotion() ? 0 : 150 }}
+					onpointerdown={() => { kbOpen = false; kbClearConfirm = false; }}
+				>
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="kb-panel" onpointerdown={(e) => e.stopPropagation()}>
+					<div
+						class="kb-panel"
+						role="dialog"
+						aria-modal="true"
+						aria-label="Knowledge base"
+						transition:scale={{ duration: reducedMotion() ? 0 : 220, start: 0.96, easing: backOut, opacity: 0 }}
+						onpointerdown={(e) => e.stopPropagation()}
+					>
 						<header class="kb-header">
 							<span class="kb-title">Knowledge Base</span>
 							<div class="kb-actions">
 								<input
+									bind:this={kbInputEl}
 									class="kb-search"
 									type="text"
 									placeholder="Search KB…"
@@ -857,13 +898,13 @@
 									<button class="kb-btn" onclick={() => (kbClearConfirm = false)}>Cancel</button>
 								{/if}
 								<button class="kb-btn" onclick={openKB} disabled={kbLoading} title="Refresh">↺</button>
-								<button class="kb-btn" onclick={() => { kbOpen = false; kbClearConfirm = false; }}>✕</button>
+								<button class="kb-btn" onclick={() => { kbOpen = false; kbClearConfirm = false; }} aria-label="Close">✕</button>
 							</div>
 						</header>
 						<div class="kb-body">
 							{#if kbQuery.trim()}
 								{#if kbSearching}
-									<div class="kb-empty">Searching…</div>
+									<div class="kb-empty"><span class="spinner"></span> Searching…</div>
 								{:else if !kbResults || kbResults.length === 0}
 									<div class="kb-empty">No matching chunks.</div>
 								{:else}
@@ -877,7 +918,7 @@
 									</section>
 								{/if}
 							{:else if kbLoading}
-								<div class="kb-empty">Loading…</div>
+								<div class="kb-empty"><span class="spinner"></span> Loading…</div>
 							{:else if !kbData || kbData.sources.length === 0}
 								<div class="kb-empty">KB is empty — drop files onto the canvas to index them.</div>
 							{:else}
@@ -954,6 +995,37 @@
 		border-radius: var(--r-pill, 999px);
 		pointer-events: none;
 		box-shadow: var(--elev-2);
+	}
+	/* Sits just under the toolbar pill, same pill language as GlobalSearchBar/CanvasToolbar. */
+	.cleanup-toast {
+		position: absolute;
+		top: 64px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 45;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 7px 14px;
+		border-radius: var(--r-pill, 999px);
+		background: var(--c-canvas, #fff);
+		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
+		box-shadow: var(--elev-2, 0 6px 24px rgba(0, 0, 0, 0.12));
+		font-size: 12px;
+		color: var(--c-ink);
+		pointer-events: none;
+	}
+	.spinner {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		border: 2px solid rgba(var(--ink-rgb), 0.18);
+		border-top-color: var(--c-ink);
+		animation: spin 0.7s linear infinite;
+		flex: none;
+	}
+	@keyframes spin {
+		to { transform: rotate(360deg); }
 	}
 	.branch-trigger {
 		position: fixed;
@@ -1105,23 +1177,25 @@
 
 
 	/* ── KB overlay ──────────────────────────────────────────────────────────── */
+	/* Same dialog language as CommandPalette: fixed full-screen scrim, centered
+	   pill-cornered panel, scale-in entrance. */
 	.kb-backdrop {
-		position: absolute;
+		position: fixed;
 		inset: 0;
-		z-index: 80;
-		background: rgba(var(--ink-rgb), 0.28);
+		z-index: 200;
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		padding-top: 64px;
+		padding-top: 14vh;
+		background: rgba(0, 0, 0, 0.28);
 	}
 	.kb-panel {
 		width: min(680px, 92vw);
 		max-height: 72vh;
-		background: var(--c-canvas);
+		background: var(--c-canvas, #fff);
 		border-radius: 14px;
-		border: 1px solid var(--c-hairline);
-		box-shadow: var(--elev-3, 0 12px 48px rgba(0,0,0,0.18));
+		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
+		box-shadow: var(--elev-3, 0 18px 50px rgba(0, 0, 0, 0.25));
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -1131,12 +1205,13 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 12px 16px;
-		border-bottom: 1px solid var(--c-hairline);
+		border-bottom: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
 		flex: none;
 	}
 	.kb-title {
 		font-weight: 600;
 		font-size: 14px;
+		color: var(--c-ink);
 	}
 	.kb-actions {
 		display: flex;
@@ -1144,25 +1219,37 @@
 		align-items: center;
 	}
 	.kb-btn {
-		border: 1px solid var(--c-hairline);
-		background: var(--c-surface-soft, #fff);
-		border-radius: 8px;
-		padding: 4px 10px;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		border: none;
+		background: transparent;
+		border-radius: var(--r-pill, 999px);
+		padding: 5px 10px;
 		font-size: 12px;
+		font-weight: 500;
+		color: var(--c-ink);
 		cursor: pointer;
 		white-space: nowrap;
+		transition: background 0.12s;
 	}
+	.kb-btn:hover:not(:disabled) { background: rgba(var(--ink-rgb), 0.06); }
 	.kb-btn:disabled { opacity: 0.5; cursor: default; }
-	.kb-btn.kb-clear { color: #c0392b; border-color: #f5c6c6; }
-	.kb-btn.kb-clear.confirm { background: #c0392b; color: #fff; border-color: #c0392b; }
+	.kb-btn.kb-clear { color: rgb(255, 80, 80); }
+	.kb-btn.kb-clear:hover:not(:disabled) { background: rgba(255, 80, 80, 0.1); }
+	.kb-btn.kb-clear.confirm { background: rgb(255, 80, 80); color: #fff; }
+	.kb-btn.kb-clear.confirm:hover { background: rgb(235, 60, 60); }
 	.kb-search {
-		border: 1px solid var(--c-hairline);
-		background: var(--c-surface-soft, #fff);
-		border-radius: 8px;
-		padding: 4px 10px;
+		border: none;
+		outline: none;
+		background: rgba(var(--ink-rgb), 0.05);
+		border-radius: var(--r-pill, 999px);
+		padding: 5px 12px;
 		font-size: 12px;
+		color: var(--c-ink);
 		width: 180px;
 	}
+	.kb-search::placeholder { color: var(--c-ink); opacity: 0.4; }
 	.kb-chunks { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 	.kb-chunk {
 		padding: 8px 10px;
@@ -1179,6 +1266,10 @@
 		line-height: 1.55;
 	}
 	.kb-empty {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
 		color: rgba(var(--ink-rgb),0.45);
 		text-align: center;
 		padding: 32px 0;

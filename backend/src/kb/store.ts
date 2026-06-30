@@ -2,12 +2,18 @@ import { LANCEDB_DIR } from "../paths.ts";
 
 // ponytail: require() because Bun's ESM resolution clashes with @langchain/community's
 // optional peer dep on a different @lancedb/lancedb version, causing cache misresolution.
-const lancedb = require("@lancedb/lancedb") as typeof import("@lancedb/lancedb");
+// Lazy: the native addon spins up a CPU-core-sized tokio thread pool at require()
+// time, so deferring to first actual KB use keeps idle sessions thread-light.
+let _lancedb: typeof import("@lancedb/lancedb") | null = null;
+function getLancedb() {
+	if (!_lancedb) _lancedb = require("@lancedb/lancedb") as typeof import("@lancedb/lancedb");
+	return _lancedb;
+}
 
-let _db: InstanceType<typeof lancedb.Connection> | null = null;
+let _db: Awaited<ReturnType<(typeof import("@lancedb/lancedb"))["connect"]>> | null = null;
 
 async function getDb() {
-	if (!_db) _db = await lancedb.connect(LANCEDB_DIR);
+	if (!_db) _db = await getLancedb().connect(LANCEDB_DIR);
 	return _db;
 }
 
@@ -42,10 +48,10 @@ export async function upsert(canvas: string, source: string, rows: Row[]): Promi
 			: rows.map(({ page, ...r }) => r);
 		await tbl.delete(`source = '${source.replace(/'/g, "''")}'`);
 		await tbl.add(add);
-		try { await tbl.createIndex("text", { config: lancedb.Index.fts(), replace: true }); } catch {}
+		try { await tbl.createIndex("text", { config: getLancedb().Index.fts(), replace: true }); } catch {}
 	} else {
 		const tbl = await db.createTable(name, rows);
-		try { await tbl.createIndex("text", { config: lancedb.Index.fts() }); } catch {}
+		try { await tbl.createIndex("text", { config: getLancedb().Index.fts() }); } catch {}
 	}
 }
 

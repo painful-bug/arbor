@@ -20,10 +20,8 @@
 	--c-edge-selected: var(--c-accent-magenta);
 	/* auto semantic links — vivid violet, clearly visible on white canvas */
 	--c-edge-semantic: #6d4bff;
-	--glass-bg: rgba(255, 255, 255, 0.62);
+	--glass-bg: #f0f0f2;
 	--glass-border: rgba(255, 255, 255, 0.7);
-	/* Sidebar uses NSVisualEffect Sidebar material (vibrancy) in the Tauri app.
-	   Cool blue-grey tint gives clear contrast from the white canvas in light mode. */
 	--c-sidebar: rgba(234, 235, 242, 0.88);
 	color-scheme: light;
 
@@ -99,7 +97,7 @@
 	--c-edge-selected: var(--c-accent-magenta);
 	/* auto semantic links — light violet, clearly visible on dark slate */
 	--c-edge-semantic: #bd93f9;
-	--glass-bg: rgba(40, 42, 54, 0.62);
+	--glass-bg: #32343f;
 	--glass-border: rgba(68, 71, 90, 0.7);
 	--c-sidebar: rgba(33, 34, 44, 0.72);
 	--elev-2: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -134,7 +132,6 @@
 		linear-gradient(#000 0 0);
 	-webkit-mask-composite: xor;
 	mask-composite: exclude;
-	filter: drop-shadow(0 0 6px var(--c-edge-selected));
 	animation: ring-breathe 2s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -143,23 +140,13 @@
 	}
 }
 
-/* Liquid Glass material — translucent chrome (toolbar, panel, prompt bubble). */
+/* Opaque chrome material (toolbar, panel, prompt bubble). */
 .glass {
 	background: var(--glass-bg);
-	backdrop-filter: saturate(180%) blur(20px);
-	-webkit-backdrop-filter: saturate(180%) blur(20px);
 	border: 1px solid var(--glass-border);
 	box-shadow: var(--elev-float);
 }
 
-/* Accessibility: honor system settings (Apple HIG ties these to the material). */
-@media (prefers-reduced-transparency: reduce) {
-	.glass {
-		background: var(--c-canvas);
-		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
-	}
-}
 @media (prefers-contrast: more) {
 	.glass {
 		border-color: var(--c-ink);
@@ -178,10 +165,7 @@ body {
 	height: 100%;
 	font-family: var(--font-sans);
 	color: var(--c-ink);
-	/* transparent: required for window-vibrancy NSVisualEffect to show.
-	   Canvas and cards paint their own opaque backgrounds, so nothing
-	   bleeds through unintentionally. */
-	background: transparent;
+	background: var(--c-canvas);
 	-webkit-font-smoothing: antialiased;
 }
 

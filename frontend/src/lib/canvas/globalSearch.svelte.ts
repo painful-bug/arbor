@@ -102,29 +102,44 @@ export function prev(): void {
 	focus(searchState.cursor - 1);
 }
 
+// Title (segment 0 — card title / filename / web title) ranks above body content:
+// collect into two buckets and concatenate title-first, so a card whose *title*
+// mentions the query always surfaces before one that only mentions it in the body.
 function runLocal(q: string): void {
 	if (searchState.query.trim() !== q) return;
-	const matches: Match[] = [];
+	const titleMatches: Match[] = [];
+	const bodyMatches: Match[] = [];
 	for (const n of flow.nodes) {
 		if (n.type === 'group') continue;
 		let ord = 0;
-		for (const seg of segmentsOf(n)) {
+		segmentsOf(n).forEach((seg, segIdx) => {
 			const c = countOcc(seg, q);
-			for (let i = 0; i < c; i++) matches.push({ nodeId: n.id, ordInNode: ord++, kind: 'local' });
-		}
+			for (let i = 0; i < c; i++) {
+				const m: Match = { nodeId: n.id, ordInNode: ord++, kind: 'local' };
+				(segIdx === 0 ? titleMatches : bodyMatches).push(m);
+			}
+		});
 	}
+	let matches = [...titleMatches, ...bodyMatches];
 	// Fuzzy fallback: no exact phrase hit, but every word of the query shows up
 	// somewhere on the node (any order) — e.g. "organizer pdf" → "Image_Processing_2023_Organizer_2.pdf".
+	// Same title-first ranking: a node whose title alone contains every token outranks
+	// one that only assembles all the tokens by combining title + body.
 	if (matches.length === 0) {
 		const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
 		if (tokens.length > 1) {
+			const titleFuzzy: Match[] = [];
+			const bodyFuzzy: Match[] = [];
 			for (const n of flow.nodes) {
 				if (n.type === 'group') continue;
-				const hay = segmentsOf(n).join(' ').toLowerCase();
-				if (tokens.every((t) => hay.includes(t))) {
-					matches.push({ nodeId: n.id, ordInNode: -1, kind: 'local', terms: tokens });
-				}
+				const segs = segmentsOf(n);
+				const hay = segs.join(' ').toLowerCase();
+				if (!tokens.every((t) => hay.includes(t))) continue;
+				const m: Match = { nodeId: n.id, ordInNode: -1, kind: 'local', terms: tokens };
+				const titleHay = (segs[0] ?? '').toLowerCase();
+				(tokens.every((t) => titleHay.includes(t)) ? titleFuzzy : bodyFuzzy).push(m);
 			}
+			matches = [...titleFuzzy, ...bodyFuzzy];
 		}
 	}
 	searchState.matches = matches;

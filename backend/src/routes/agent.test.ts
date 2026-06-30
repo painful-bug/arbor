@@ -33,8 +33,7 @@ describe("agent routes", () => {
 			body: JSON.stringify({
 				cardId: "c1",
 				messages: [{ role: "user", content: "hello" }],
-				provider: "anthropic",
-				model: "claude-haiku-4-5-20251001"
+				providers: [{ provider: "anthropic", model: "claude-haiku-4-5-20251001" }]
 			})
 		});
 		expect(res.status).toBe(200);

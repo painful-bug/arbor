@@ -3,6 +3,7 @@
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { searchState, rebuild, next, prev, closeSearch } from './globalSearch.svelte';
+	import { flow } from './store.svelte';
 
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let barEl = $state<HTMLDivElement | null>(null);
@@ -26,8 +27,21 @@
 		rebuild((e.currentTarget as HTMLInputElement).value);
 	}
 
+	// Cmd+Enter (mac) / Ctrl+Enter (win/linux) — expand the focused card or open the
+	// focused file's preview, without leaving the search field.
 	function onKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter') {
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			e.preventDefault();
+			const m = searchState.matches[searchState.cursor];
+			if (!m) return;
+			const node = flow.nodes.find((n) => n.id === m.nodeId);
+			if (!node) return;
+			if (node.type === 'card') {
+				window.dispatchEvent(new CustomEvent('arbor:expand', { detail: { cardId: node.id } }));
+			} else {
+				window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: node.id } }));
+			}
+		} else if (e.key === 'Enter') {
 			e.preventDefault();
 			if (searchState.matches.length) (e.shiftKey ? prev : next)();
 		} else if (e.key === 'Escape') {

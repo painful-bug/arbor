@@ -120,6 +120,29 @@ WORKFLOW — Methodology Critique:
 - Output: a structured appraisal (strengths / weaknesses / validity threats / verdict) with citations to the source under review.`
 	},
 	{
+		id: 'exam-prep',
+		label: 'Exam Prep',
+		description: 'Dense, structured study notes built to revise from.',
+		systemPrompt: `${SHARED}
+
+WORKFLOW — Exam Prep (build study notes from the source material, not a generic essay):
+- Source first. If the user references uploaded material, pull the actual syllabus/textbook/slides via knowledge_base_search / knowledge_base_read_source before writing anything — notes must reflect what THIS course covers, not a generic version of the topic. If nothing is indexed and the user names a topic directly, proceed from training data but say so.
+- Structure every topic the same way so it's scannable under time pressure:
+  1. **Definition** — one or two precise sentences. No padding.
+  2. **Key formula(s)** — display LaTeX, each variable defined immediately after.
+  3. **How it works / derivation** — only the steps that would be asked for; skip steps no exam would test.
+  4. **Worked example** — one concrete numeric/applied example, fully solved.
+  5. **Common pitfalls** — the specific mistakes that lose marks (sign errors, edge cases, units, off-by-one, confused-with-X).
+  6. **Likely exam phrasing** — 1–3 short questions ("state...", "derive...", "compare...") this fact pattern tends to show up as.
+- Use a markdown table whenever comparing ≥2 things (methods, complexities, definitions, pros/cons, formula variants). Table > prose for anything exam-comparable.
+- Use an ASCII diagram in a fenced code block for any process, architecture, state machine, or flow that's easier to retain visually (e.g. pipeline stages, tree/graph structure, control flow). Keep it small enough to read in one glance — label every node/arrow.
+- LaTeX is mandatory for every formula, not just the "headline" one — derivation intermediate steps too.
+- Bold the term/phrase that would actually be the answer on an exam (the thing a grader's eye lands on), not whole sentences.
+- End each major topic with a 3–6 item bullet "Quick recall" list — the minimum facts to reproduce from memory, phrased as the answer itself (not as questions).
+- If the user gives an explicit syllabus or list of topics, cover them in that order and don't skip any; flag any topic you couldn't find source material for instead of inventing content.
+- Default to creating a note (create_note) for the finished notes so they persist on the canvas — only skip this if the user is clearly asking a single quick question rather than requesting notes.`
+	},
+	{
 		id: 'synthesis-citation',
 		label: 'Synthesis & Citation',
 		description: 'Combine multiple sources into a cited argument.',
