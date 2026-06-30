@@ -15,6 +15,7 @@ export interface Match {
 	ordInNode: number;
 	kind: 'local' | 'rag';
 	page?: number; // rag hits: source page, for deep-linking into the preview
+	terms?: string[]; // fuzzy local hits: query words to highlight (no single occurrence to focus, ordInNode is -1)
 }
 
 export const searchState = $state<{
@@ -82,7 +83,7 @@ export function focus(idx: number): void {
 	const id = m[i].nodeId;
 	flow.selected = id;
 	searchHighlight.nodeId = id;
-	searchHighlight.terms = [searchState.query.trim()];
+	searchHighlight.terms = m[i].terms ?? [searchState.query.trim()];
 	searchHighlight.activeOrd = m[i].ordInNode;
 
 	// Deep file-content hit with a page → ask Canvas to open the preview at that page.
@@ -110,6 +111,20 @@ function runLocal(q: string): void {
 		for (const seg of segmentsOf(n)) {
 			const c = countOcc(seg, q);
 			for (let i = 0; i < c; i++) matches.push({ nodeId: n.id, ordInNode: ord++, kind: 'local' });
+		}
+	}
+	// Fuzzy fallback: no exact phrase hit, but every word of the query shows up
+	// somewhere on the node (any order) — e.g. "organizer pdf" → "Image_Processing_2023_Organizer_2.pdf".
+	if (matches.length === 0) {
+		const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+		if (tokens.length > 1) {
+			for (const n of flow.nodes) {
+				if (n.type === 'group') continue;
+				const hay = segmentsOf(n).join(' ').toLowerCase();
+				if (tokens.every((t) => hay.includes(t))) {
+					matches.push({ nodeId: n.id, ordInNode: -1, kind: 'local', terms: tokens });
+				}
+			}
 		}
 	}
 	searchState.matches = matches;
