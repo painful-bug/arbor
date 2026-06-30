@@ -4,7 +4,7 @@
 // per-call via StreamOptions.apiKey — never stored here.
 import type { Api, Model } from "@mariozechner/pi-ai";
 
-export interface ProviderDef {
+interface ProviderDef {
 	label: string;
 	api: Api;
 	baseUrl: string;

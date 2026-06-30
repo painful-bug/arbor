@@ -11,6 +11,7 @@
 	import CanvasToolbar from './CanvasToolbar.svelte';
 	import PromptBubble from './PromptBubble.svelte';
 	import CardExpand from './CardExpand.svelte';
+	import ConnectedEdge from './ConnectedEdge.svelte';
 	import CardChatPanel from './CardChatPanel.svelte';
 	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
 	import {
@@ -44,7 +45,7 @@
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
 	import { asUrl } from '$lib/url';
-	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs } from '$lib/files';
+	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs, getFileBlob } from '$lib/files';
 	import { kbAdd, kbClear, kbContents, kbRemove, kbSearch } from '$lib/ai/client';
 	import { currentCanvasId } from './store.svelte';
 	import { scheduleAutolink } from './autolink';
@@ -67,6 +68,10 @@
 
 	const { screenToFlowPosition, fitView } = useSvelteFlow();
 	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode };
+	// 'bezier' isn't a built-in xyflow edge-type key (only 'default' is) — manual
+	// connect-tool edges and autolink semantic edges both set type:'bezier'
+	// explicitly (see addManualEdge / autolink.ts), so register it too.
+	const edgeTypes = { default: ConnectedEdge, bezier: ConnectedEdge };
 
 	let bubble = $state<{
 		x: number;
@@ -79,8 +84,16 @@
 		deep?: boolean;
 	} | null>(null);
 
+	// Generous padding so every card, note, and file is fully visible, not clipped
+	// under the floating toolbar/sidebar chrome. Needs the <SvelteFlow minZoom={0.05}>
+	// prop below: d3-zoom's scaleExtent is fixed at pan-zoom init from that global
+	// minZoom, so a per-call fitView({minZoom}) alone gets silently re-clamped back
+	// to the default 0.5 floor — a widely-spread canvas couldn't zoom out far enough
+	// to fit everything no matter the padding.
 	function doFitView() {
-		requestAnimationFrame(() => fitView({ duration: 300, padding: 0.1 }));
+		requestAnimationFrame(() => {
+			void fitView({ duration: 300, padding: 0.18 });
+		});
 	}
 
 	function startDeepResearch() {
@@ -120,6 +133,26 @@
 		await cleanUp();
 		setTimeout(() => { animatingCleanup = false; }, 550);
 	}
+
+	// Undo/redo restore a prior node snapshot under the same ids, so reuse the
+	// cleanup transition envelope: cards animate to their old positions instead
+	// of snapping (e.g. un-clustering after Cmd-C cleanup via Cmd-Z/U).
+	async function animateHistory(fn: () => void) {
+		if (reducedMotion()) { fn(); return; }
+		animatingCleanup = true;
+		await tick();
+		fn();
+		setTimeout(() => { animatingCleanup = false; }, 550);
+	}
+	function doUndo() { void animateHistory(undo); }
+	function doRedo() { void animateHistory(redo); }
+
+	// Re-hydrate file bytes whenever a file node has none in memory (canvas switch,
+	// or a node restored by undo) — not just once on mount.
+	$effect(() => {
+		const missing = flow.nodes.filter((n) => n.type === 'file' && !getFileBlob(n.id)).map((n) => n.id);
+		if (missing.length) void hydrateFileBlobs(missing);
+	});
 
 	function onDblClick(e: MouseEvent) {
 		// Only spawn prompt bubble in hand mode.
@@ -373,8 +406,8 @@
 					lastC = now;
 					tool.active = 'connect'; e.preventDefault();
 				}
-				else if (e.key === 'u' || e.key === 'U') { undo(); e.preventDefault(); }
-				else if (e.key === 'r' || e.key === 'R') { redo(); e.preventDefault(); }
+				else if (e.key === 'u' || e.key === 'U') { doUndo(); e.preventDefault(); }
+				else if (e.key === 'r' || e.key === 'R') { doRedo(); e.preventDefault(); }
 				else if (e.key === 'f' || e.key === 'F') { doFitView(); e.preventDefault(); }
 				else if (e.key === 'g' || e.key === 'G') {
 					const sel = flow.nodes.filter((n) => n.selected).map((n) => n.id);
@@ -395,8 +428,8 @@
 		}
 		if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
 			e.preventDefault();
-			if (e.shiftKey) redo();
-			else undo();
+			if (e.shiftKey) doRedo();
+			else doUndo();
 		}
 	}
 
@@ -627,7 +660,9 @@
 						bind:nodes={flow.nodes}
 						bind:edges={flow.edges}
 						{nodeTypes}
+						{edgeTypes}
 						colorMode={settings.theme}
+						minZoom={0.05}
 						zoomOnDoubleClick={false}
 						selectionOnDrag={tool.active === 'select'}
 						panOnDrag={tool.active === 'select' ? [1, 2] : true}
@@ -689,7 +724,7 @@
 
 					<div class="topbar">
 						<span class="topbar-spacer"></span>
-						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={undo} onRedo={redo} onKB={openKB} onCleanUp={() => doCleanUp()} />
+						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} />
 						<div class="canvas-actions">
 							<div class="theme-slot" class:hidden={chatOpen}>
 								<ThemeToggle />
@@ -873,6 +908,33 @@
 		pointer-events: none;
 	}
 
+	/* Resize controls (SvelteFlow NodeResizer): invisible paint, enlarged hit area.
+	   Default xyflow hit targets are razor-thin (1px lines, 5x5px corner handles) —
+	   fine when the blue paint shows you exactly where they are, but once invisible
+	   that thinness makes the cursor flicker between hand/pointer/resize and makes
+	   diagonal/vertical drags nearly impossible to grab. Enlarging keeps the same
+	   centering (xyflow's own translate(-50%, ...) centers on the element's own
+	   size), so the bigger invisible box still straddles the true edge/corner.
+	   Scoped under .wrap so it outranks the library's own CSS, which
+	   @xyflow/svelte/dist/style.css (imported above) loads after tokens.css. */
+	.wrap :global(.svelte-flow__resize-control.line) {
+		border-color: transparent;
+	}
+	.wrap :global(.svelte-flow__resize-control.line.left),
+	.wrap :global(.svelte-flow__resize-control.line.right) {
+		width: 14px;
+	}
+	.wrap :global(.svelte-flow__resize-control.line.top),
+	.wrap :global(.svelte-flow__resize-control.line.bottom) {
+		height: 14px;
+	}
+	.wrap :global(.svelte-flow__resize-control.handle) {
+		width: 18px;
+		height: 18px;
+		background: transparent;
+		border-color: transparent;
+	}
+
 	/* Edge (connection line) visibility */
 	.wrap :global(.svelte-flow__edge-path) {
 		stroke: var(--c-edge);
@@ -881,6 +943,35 @@
 	.wrap :global(.svelte-flow__edge.selected .svelte-flow__edge-path) {
 		stroke: var(--c-edge-selected);
 		stroke-width: 2.5;
+	}
+	/* An edge whose source/target node is selected (not the edge itself clicked) —
+	   colorful breathing glow, cycling between the two accent colors already used
+	   for selection elsewhere (magenta / violet), matching the node glow ring. */
+	@keyframes edge-breathe {
+		0%,
+		100% {
+			stroke: var(--c-edge-selected);
+			stroke-width: 2.5px;
+			filter: drop-shadow(0 0 3px var(--c-edge-selected));
+		}
+		50% {
+			stroke: var(--c-edge-semantic);
+			stroke-width: 4px;
+			filter: drop-shadow(0 0 8px var(--c-edge-semantic));
+		}
+	}
+	/* ConnectedEdge.svelte applies .connected directly to the path (BaseEdge's
+	   class prop), not to the parent <g> — props-driven, not a DOM query, so it
+	   can't race SvelteFlow's own render cycle. */
+	.wrap :global(.svelte-flow__edge-path.connected) {
+		animation: edge-breathe 1.8s ease-in-out infinite;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.wrap :global(.svelte-flow__edge-path.connected) {
+			animation: none;
+			stroke: var(--c-edge-selected);
+			stroke-width: 3px;
+		}
 	}
 	.wrap :global(.svelte-flow__connection-path) {
 		stroke: var(--c-edge);

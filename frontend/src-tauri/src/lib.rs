@@ -1,12 +1,26 @@
 mod backend;
 
-use tauri::{AppHandle, Manager, Runtime};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 // Open a file or URL with the OS default handler.
 #[tauri::command]
 fn open_path<R: Runtime>(app: AppHandle<R>, path: String) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     app.shell().open(&path, None).map_err(|e| e.to_string())
+}
+
+// DEV/TESTING ONLY — remove before public release. Lets the Settings → Updates
+// "force pull" toggle reinstall the latest GitHub release even when its version
+// matches the running app (e.g. a same-version CI rebuild during active
+// debugging). The updater plugin's JS API has no equivalent: allowDowngrades
+// only loosens the comparator to `!=`, not `>=`, so equal versions still get
+// filtered out — this has to live in the Rust-side comparator.
+struct ForceUpdateCheck(AtomicBool);
+
+#[tauri::command]
+fn set_force_update_check(state: State<ForceUpdateCheck>, enabled: bool) {
+    state.0.store(enabled, Ordering::Relaxed);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -17,10 +31,25 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            app.manage(ForceUpdateCheck(AtomicBool::new(false)));
+
             // Updater is desktop-only.
             #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            {
+                let handle = app.handle().clone();
+                app.handle().plugin(
+                    tauri_plugin_updater::Builder::new()
+                        .default_version_comparator(move |current, release| {
+                            // DEV/TESTING ONLY — see ForceUpdateCheck above.
+                            if handle.state::<ForceUpdateCheck>().0.load(Ordering::Relaxed) {
+                                release.version >= current
+                            } else {
+                                release.version > current
+                            }
+                        })
+                        .build(),
+                )?;
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -100,7 +129,11 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_path, backend::backend_info])
+        .invoke_handler(tauri::generate_handler![
+            open_path,
+            backend::backend_info,
+            set_force_update_check
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

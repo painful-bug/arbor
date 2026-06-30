@@ -3,7 +3,7 @@
 	// a composer. Jelly/watery entrance (spring scale + border-radius blob morph). Click
 	// the backdrop to collapse.
 	import { fade } from 'svelte/transition';
-	import { flow, continueCard } from './store.svelte';
+	import { flow, continueCard, retryCard, lastTurn } from './store.svelte';
 	import type { CardData } from './store.svelte';
 	import ThreadView from './ThreadView.svelte';
 	import Composer from './Composer.svelte';
@@ -51,13 +51,14 @@
 		class="panel"
 		class:jelly={!reducedMotion()}
 		data-card-id={cardId}
+		style={card ? `background: var(--block-${card.block})` : undefined}
 		role="dialog"
 		tabindex="-1"
 		aria-modal="true"
 		aria-label="Card conversation"
 	>
 		{#if card}
-			<header style="background: var(--block-{card.block})">
+			<header>
 				<h2>{card.title}</h2>
 				<button class="close" onclick={onclose} aria-label="Close">✕</button>
 			</header>
@@ -67,6 +68,11 @@
 			</div>
 
 			<div class="composer">
+				{#if !card.streaming && lastTurn(card)?.answer !== undefined}
+					<button class="retry" onclick={() => retryCard(cardId)} aria-label="Retry last message" title="Retry">
+						↺
+					</button>
+				{/if}
 				<Composer
 					bind:this={composer}
 					placeholder={card.streaming ? 'Thinking…' : 'Reply to this thread…'}
@@ -95,11 +101,21 @@
 		max-height: 86vh;
 		display: flex;
 		flex-direction: column;
-		background: var(--c-canvas);
+		/* Flat block color set inline above (matches the collapsed card face) — no
+		   longer falls back to --c-canvas slate, so expanded/collapsed colors match. */
 		border-radius: 28px;
 		box-shadow: var(--elev-3, 0 24px 80px rgba(0, 0, 0, 0.28));
 		overflow: hidden;
 		transform-origin: center;
+		/* Block surfaces are always a light pastel in both themes — content on top
+		   (title, caret, activity dot, ThreadView text) must stay dark in both
+		   themes too. `color` is inherited as an already-resolved value (not a
+		   live var() reference), so set it here to actually cascade the override
+		   to descendants (ThreadView, AgentTimeline) that don't set their own. */
+		--ink-rgb: var(--c-on-block-rgb);
+		--c-ink: var(--c-on-block);
+		color: var(--c-ink);
+		color-scheme: light;
 	}
 	/* watery, jelly, magnetic: spring-overshoot scale + a blob border-radius wobble */
 	.panel.jelly {
@@ -146,6 +162,9 @@
 		font-weight: 600;
 		line-height: 1.25;
 		letter-spacing: -0.3px;
+		/* `color` on html/body is inherited as an already-resolved value, so it
+		   won't pick up --c-ink being redefined on .panel — re-resolve explicitly. */
+		color: var(--c-ink);
 	}
 	.close {
 		flex: none;
@@ -172,13 +191,33 @@
 		align-items: flex-end;
 		gap: var(--s-sm);
 		padding: var(--s-md) var(--s-lg);
-		border-top: 1px solid var(--c-hairline);
-		background: var(--c-surface-soft);
+		/* On-block divider/tint instead of the theme's surface-soft slate, which no
+		   longer matches the panel's block-color background. */
+		border-top: 1px solid rgba(var(--ink-rgb), 0.12);
+		background: rgba(var(--ink-rgb), 0.04);
 	}
 	/* Expand uses slightly larger composer than the default 14px/36px. */
 	.composer {
 		--composer-font-size: 15px;
 		--composer-btn-size: 38px;
 		--composer-max-height: 120px;
+	}
+	.retry {
+		flex: none;
+		width: 38px;
+		height: 38px;
+		border-radius: var(--r-full);
+		border: none;
+		background: rgba(var(--ink-rgb), 0.08);
+		color: var(--c-ink);
+		font-size: 18px;
+		cursor: pointer;
+		transition: transform var(--ease-glass);
+	}
+	.retry:hover {
+		background: rgba(var(--ink-rgb), 0.14);
+	}
+	.retry:active {
+		transform: scale(0.88) rotate(-45deg);
 	}
 </style>

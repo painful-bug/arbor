@@ -77,17 +77,6 @@ export async function addChat(
 	}]);
 }
 
-export async function addCard(canvas: string, cardId: string, title: string): Promise<void> {
-	const source = `card:${cardId}`;
-	const vectors = await embed([title]);
-	await upsert(canvas, source, [{
-		id: randomBytes(8).toString("hex"),
-		source,
-		text: title,
-		vector: vectors[0],
-	}]);
-}
-
 // Retrieve → rerank → grade. Over-fetch with hybrid search, rerank with the
 // cross-encoder, keep the top k, and grade sufficiency from the best score so the
 // agent knows whether to trust the KB or fall back to web/tools (CRAG).

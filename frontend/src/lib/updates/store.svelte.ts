@@ -24,6 +24,25 @@ function isTauri(): boolean {
 	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+// DEV/TESTING ONLY — remove before public release. Forces checkForUpdates() to
+// treat the latest GitHub release as installable even when its version matches
+// the running app, so a same-version CI rebuild during active debugging can
+// still be pulled in. Backed by a Rust-side comparator (see lib.rs) since the
+// updater plugin's JS API has no equivalent — allowDowngrades only loosens the
+// comparator to `!=`, not `>=`.
+export const forceUpdateCheck = $state({ enabled: false });
+
+export async function setForceUpdateCheck(enabled: boolean): Promise<void> {
+	forceUpdateCheck.enabled = enabled;
+	if (!isTauri()) return;
+	try {
+		const { invoke } = await import('@tauri-apps/api/core');
+		await invoke('set_force_update_check', { enabled });
+	} catch (e) {
+		console.warn('[updates] set_force_update_check failed:', e);
+	}
+}
+
 /** True when an update is in-flight or waiting — drives the gear badge. */
 export function hasUpdate(): boolean {
 	return (
