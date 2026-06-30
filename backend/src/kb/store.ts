@@ -18,6 +18,14 @@ export interface Row {
 	source: string;
 	text: string;
 	vector: number[];
+	page?: number; // 1-based source page; absent on legacy tables
+}
+
+// Field names of a table's current schema. Legacy tables predate the `page`
+// column, so reads/writes must probe before touching it.
+async function fieldNames(tbl: any): Promise<Set<string>> {
+	const schema = await tbl.schema();
+	return new Set((schema.fields as { name: string }[]).map((f) => f.name));
 }
 
 export async function upsert(canvas: string, source: string, rows: Row[]): Promise<void> {
@@ -28,8 +36,12 @@ export async function upsert(canvas: string, source: string, rows: Row[]): Promi
 
 	if (names.includes(name)) {
 		const tbl = await db.openTable(name);
+		// Legacy table without a `page` column: drop page so add() matches the schema.
+		const add = (await fieldNames(tbl)).has("page")
+			? rows
+			: rows.map(({ page, ...r }) => r);
 		await tbl.delete(`source = '${source.replace(/'/g, "''")}'`);
-		await tbl.add(rows);
+		await tbl.add(add);
 		try { await tbl.createIndex("text", { config: lancedb.Index.fts(), replace: true }); } catch {}
 	} else {
 		const tbl = await db.createTable(name, rows);
@@ -43,32 +55,42 @@ export async function upsert(canvas: string, source: string, rows: Row[]): Promi
 // like a live instruction and derails it into continuing that other conversation.
 const NOT_CHAT = "source NOT LIKE 'chat:%' AND source NOT LIKE 'card:%'";
 
+export interface Hit {
+	text: string;
+	source: string;
+	page?: number;
+}
+
 export async function hybridSearch(
 	canvas: string,
 	queryVec: number[],
 	queryText: string,
 	k = 6
-): Promise<string[]> {
+): Promise<Hit[]> {
 	const db = await getDb();
 	const name = tname(canvas);
 	const names = await db.tableNames();
 	if (!names.includes(name)) return [];
 
 	const tbl = await db.openTable(name);
+	// Legacy tables lack `page`; selecting a missing column throws.
+	const cols = (await fieldNames(tbl)).has("page")
+		? ["text", "source", "page"]
+		: ["text", "source"];
 
 	// Try FTS first for hybrid-quality results
 	try {
 		const ftsResults = await tbl
 			.search(queryText)
 			.where(NOT_CHAT)
-			.select(["text"])
+			.select(cols)
 			.limit(k)
 			.toArray();
 
 		const vecResults = await tbl
 			.search(queryVec)
 			.where(NOT_CHAT)
-			.select(["text"])
+			.select(cols)
 			.limit(k)
 			.toArray();
 
@@ -79,31 +101,36 @@ export async function hybridSearch(
 		const results = await tbl
 			.search(queryVec)
 			.where(NOT_CHAT)
-			.select(["text"])
+			.select(cols)
 			.limit(k)
 			.toArray();
-		return results.map((r: any) => r.text);
+		return results.map((r: any) => ({ text: r.text as string, source: r.source as string, page: r.page ?? undefined }));
 	}
 }
 
-// Reciprocal Rank Fusion: combine two ranked lists by 1/(rank+60) scoring
-function rrfFuse(vecResults: any[], ftsResults: any[], k: number): string[] {
+// Reciprocal Rank Fusion: combine two ranked lists by 1/(rank+60) scoring.
+// Keyed by chunk text (unique per chunk); source carried alongside for attribution.
+function rrfFuse(vecResults: any[], ftsResults: any[], k: number): Hit[] {
 	const scores = new Map<string, number>();
+	const sources = new Map<string, string>();
+	const pages = new Map<string, number | undefined>();
 	const RRF_K = 60;
 
-	for (let i = 0; i < vecResults.length; i++) {
-		const text = vecResults[i].text as string;
-		scores.set(text, (scores.get(text) ?? 0) + 1 / (i + RRF_K));
-	}
-	for (let i = 0; i < ftsResults.length; i++) {
-		const text = ftsResults[i].text as string;
-		scores.set(text, (scores.get(text) ?? 0) + 1 / (i + RRF_K));
-	}
+	const tally = (rows: any[]) => {
+		for (let i = 0; i < rows.length; i++) {
+			const text = rows[i].text as string;
+			scores.set(text, (scores.get(text) ?? 0) + 1 / (i + RRF_K));
+			sources.set(text, rows[i].source as string);
+			pages.set(text, rows[i].page ?? undefined);
+		}
+	};
+	tally(vecResults);
+	tally(ftsResults);
 
 	return [...scores.entries()]
 		.sort((a, b) => b[1] - a[1])
 		.slice(0, k)
-		.map(([text]) => text);
+		.map(([text]) => ({ text, source: sources.get(text) ?? "", page: pages.get(text) }));
 }
 
 // Nearest *sources* (not chunks) to a query vector. Unlike hybridSearch this does

@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { tool, type Tool } from './store.svelte';
+	import { tool, settings, setClusterSpacing, addClusterTags, type Tool } from './store.svelte';
+
+	let showSpacing = $state(false);
 
 	let {
 		onDeepResearch,
@@ -68,10 +70,44 @@
 			<span class="label">Fit</span>
 			<span class="key">F</span>
 		</button>
-		<button class="action secondary" onclick={onCleanUp} title="Clean Up — group cards into clusters (CC)">
+		<button class="action secondary" onclick={onCleanUp} title="Clean Up — arrange cards into semantic clusters (CC)">
 			<span class="icon">✦</span>
 			<span class="label">Clean Up</span>
 			<span class="key">CC</span>
+		</button>
+		<div class="spacing-wrap">
+			<button
+				class="action secondary spacing-btn"
+				class:active={showSpacing}
+				onclick={() => (showSpacing = !showSpacing)}
+				title="Cluster spacing — drag to space the Clean Up clusters apart"
+				aria-label="Cluster spacing"
+				aria-pressed={showSpacing}
+			>
+				<span class="icon">↔</span>
+			</button>
+			{#if showSpacing}
+				<div class="spacing-pop">
+					<input
+						type="range"
+						min="0"
+						max="24"
+						step="1"
+						value={settings.clusterSpacing}
+						oninput={(e) => setClusterSpacing(+e.currentTarget.value)}
+						aria-label="Cluster spacing"
+					/>
+					<span class="spacing-val">{settings.clusterSpacing}</span>
+				</div>
+			{/if}
+		</div>
+		<button
+			class="action secondary spacing-btn"
+			onclick={addClusterTags}
+			title="Label clusters — drop an editable tag on each Clean Up cluster"
+			aria-label="Label clusters"
+		>
+			<span class="icon">🏷</span>
 		</button>
 		<button class="action secondary" onclick={onDeepResearch} title="Deep Research -- plan and search real papers">
 			<span class="icon">🔬</span>
@@ -133,6 +169,40 @@
 	.icon {
 		font-size: 13px;
 		line-height: 1;
+	}
+	.spacing-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+	.spacing-btn.active {
+		background: rgba(var(--ink-rgb), 0.1);
+	}
+	/* Popover hangs below the toolbar pill, holding a native range slider. */
+	.spacing-pop {
+		position: absolute;
+		top: calc(100% + 8px);
+		right: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+		border-radius: var(--r-pill, 999px);
+		background: var(--c-canvas, #fff);
+		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
+		box-shadow: var(--elev-2, 0 6px 24px rgba(0, 0, 0, 0.12));
+		z-index: 10;
+	}
+	.spacing-pop input[type='range'] {
+		width: 140px;
+		accent-color: var(--c-ink);
+		cursor: pointer;
+	}
+	.spacing-val {
+		font-size: 11px;
+		font-family: var(--font-mono);
+		opacity: 0.6;
+		min-width: 16px;
+		text-align: right;
 	}
 	.key {
 		font-size: 10px;

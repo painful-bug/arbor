@@ -44,3 +44,19 @@ export function toMarkdown(doc: MosaicDoc): string {
 		.join("\n\n")
 		.trim();
 }
+
+/** Same render, but split per page with the 1-based page number — lets RAG keep
+ *  page attribution so a hit can deep-link to the page it came from. */
+export function toMarkdownPages(doc: MosaicDoc): { page: number; text: string }[] {
+	return doc.pages
+		.map((p) => ({
+			page: p.number,
+			text: [...p.blocks]
+				.sort((a, b) => a.readingOrder - b.readingOrder)
+				.map(blockToMarkdown)
+				.filter((s) => s.length > 0)
+				.join("\n\n")
+				.trim(),
+		}))
+		.filter((p) => p.text.length > 0);
+}

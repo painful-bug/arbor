@@ -316,9 +316,9 @@ interface Settings {
 	bashEnabled: boolean;
 	websearch: { enabled: boolean; backend: 'duckduckgo' | 'tavily' };
 	snapToGrid: boolean;
-	cleanupSemantic: boolean;
 	autoConnect: boolean;
 	theme: 'light' | 'dark';
+	clusterSpacing: number; // Clean Up inter-cluster gutter (avg-radius units)
 }
 
 const FALLBACK_SETTINGS: Settings = {
@@ -328,9 +328,9 @@ const FALLBACK_SETTINGS: Settings = {
 	bashEnabled: false,
 	websearch: { enabled: false, backend: 'duckduckgo' },
 	snapToGrid: false,
-	cleanupSemantic: true,
 	autoConnect: true,
 	theme: 'dark',
+	clusterSpacing: 8,
 };
 
 const LS_KEY = 'arbor:settings';
@@ -354,9 +354,10 @@ function applySettings(p: Record<string, unknown>): void {
 		if (ws.backend === 'duckduckgo' || ws.backend === 'tavily') settings.websearch.backend = ws.backend;
 	}
 	if (typeof p.snapToGrid === 'boolean') settings.snapToGrid = p.snapToGrid;
-	if (typeof p.cleanupSemantic === 'boolean') settings.cleanupSemantic = p.cleanupSemantic;
 	if (typeof p.autoConnect === 'boolean') settings.autoConnect = p.autoConnect;
 	if (p.theme === 'light' || p.theme === 'dark') settings.theme = p.theme;
+	if (typeof p.clusterSpacing === 'number' && p.clusterSpacing >= 0)
+		settings.clusterSpacing = p.clusterSpacing;
 }
 
 // Apply any localStorage-cached settings immediately (synchronous, before backend responds).
@@ -384,9 +385,9 @@ export function persistSettings(): void {
 		bashEnabled: settings.bashEnabled,
 		websearch: { ...settings.websearch },
 		snapToGrid: settings.snapToGrid,
-		cleanupSemantic: settings.cleanupSemantic,
 		autoConnect: settings.autoConnect,
 		theme: settings.theme,
+		clusterSpacing: settings.clusterSpacing,
 	};
 	try {
 		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));
@@ -571,6 +572,15 @@ export interface TextData {
 	[key: string]: unknown;
 }
 
+// A cluster label dropped by the user after Clean Up. `anchor` is the member ids of
+// the cluster it names — the tag floats above their bounding box and follows them as
+// the spacing slider moves or cards are dragged.
+export interface TagData {
+	text: string;
+	anchor: string[];
+	[key: string]: unknown;
+}
+
 export function addTextCard(position: XYPosition, text = ''): string {
 	const id = nextId();
 	const block = BLOCKS[blockIdx++ % BLOCKS.length];
@@ -697,6 +707,48 @@ export function addManualEdge(
 	];
 }
 
+// ── Edge side-anchoring ───────────────────────────────────────────────────────
+// All card types share one handle convention: top-s/top-t … left-s/left-t.
+const SIDE_HANDLE_RE = /^(top|right|bottom|left)-(s|t)$/;
+
+export function nodeCenter(n: {
+	position: { x: number; y: number };
+	measured?: { width?: number; height?: number };
+	width?: number;
+	height?: number;
+}): { x: number; y: number } {
+	const w = n.measured?.width ?? n.width ?? 400;
+	const h = n.measured?.height ?? n.height ?? 200;
+	return { x: n.position.x + w / 2, y: n.position.y + h / 2 };
+}
+
+// The side of `from` that faces `to` — picked by the dominant axis between centers.
+export function facingSide(from: { x: number; y: number }, to: { x: number; y: number }): string {
+	const dx = to.x - from.x;
+	const dy = to.y - from.y;
+	return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
+}
+
+// Re-anchor edges so each end attaches on the side facing the other card — no more
+// bottom→top lines to a card that's actually off to the right. Only remaps the 4
+// side handles (named or null from old saves); corner/custom handles are left as-is.
+// `touched`: if given, only edges incident to those node ids are remapped.
+export function remapEdgeSides(touched?: Set<string>): void {
+	flow.edges = flow.edges.map((edge) => {
+		if (touched && !touched.has(edge.source) && !touched.has(edge.target)) return edge;
+		const src = flow.nodes.find((n) => n.id === edge.source);
+		const tgt = flow.nodes.find((n) => n.id === edge.target);
+		if (!src || !tgt) return edge;
+		const sh = edge.sourceHandle;
+		const th = edge.targetHandle;
+		if ((sh != null && !SIDE_HANDLE_RE.test(sh)) || (th != null && !SIDE_HANDLE_RE.test(th)))
+			return edge;
+		const sc = nodeCenter(src);
+		const tc = nodeCenter(tgt);
+		return { ...edge, sourceHandle: facingSide(sc, tc) + '-s', targetHandle: facingSide(tc, sc) + '-t' };
+	});
+}
+
 // ── Delete nodes ────────────────────────────────────────────────────────────
 export function deleteNodes(ids: string[]): void {
 	const idSet = new Set(ids);
@@ -711,7 +763,7 @@ export function deleteNodes(ids: string[]): void {
 
 // ── Group nodes ─────────────────────────────────────────────────────────────
 // ponytail: parent-node approach — SvelteFlow handles drag-together natively.
-interface GroupData { block: string; label?: string; cleanup?: boolean; [key: string]: unknown }
+interface GroupData { block: string; [key: string]: unknown }
 
 export function groupNodes(ids: string[]): string {
 	const selected = flow.nodes.filter((n) => ids.includes(n.id));
@@ -763,32 +815,7 @@ export function groupNodes(ids: string[]): string {
 	return groupId;
 }
 
-// ── Clean Up — semantic clustering ─────────────────────────────────────────
-
-function categoryOf(node: Node): string {
-	switch (node.type) {
-		case 'card': {
-			const wf = (node.data as CardData).workflow ?? '';
-			return /research|deep/i.test(wf) ? 'Research' : 'Q&A';
-		}
-		case 'text': return 'Notes';
-		case 'web': return 'Web';
-		case 'file': {
-			const kind = (node.data as { kind?: string }).kind ?? 'other';
-			const map: Record<string, string> = {
-				pdf: 'PDFs', image: 'Images', markdown: 'Markdown',
-				docx: 'Documents', text: 'Text Files', other: 'Files',
-			};
-			return map[kind] ?? 'Files';
-		}
-		default: return 'Other';
-	}
-}
-
-const CATEGORY_ORDER = [
-	'Q&A', 'Research', 'Notes', 'PDFs', 'Documents',
-	'Markdown', 'Text Files', 'Images', 'Web', 'Files', 'Other',
-];
+// ── Clean Up — semantic force-clustering ───────────────────────────────────
 
 export function snippetOf(node: Node): string {
 	const d = node.data as Record<string, unknown>;
@@ -808,157 +835,164 @@ export function snippetOf(node: Node): string {
 	return '';
 }
 
-// ponytail: shortest-column bin-packing — not strict grid, ragged masonry feel
-function packCluster(nodes: Node[]): { positions: Map<string, XYPosition>; w: number; h: number } {
-	const GAP = 24;
-	const cols = Math.max(1, Math.min(4, Math.round(Math.sqrt(nodes.length))));
-	const colW = Math.max(...nodes.map((n) => n.width ?? n.measured?.width ?? 400));
-	const colHeights = new Array(cols).fill(0) as number[];
-	const positions = new Map<string, XYPosition>();
+// Last Clean Up layout, cached so the spacing slider can re-place cards instantly
+// (no re-embed). Keyed only implicitly by the current node set — invalidated when
+// a referenced id is gone.
+import type { ArrangeLayout } from '$lib/ai/client';
+let cleanupLayout: ArrangeLayout | null = null;
 
-	const sorted = [...nodes].sort((a, b) => {
-		const ah = a.measured?.height ?? a.height ?? 280;
-		const bh = b.measured?.height ?? b.height ?? 280;
-		return bh - ah;
-	});
-
-	for (const n of sorted) {
-		const shortest = colHeights.indexOf(Math.min(...colHeights));
-		positions.set(n.id, { x: shortest * (colW + GAP), y: colHeights[shortest] });
-		colHeights[shortest] += (n.measured?.height ?? n.height ?? 280) + GAP;
+// place(layout, gap) → pixel positions. Mirror of the backend helper; clusters are
+// decoupled so a bigger gap just rescales the grid (ponytail: 4 lines, no shared pkg).
+function placeLayout(layout: ArrangeLayout, gap: number): Record<string, { x: number; y: number }> {
+	const cell = layout.cellBase + Math.max(0, gap) * layout.unit;
+	const out: Record<string, { x: number; y: number }> = {};
+	for (const id in layout.nodes) {
+		const { col, row, lx, ly } = layout.nodes[id];
+		out[id] = { x: Math.round(col * cell + lx), y: Math.round(row * cell + ly) };
 	}
-
-	return {
-		positions,
-		w: cols * colW + (cols - 1) * GAP,
-		h: Math.max(...colHeights) - GAP,
-	};
+	return out;
 }
 
-export function ungroupCleanup(groupId: string): void {
-	flow.nodes = flow.nodes.filter((n) => n.id !== groupId);
+// Apply a set of positions to the canvas and re-anchor the affected edges. Rebuilds
+// moved nodes as fresh objects so SvelteFlow reacts (in-place mutation isn't picked up).
+function applyPositions(positions: Record<string, { x: number; y: number }>): void {
+	const moved = new Set(Object.keys(positions));
+	if (!moved.size) return;
+	flow.nodes = flow.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));
+	remapEdgeSides(moved);
+	repositionTags();
 }
 
+// Press CC → arrange cards into loose semantic clusters. The backend embeds each
+// node's text, detects topic communities, and returns a spacing-independent layout;
+// here we drop it onto the canvas at the user's chosen inter-cluster spacing. No
+// backdrops, no type buckets — clusters read purely from spatial proximity.
 export async function cleanUp(ids?: string[]): Promise<void> {
-	pushHistory();
-	// Scope: selected subset or all top-level non-group nodes
+	// Scope: selected subset (2+) or all top-level non-group nodes.
 	let targets: Node[];
 	if (ids && ids.length >= 2) {
 		const idSet = new Set(ids);
-		targets = flow.nodes.filter((n) => idSet.has(n.id) && n.type !== 'group');
+		targets = flow.nodes.filter((n) => idSet.has(n.id) && n.type !== 'group' && n.type !== 'tag');
 	} else {
-		targets = flow.nodes.filter((n) => !n.parentId && n.type !== 'group' && !(n.data as GroupData).cleanup);
+		targets = flow.nodes.filter((n) => !n.parentId && n.type !== 'group' && n.type !== 'tag');
 	}
-	if (targets.length === 0) return;
+	if (targets.length < 2) return;
 
-	// Deterministic categories
-	const groups = new Map<string, Node[]>();
-	for (const n of targets) {
-		const cat = categoryOf(n);
-		if (!groups.has(cat)) groups.set(cat, []);
-		groups.get(cat)!.push(n);
+	const { cleanupArrange } = await import('$lib/ai/client');
+	const canvas = currentCanvasId() || 'default';
+	const payload = targets.map((n) => ({
+		id: n.id,
+		text: snippetOf(n),
+		w: n.measured?.width ?? n.width ?? 400,
+		h: n.measured?.height ?? n.height ?? 280,
+		x: n.position.x,
+		y: n.position.y,
+	}));
+	const targetIds = new Set(targets.map((n) => n.id));
+	const edges = flow.edges
+		.filter((e) => targetIds.has(e.source) && targetIds.has(e.target))
+		.map((e) => ({ source: e.source, target: e.target }));
+
+	const layout = await cleanupArrange(canvas, payload, edges);
+	if (!layout || Object.keys(layout.nodes).length === 0) return;
+
+	cleanupLayout = layout;
+	// Cache cluster membership (cards sharing a grid cell) so the user can tag them.
+	const cells = new Map<string, string[]>();
+	for (const id in layout.nodes) {
+		const { col, row } = layout.nodes[id];
+		const k = `${col},${row}`;
+		(cells.get(k) ?? cells.set(k, []).get(k)!).push(id);
 	}
+	cleanupClusters = [...cells.values()];
 
-	// Hybrid refine: LLM sub-splits same-type clusters
-	if (settings.cleanupSemantic) {
-		try {
-			const { cleanupRefine } = await import('$lib/ai/client');
-			const items = targets.map((n) => ({
-				id: n.id,
-				group: categoryOf(n),
-				title: (n.data as Record<string, unknown>).title as string ?? (n.data as Record<string, unknown>).filename as string ?? '',
-				snippet: snippetOf(n),
-			}));
-			const canvas = currentCanvasId() || 'default';
-			const labels = await cleanupRefine(canvas, items, settings.provider, settings.models[settings.provider]);
-			if (Object.keys(labels).length > 0) {
-				groups.clear();
-				for (const n of targets) {
-					const cat = labels[n.id] ?? categoryOf(n);
-					if (!groups.has(cat)) groups.set(cat, []);
-					groups.get(cat)!.push(n);
-				}
-			}
-		} catch { /* deterministic fallback */ }
+	pushHistory();
+	applyPositions(placeLayout(layout, settings.clusterSpacing));
+}
+
+// ── Cluster tags ──────────────────────────────────────────────────────────────
+// Manual labels the user drops on Clean Up clusters to identify them at a glance.
+// Each is a normal 'tag' node (so it persists, undoes, pans/zooms for free) anchored
+// to its cluster's member ids; repositionTags() floats it above their bounding box.
+let cleanupClusters: string[][] = [];
+const clusterKey = (ids: string[]) => [...ids].sort().join('|');
+
+function clusterBox(ids: string[]): { minX: number; minY: number; maxX: number } | null {
+	const set = new Set(ids);
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, found = false;
+	for (const n of flow.nodes) {
+		if (!set.has(n.id)) continue;
+		found = true;
+		const w = n.measured?.width ?? n.width ?? 400;
+		minX = Math.min(minX, n.position.x);
+		minY = Math.min(minY, n.position.y);
+		maxX = Math.max(maxX, n.position.x + w);
 	}
+	return found ? { minX, minY, maxX } : null;
+}
 
-	// Sort cluster keys by precedence
-	const sorted = [...groups.keys()].sort((a, b) => {
-		const ai = CATEGORY_ORDER.indexOf(a);
-		const bi = CATEGORY_ORDER.indexOf(b);
-		return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-	});
-
-	// Pack each cluster, then lay them out left→right with wrapping
-	const CLUSTER_GAP = 120;
-	const PADDING = 28;
-	const packed = new Map<string, ReturnType<typeof packCluster>>();
-	for (const cat of sorted) packed.set(cat, packCluster(groups.get(cat)!));
-
-	const totalArea = [...packed.values()].reduce((s, p) => s + p.w * p.h, 0);
-	const maxRowW = Math.max(2400, Math.sqrt(totalArea) * 1.6);
-
-	// Anchor near existing min position
-	const anchorX = Math.min(...targets.map((n) => n.position.x));
-	const anchorY = Math.min(...targets.map((n) => n.position.y));
-
-	let curX = 0;
-	let curY = 0;
-	let rowH = 0;
-	const clusterOrigins = new Map<string, XYPosition>();
-	for (const cat of sorted) {
-		const p = packed.get(cat)!;
-		const boxW = p.w + PADDING * 2;
-		const boxH = p.h + PADDING * 2 + 24; // +24 for label
-		if (curX > 0 && curX + boxW > maxRowW) {
-			curX = 0;
-			curY += rowH + CLUSTER_GAP;
-			rowH = 0;
-		}
-		clusterOrigins.set(cat, { x: curX, y: curY });
-		curX += boxW + CLUSTER_GAP;
-		rowH = Math.max(rowH, boxH);
-	}
-
-	// Remove old cleanup backdrops
-	const remaining = flow.nodes.filter((n) => !(n.type === 'group' && (n.data as GroupData).cleanup));
-
-	// Build new positions + backdrop group nodes
-	const backdrops: Node[] = [];
-	const newPos = new Map<string, XYPosition>();
-	for (const cat of sorted) {
-		const origin = clusterOrigins.get(cat)!;
-		const p = packed.get(cat)!;
-		const block = BLOCKS[backdrops.length % BLOCKS.length];
-
-		// Backdrop
-		backdrops.push({
+// Drop one empty editable tag above each Clean Up cluster that isn't already tagged.
+export function addClusterTags(): void {
+	if (!cleanupClusters.length) return;
+	const tagged = new Set(
+		flow.nodes.filter((n) => n.type === 'tag').map((n) => clusterKey((n.data as TagData).anchor ?? [])),
+	);
+	const created: Node[] = [];
+	for (const members of cleanupClusters) {
+		if (members.length < 1 || tagged.has(clusterKey(members))) continue;
+		const bb = clusterBox(members);
+		if (!bb) continue;
+		created.push({
 			id: nextId(),
-			type: 'group',
-			position: { x: anchorX + origin.x, y: anchorY + origin.y },
-			data: { block, label: cat, cleanup: true } satisfies GroupData,
-			width: p.w + PADDING * 2,
-			height: p.h + PADDING * 2 + 24,
-			draggable: false,
+			type: 'tag',
+			position: { x: Math.round((bb.minX + bb.maxX) / 2 - 60), y: Math.round(bb.minY - 46) },
+			data: { text: '', anchor: [...members] } as TagData,
+			width: 120,
 		});
-
-		// Compute new card positions
-		for (const n of groups.get(cat)!) {
-			const pos = p.positions.get(n.id)!;
-			newPos.set(n.id, {
-				x: anchorX + origin.x + PADDING + pos.x,
-				y: anchorY + origin.y + PADDING + 24 + pos.y,
-			});
-		}
 	}
+	if (!created.length) return;
+	pushHistory();
+	flow.nodes = [...flow.nodes, ...created];
+}
 
-	// Rebuild nodes as fresh objects so SvelteFlow reacts (in-place position
-	// mutation on existing refs is not picked up). Backdrops before cards (z-order).
-	const untouched = remaining.filter((n) => !newPos.has(n.id));
-	const moved = remaining
-		.filter((n) => newPos.has(n.id))
-		.map((n) => ({ ...n, position: newPos.get(n.id)! }));
-	flow.nodes = [...untouched, ...backdrops, ...moved];
+export function setTagText(id: string, text: string): void {
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, text } } : n));
+}
+
+// Float every cluster tag above its anchor cluster's current bounding box. Called
+// after Clean Up, spacing changes, and drags so labels track their clusters.
+export function repositionTags(): void {
+	let changed = false;
+	const next = flow.nodes.map((n) => {
+		if (n.type !== 'tag') return n;
+		const anchor = (n.data as TagData).anchor;
+		if (!anchor?.length) return n;
+		const bb = clusterBox(anchor);
+		if (!bb) return n;
+		const w = n.measured?.width ?? n.width ?? 120;
+		const pos = { x: Math.round((bb.minX + bb.maxX) / 2 - w / 2), y: Math.round(bb.minY - 46) };
+		if (n.position.x === pos.x && n.position.y === pos.y) return n;
+		changed = true;
+		return { ...n, position: pos };
+	});
+	if (changed) flow.nodes = next;
+}
+
+// Spacing slider → re-place the last Clean Up at a new inter-cluster gap. Pure
+// client-side rescale of the cached layout: instant, no backend call. No history
+// push per tick — the CC press already recorded one undo point.
+export function setClusterSpacing(gap: number): void {
+	settings.clusterSpacing = gap;
+	persistSettingsDebounced();
+	if (cleanupLayout && cleanupLayout.nodes && Object.keys(cleanupLayout.nodes).every((id) => flow.nodes.some((n) => n.id === id)))
+		applyPositions(placeLayout(cleanupLayout, gap));
+}
+
+// Coalesce the rapid-fire slider writes into one settings save.
+let spacingSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function persistSettingsDebounced(): void {
+	if (spacingSaveTimer) clearTimeout(spacingSaveTimer);
+	spacingSaveTimer = setTimeout(() => persistSettings(), 400);
 }
 
 // Append a streamed agent event (tool call / reasoning) to the active turn's timeline.

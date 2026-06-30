@@ -12,7 +12,7 @@ function looksMarkdown(filename: string, text: string): boolean {
 	return /^#{1,6}\s/m.test(text) || /^\s*\|.+\|\s*$/m.test(text) || /```/.test(text);
 }
 
-export async function chunkText(text: string, filename = ""): Promise<string[]> {
+async function split(text: string, filename: string): Promise<string[]> {
 	const trimmed = text.trim();
 	if (!trimmed) return [];
 	const splitter = looksMarkdown(filename, trimmed)
@@ -20,4 +20,22 @@ export async function chunkText(text: string, filename = ""): Promise<string[]> 
 		: new RecursiveCharacterTextSplitter({ chunkSize: SIZE, chunkOverlap: OVERLAP });
 	const chunks = await splitter.splitText(trimmed);
 	return chunks.map((c) => c.trim()).filter(Boolean);
+}
+
+export async function chunkText(text: string, filename = ""): Promise<string[]> {
+	return split(text, filename);
+}
+
+// Per-page chunking so each chunk keeps its source page for deep-linking.
+// ponytail: a chunk never straddles a page boundary, so cross-page context is
+// slightly reduced — page attribution is worth more for in-preview search.
+export async function chunkPages(
+	pages: { page: number; text: string }[],
+	filename = "",
+): Promise<{ text: string; page: number }[]> {
+	const out: { text: string; page: number }[] = [];
+	for (const { page, text } of pages) {
+		for (const c of await split(text, filename)) out.push({ text: c, page });
+	}
+	return out;
 }

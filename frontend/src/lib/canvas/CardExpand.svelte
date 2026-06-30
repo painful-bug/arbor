@@ -7,6 +7,7 @@
 	import type { CardData } from './store.svelte';
 	import ThreadView from './ThreadView.svelte';
 	import Composer from './Composer.svelte';
+	import FindBar from './FindBar.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
 	let { cardId, onclose }: { cardId: string; onclose: () => void } = $props();
@@ -58,6 +59,7 @@
 		aria-label="Card conversation"
 	>
 		{#if card}
+			<FindBar target={bodyEl ?? null} />
 			<header>
 				<h2>{card.title}</h2>
 				<button class="close" onclick={onclose} aria-label="Close">✕</button>
@@ -103,6 +105,7 @@
 		flex-direction: column;
 		/* Flat block color set inline above (matches the collapsed card face) — no
 		   longer falls back to --c-canvas slate, so expanded/collapsed colors match. */
+		position: relative;
 		border-radius: 28px;
 		box-shadow: var(--elev-3, 0 24px 80px rgba(0, 0, 0, 0.28));
 		overflow: hidden;

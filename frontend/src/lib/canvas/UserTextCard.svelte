@@ -7,12 +7,39 @@ import CardHandles from './CardHandles.svelte';
 	import type { TextData } from './store.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { searchHighlight } from './globalSearch.svelte';
+	import { markHTML } from './highlights';
 
 	let { id, data, selected: nativeSelected }: NodeProps = $props();
 	const card = $derived(data as TextData);
 	const selected = $derived(flow.selected === id || !!nativeSelected);
-	const html = $derived(renderMarkdown(card.text ?? ''));
+	const html = $derived(
+		searchHighlight.nodeId === id
+			? markHTML(renderMarkdown(card.text ?? ''), searchHighlight.terms, {
+					active: searchHighlight.activeOrd
+				}).html
+			: renderMarkdown(card.text ?? '')
+	);
 	const isEmpty = $derived(!card.text?.trim());
+
+	// When global search focuses an occurrence in this note, the active <mark> may sit
+	// below the fold of the scrollable body. Scroll it into view within the body only
+	// (manual scrollTop delta — scrollIntoView would also pan the canvas/swoop).
+	let bodyEl = $state<HTMLDivElement | null>(null);
+	$effect(() => {
+		if (searchHighlight.nodeId !== id) return;
+		searchHighlight.activeOrd; // re-run when the focused occurrence changes
+		const body = bodyEl;
+		if (!body) return;
+		requestAnimationFrame(() => {
+			const mark = body.querySelector('mark.mark-active') as HTMLElement | null;
+			if (!mark) return;
+			const mr = mark.getBoundingClientRect();
+			const br = body.getBoundingClientRect();
+			const delta = mr.top - br.top - (body.clientHeight - mr.height) / 2;
+			body.scrollTo({ top: body.scrollTop + delta, behavior: reducedMotion() ? 'auto' : 'smooth' });
+		});
+	});
 
 	function onClick() {
 		flow.selected = id;
@@ -49,7 +76,7 @@ import CardHandles from './CardHandles.svelte';
 		<button class="edit-btn" onclick={openEditor} title="Edit in side panel">Edit</button>
 	</div>
 
-	<div class="body nodrag nowheel">
+	<div class="body nodrag nowheel" bind:this={bodyEl}>
 		{#if isEmpty}
 			<span class="placeholder">Empty note -- click Edit or double-click to open</span>
 		{:else}

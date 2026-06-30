@@ -7,6 +7,7 @@
 	import WebCard from './WebCard.svelte';
 	import UserTextCard from './UserTextCard.svelte';
 	import GroupNode from './GroupNode.svelte';
+	import UserTagCard from './UserTagCard.svelte';
 	import TextView from './TextView.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
 	import PromptBubble from './PromptBubble.svelte';
@@ -14,6 +15,17 @@
 	import ConnectedEdge from './ConnectedEdge.svelte';
 	import CardChatPanel from './CardChatPanel.svelte';
 	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
+	import GlobalSearchBar from './GlobalSearchBar.svelte';
+	import CommandPalette, { type Command } from './CommandPalette.svelte';
+	import {
+		searchState,
+		deepLink,
+		openSearch,
+		closeSearch,
+		next as searchNext,
+		prev as searchPrev
+	} from './globalSearch.svelte';
+	import { persistSettings } from './store.svelte';
 	import {
 		flow,
 		tool,
@@ -38,7 +50,10 @@
 		deleteNodes,
 		groupNodes,
 		cleanUp,
-		ungroupCleanup,
+		nodeCenter,
+		facingSide,
+		remapEdgeSides,
+		repositionTags,
 		settings,
 		init
 	} from './store.svelte';
@@ -66,8 +81,8 @@
 		};
 	}
 
-	const { screenToFlowPosition, fitView } = useSvelteFlow();
-	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode };
+	const { screenToFlowPosition, fitView, setCenter, getZoom } = useSvelteFlow();
+	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode, tag: UserTagCard };
 	// 'bezier' isn't a built-in xyflow edge-type key (only 'default' is) — manual
 	// connect-tool edges and autolink semantic edges both set type:'bezier'
 	// explicitly (see addManualEdge / autolink.ts), so register it too.
@@ -95,6 +110,57 @@
 			void fitView({ duration: 300, padding: 0.18 });
 		});
 	}
+
+	// Global search: swoop the viewport to the active match's node. Only animates when
+	// the *target node* changes — otherwise every keystroke (which rebuilds the match
+	// list) would restart an in-flight setCenter animation, making the canvas judder.
+	let lastSwoopId: string | null = null;
+	$effect(() => {
+		const matches = searchState.matches;
+		const id = searchState.open && matches.length ? matches[searchState.cursor]?.nodeId : null;
+		if (!id) {
+			lastSwoopId = null;
+			return;
+		}
+		if (id === lastSwoopId) return; // same node — don't re-animate
+		const node = flow.nodes.find((n) => n.id === id);
+		if (!node) return;
+		lastSwoopId = id;
+		const { x, y } = nodeCenter(node);
+		// Keep the current zoom if already readable; only zoom in when far out.
+		const cur = getZoom();
+		const zoom = cur < 0.7 ? 1 : cur;
+		void setCenter(x, y, { zoom, duration: reducedMotion() ? 0 : 450 });
+	});
+
+	let paletteOpen = $state(false);
+
+	// Command palette registry — Utilities pinned on top, then tools and actions.
+	const commands: Command[] = [
+		{ id: 'cleanup', group: 'Utilities', icon: '✦', label: 'Clean Up', hint: 'CC', run: () => doCleanUp() },
+		{ id: 'fit', group: 'Utilities', icon: '⊡', label: 'Fit to view', hint: 'F', run: doFitView },
+		{ id: 'search', group: 'Utilities', icon: '⌕', label: 'Search canvas', run: () => openSearch() },
+		{ id: 'tool-hand', group: 'Tools', icon: '✋', label: 'Hand tool', hint: 'H', run: () => { tool.active = 'hand'; tool.connectFrom = null; } },
+		{ id: 'tool-select', group: 'Tools', icon: '↖', label: 'Select tool', hint: 'V', run: () => { tool.active = 'select'; tool.connectFrom = null; } },
+		{ id: 'tool-text', group: 'Tools', icon: 'T', label: 'Text tool', hint: 'T', run: () => { tool.active = 'text'; } },
+		{ id: 'tool-duplicate', group: 'Tools', icon: '⧉', label: 'Duplicate tool', hint: 'D', run: () => { tool.active = 'duplicate'; } },
+		{ id: 'tool-connect', group: 'Tools', icon: '↗', label: 'Connect tool', hint: 'C', run: () => { tool.active = 'connect'; } },
+		{ id: 'tool-color', group: 'Tools', icon: '◐', label: 'Color tool', run: () => { tool.active = 'color'; } },
+		{ id: 'new-note', group: 'Create', icon: '＋', label: 'New note', run: () => {
+			const pos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+			tool.active = 'select';
+			addTextCard(pos);
+		} },
+		{ id: 'research', group: 'Create', icon: '🔬', label: 'Deep Research', run: startDeepResearch },
+		{ id: 'kb', group: 'Knowledge', icon: '⬡', label: 'Search knowledge base', run: openKB },
+		{ id: 'undo', group: 'Edit', icon: '↩', label: 'Undo', hint: 'U', run: doUndo },
+		{ id: 'redo', group: 'Edit', icon: '↪', label: 'Redo', hint: 'R', run: doRedo },
+		{ id: 'theme', group: 'App', icon: '◐', label: 'Toggle theme', run: () => {
+			settings.theme = settings.theme === 'dark' ? 'light' : 'dark';
+			persistSettings();
+		} },
+		{ id: 'settings', group: 'App', icon: '⚙', label: 'Open settings', hint: '⌘,', run: () => goto('/settings') }
+	];
 
 	function startDeepResearch() {
 		const x = window.innerWidth / 2;
@@ -180,10 +246,6 @@
 	}
 
 	const selectedNodes = $derived(flow.nodes.filter((n) => n.selected));
-	const selectedCleanupGroup = $derived(
-		selectedNodes.length === 1 && selectedNodes[0].type === 'group' && (selectedNodes[0].data as Record<string, unknown>).cleanup
-			? selectedNodes[0] : null
-	);
 
 	// Node click: duplicate / color / connect tool dispatch.
 	function onNodeClick(node: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }) {
@@ -203,7 +265,7 @@
 				if (src && tgt) {
 					const sc = nodeCenter(src);
 					const tc = nodeCenter(tgt);
-					addManualEdge(tool.connectFrom, node.id, bestSide(sc, tc) + '-s', bestSide(tc, sc) + '-t');
+					addManualEdge(tool.connectFrom, node.id, facingSide(sc, tc) + '-s', facingSide(tc, sc) + '-t');
 				}
 				tool.connectFrom = null;
 			}
@@ -266,23 +328,6 @@
 		expandId = (e as CustomEvent).detail.cardId;
 	}
 
-	// Auto-reconnect edges to the nearest side handle when a node is dragged.
-	// All node types (card, file, web) now share the same handle ID convention:
-	// top-s/top-t, right-s/right-t, bottom-s/bottom-t, left-s/left-t.
-	const SIDE_HANDLE_RE = /^(top|right|bottom|left)-(s|t)$/;
-
-	function nodeCenter(node: { position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }) {
-		const w = (node.measured?.width ?? node.width ?? 400);
-		const h = (node.measured?.height ?? node.height ?? 200);
-		return { x: node.position.x + w / 2, y: node.position.y + h / 2 };
-	}
-
-	function bestSide(from: { x: number; y: number }, to: { x: number; y: number }): string {
-		const dx = to.x - from.x;
-		const dy = to.y - from.y;
-		return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
-	}
-
 	function onDelete({ nodes }: { nodes: { id: string; type?: string; data: unknown }[] }) {
 		for (const node of nodes) {
 			if (node.type === 'file') {
@@ -293,28 +338,11 @@
 		}
 	}
 
-	function onNodeDragStop({ nodes }: { targetNode: unknown; nodes: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; width?: number; height?: number }[]; event: MouseEvent | TouchEvent }) {
-		const movedIds = new Set<string>(nodes.map((n) => n.id));
-		flow.edges = flow.edges.map((edge) => {
-			if (!movedIds.has(edge.source) && !movedIds.has(edge.target)) return edge;
-			const src = flow.nodes.find((n) => n.id === edge.source);
-			const tgt = flow.nodes.find((n) => n.id === edge.target);
-			if (!src || !tgt) return edge;
-			// Only remap side handles (named or null/undefined from old saves).
-			// Skip corner handles and any other custom handles.
-			const srcHandle = edge.sourceHandle;
-			const tgtHandle = edge.targetHandle;
-			const srcOk = srcHandle == null || SIDE_HANDLE_RE.test(srcHandle);
-			const tgtOk = tgtHandle == null || SIDE_HANDLE_RE.test(tgtHandle);
-			if (!srcOk || !tgtOk) return edge;
-			const sc = nodeCenter(src);
-			const tc = nodeCenter(tgt);
-			return {
-				...edge,
-				sourceHandle: bestSide(sc, tc) + '-s',
-				targetHandle: bestSide(tc, sc) + '-t'
-			};
-		});
+	// Re-anchor edges to the facing sides whenever a node is dragged. Shared with CC.
+	// Also reflow any cluster tags whose cluster just moved.
+	function onNodeDragStop({ nodes }: { targetNode: unknown; nodes: { id: string }[]; event: MouseEvent | TouchEvent }) {
+		remapEdgeSides(new Set<string>(nodes.map((n) => n.id)));
+		repositionTags();
 	}
 
 	function onWebUrlEvent(e: Event) {
@@ -344,6 +372,39 @@
 			tag === 'INPUT' ||
 			tag === 'TEXTAREA' ||
 			(e.target as HTMLElement)?.isContentEditable;
+
+		const mod = e.metaKey || e.ctrlKey;
+
+		// Global search (⌘⇧F) and command palette (⌘⇧P) — work regardless of focus.
+		if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+			e.preventDefault();
+			if (searchState.open) closeSearch();
+			else openSearch();
+			return;
+		}
+		if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+			e.preventDefault();
+			paletteOpen = !paletteOpen;
+			return;
+		}
+		// Platform find-next secondary bindings, active while global search is open.
+		if (searchState.open && searchState.matches.length) {
+			if ((mod && (e.key === 'g' || e.key === 'G')) || e.key === 'F3') {
+				e.preventDefault();
+				if (e.shiftKey) searchPrev();
+				else searchNext();
+				return;
+			}
+		}
+
+		// Escape closes search / palette first (works whether or not their field has
+		// focus); return so it doesn't also close an underlying preview in the same press.
+		if (e.key === 'Escape' && (searchState.open || paletteOpen)) {
+			if (searchState.open) closeSearch();
+			paletteOpen = false;
+			e.preventDefault();
+			return;
+		}
 
 		if (!inInput) {
 			if (e.key === 'Enter' && pendingBranch) { e.preventDefault(); confirmBranch(); return; }
@@ -574,6 +635,19 @@
 		openFileId = (e as CustomEvent).detail.fileId;
 	}
 
+	// Deep-link from global search: a RAG hit on file content opens that file's
+	// preview and PdfViewer scrolls to / searches the matching page.
+	let previewQuery = $state('');
+	let previewPage = $state(0);
+	let lastDeepSeq = 0;
+	$effect(() => {
+		if (deepLink.seq === lastDeepSeq || !deepLink.nodeId) return;
+		lastDeepSeq = deepLink.seq;
+		previewQuery = deepLink.query;
+		previewPage = deepLink.page;
+		openFileId = deepLink.nodeId;
+	});
+
 	// ── KB overlay ───────────────────────────────────────────────────────────────
 	let kbOpen = $state(false);
 	let kbData = $state<{ sources: string[]; chunks: number } | null>(null);
@@ -715,13 +789,6 @@
 						</div>
 					{/if}
 
-					{#if selectedCleanupGroup}
-						<button
-							class="ungroup-trigger glass"
-							onclick={() => ungroupCleanup(selectedCleanupGroup.id)}
-						>Ungroup</button>
-					{/if}
-
 					<div class="topbar">
 						<span class="topbar-spacer"></span>
 						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} />
@@ -745,7 +812,7 @@
 				</div>
 
 				{#if openFileId}
-					<FilePanel fileId={openFileId} onclose={() => (openFileId = null)} />
+					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onclose={() => { openFileId = null; previewQuery = ''; previewPage = 0; }} />
 				{/if}
 
 				<!-- Chat panel tiles as third column; open state lifted here -->
@@ -759,6 +826,9 @@
 			{#if viewTextId}
 				<TextView cardId={viewTextId} onclose={() => (viewTextId = null)} />
 			{/if}
+
+			<GlobalSearchBar />
+			<CommandPalette open={paletteOpen} {commands} onclose={() => (paletteOpen = false)} />
 
 			{#if kbOpen}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1033,25 +1103,6 @@
 	.sel-btn:hover { background: rgba(255,255,255,0.22); }
 	.sel-btn--danger:hover { background: rgba(255, 80, 80, 0.5); }
 
-	.ungroup-trigger {
-		position: absolute;
-		bottom: 64px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 40;
-		padding: 8px 18px;
-		border-radius: var(--r-pill, 999px);
-		border: none;
-		font-size: 14px;
-		font-family: var(--font-sans);
-		font-weight: 500;
-		color: var(--c-ink);
-		cursor: pointer;
-		white-space: nowrap;
-		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
-	}
-	.ungroup-trigger:hover { transform: translateX(-50%) scale(1.04); }
-	.ungroup-trigger:active { transform: translateX(-50%) scale(0.95); }
 
 	/* ── KB overlay ──────────────────────────────────────────────────────────── */
 	.kb-backdrop {
