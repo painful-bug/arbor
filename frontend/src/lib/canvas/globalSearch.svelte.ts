@@ -14,6 +14,7 @@ export interface Match {
 	nodeId: string;
 	ordInNode: number;
 	kind: 'local' | 'rag';
+	page?: number; // rag hits: source page, for deep-linking into the preview
 }
 
 export const searchState = $state<{
@@ -26,6 +27,13 @@ export const searchState = $state<{
 
 export const searchHighlight = $state<{ nodeId: string | null; terms: string[]; activeOrd: number }>(
 	{ nodeId: null, terms: [], activeOrd: -1 }
+);
+
+// Set when the active match is deep file content (rag) with a known page: Canvas
+// reacts by opening that file's preview and PdfViewer scrolls to the page. `seq`
+// bumps on every request so re-focusing the same hit re-triggers the effect.
+export const deepLink = $state<{ nodeId: string | null; page: number; query: string; seq: number }>(
+	{ nodeId: null, page: 0, query: '', seq: 0 }
 );
 
 // Visible segments per node type, in the SAME order the card renders them — so an
@@ -76,6 +84,14 @@ export function focus(idx: number): void {
 	searchHighlight.nodeId = id;
 	searchHighlight.terms = [searchState.query.trim()];
 	searchHighlight.activeOrd = m[i].ordInNode;
+
+	// Deep file-content hit with a page → ask Canvas to open the preview at that page.
+	if (m[i].kind === 'rag' && m[i].page) {
+		deepLink.nodeId = id;
+		deepLink.page = m[i].page!;
+		deepLink.query = searchState.query.trim();
+		deepLink.seq++;
+	}
 }
 
 export function next(): void {
@@ -118,7 +134,7 @@ async function runRag(q: string): Promise<void> {
 		);
 		if (!node || already.has(node.id)) continue;
 		already.add(node.id);
-		extra.push({ nodeId: node.id, ordInNode: -1, kind: 'rag' });
+		extra.push({ nodeId: node.id, ordInNode: -1, kind: 'rag', page: h.page });
 	}
 	if (!extra.length) return;
 	const hadNone = searchState.matches.length === 0;
@@ -157,4 +173,5 @@ export function closeSearch(): void {
 	searchState.cursor = 0;
 	searchState.ragLoading = false;
 	clearHighlight();
+	deepLink.nodeId = null;
 }

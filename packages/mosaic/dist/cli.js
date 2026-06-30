@@ -2,7 +2,7 @@
 import {
   extract,
   toMarkdown
-} from "./chunk-TRXIHLPW.js";
+} from "./chunk-QYDVQ2LU.js";
 
 // src/cli.ts
 import { readFileSync } from "fs";

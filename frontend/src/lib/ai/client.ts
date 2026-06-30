@@ -242,7 +242,7 @@ export async function kbSearchHits(
 	canvas: string,
 	query: string,
 	k = 8
-): Promise<{ text: string; source: string; score: number }[]> {
+): Promise<{ text: string; source: string; score: number; page?: number }[]> {
 	const { apiFetch } = await import('$lib/api');
 	if (!query.trim()) return [];
 	try {
@@ -250,7 +250,7 @@ export async function kbSearchHits(
 			`/api/kb/${encodeURIComponent(canvas)}/search?q=${encodeURIComponent(query)}&k=${k}&detail=1`
 		);
 		if (!res.ok) return [];
-		const data = (await res.json()) as { results?: { text: string; source: string; score: number }[] };
+		const data = (await res.json()) as { results?: { text: string; source: string; score: number; page?: number }[] };
 		return data.results ?? [];
 	} catch {
 		return [];

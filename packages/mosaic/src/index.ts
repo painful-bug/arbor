@@ -10,7 +10,7 @@ import { parseDocx, parsePptx, parseCsv, parseEpub } from "./parse/office.ts";
 import { ocrImage } from "./ocr/index.ts";
 import { detectLayout } from "./ocr/layout.ts";
 
-export { toMarkdown } from "./markdown.ts";
+export { toMarkdown, toMarkdownPages } from "./markdown.ts";
 export { blocksInOrder, plainText } from "./ast.ts";
 export type { Block, BlockType, BBox, Method, MosaicDoc, MosaicPage } from "./ast.ts";
 

@@ -2,11 +2,13 @@ import {
   blocksInOrder,
   extract,
   plainText,
-  toMarkdown
-} from "./chunk-TRXIHLPW.js";
+  toMarkdown,
+  toMarkdownPages
+} from "./chunk-QYDVQ2LU.js";
 export {
   blocksInOrder,
   extract,
   plainText,
-  toMarkdown
+  toMarkdown,
+  toMarkdownPages
 };

@@ -567,6 +567,12 @@ $$` : b.text ?? "";
 function toMarkdown(doc) {
   return blocksInOrder(doc).map(blockToMarkdown).filter((s) => s.length > 0).join("\n\n").trim();
 }
+function toMarkdownPages(doc) {
+  return doc.pages.map((p) => ({
+    page: p.number,
+    text: [...p.blocks].sort((a, b) => a.readingOrder - b.readingOrder).map(blockToMarkdown).filter((s) => s.length > 0).join("\n\n").trim()
+  })).filter((p) => p.text.length > 0);
+}
 
 // src/index.ts
 var MIME_BY_EXT = {
@@ -685,5 +691,6 @@ export {
   blocksInOrder,
   plainText,
   toMarkdown,
+  toMarkdownPages,
   extract
 };

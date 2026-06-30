@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { extract, toMarkdown, plainText } from "./index.ts";
+import { extract, toMarkdown, toMarkdownPages, plainText } from "./index.ts";
 import { parseText } from "./parse/text.ts";
 import { linesToTable } from "./table.ts";
 
@@ -19,6 +19,14 @@ test("extract txt → AST → markdown round-trips structure", async () => {
 	expect(doc.pages).toHaveLength(1);
 	const md = toMarkdown(doc);
 	expect(md).toBe("# Heading\n\nBody text here.");
+});
+
+test("toMarkdownPages keeps one entry per non-empty page with its number", async () => {
+	const doc = await extract(enc("# Heading\n\nBody text here."), { filename: "note.txt" });
+	const pages = toMarkdownPages(doc);
+	expect(pages).toHaveLength(1);
+	expect(pages[0].page).toBe(1);
+	expect(pages[0].text).toBe("# Heading\n\nBody text here.");
 });
 
 test("reading order is global and monotonic", async () => {

@@ -1,16 +1,16 @@
-import { extract, toMarkdown } from "@arbor/mosaic";
+import { extract, toMarkdownPages } from "@arbor/mosaic";
 import { cloudOcrImage } from "./cloud-ocr.ts";
 import { MODELS_DIR } from "../paths.ts";
 import { embed } from "./embeddings.ts";
 import { upsert, hybridSearch, clear, removeSource, relate, sources as storeSources, sourceContent } from "./store.ts";
 import { contextualize } from "./contextualize.ts";
 import { rerank } from "./rerank.ts";
-import { chunkText } from "./chunk.ts";
+import { chunkPages } from "./chunk.ts";
 import { randomBytes } from "node:crypto";
 
 export type Verdict = "strong" | "weak" | "none";
 export interface GradedSearch {
-	chunks: { text: string; score: number; source: string }[];
+	chunks: { text: string; score: number; source: string; page?: number }[];
 	verdict: Verdict;
 }
 
@@ -30,20 +30,22 @@ export async function addFile(
 	// @arbor/mosaic: bytes → typed AST → Markdown (text layer + OCR + layout). Cloud
 	// VLM OCR is injected so keys stay in the backend (Bun.secrets), never the package.
 	const doc = await extract(bytes, { filename, mime, modelDir: MODELS_DIR, ocr: { cloudOcrImage } });
-	const text = toMarkdown(doc);
-	if (!text.trim()) return 0;
+	const pages = toMarkdownPages(doc);
+	if (pages.length === 0) return 0;
 
-	console.log(`[KB] addFile ${filename} (${canvas}): ${text.length} chars extracted`);
-	const chunks = await chunkText(text, filename);
+	const totalChars = pages.reduce((n, p) => n + p.text.length, 0);
+	console.log(`[KB] addFile ${filename} (${canvas}): ${totalChars} chars across ${pages.length} pages extracted`);
+	const chunks = await chunkPages(pages, filename); // { text, page }[]
 	if (chunks.length === 0) return 0;
 
 	// Contextual headers: prepend a 1-sentence situating header per chunk
-	const headers = await contextualize(filename, chunks).catch(() =>
-		new Array<string>(chunks.length).fill(""),
+	const texts = chunks.map((c) => c.text);
+	const headers = await contextualize(filename, texts).catch(() =>
+		new Array<string>(texts.length).fill(""),
 	);
 
-	const embedTexts = chunks.map((chunk, i) =>
-		headers[i] ? `${headers[i]}\n\n${chunk}` : chunk,
+	const embedTexts = texts.map((text, i) =>
+		headers[i] ? `${headers[i]}\n\n${text}` : text,
 	);
 
 	const vectors = await embed(embedTexts);
@@ -53,6 +55,7 @@ export async function addFile(
 		source: filename,
 		text,
 		vector: vectors[i],
+		page: chunks[i].page,
 	}));
 
 	await upsert(canvas, filename, rows);
@@ -86,18 +89,18 @@ export async function searchGraded(canvas: string, query: string, k = 6): Promis
 	const candidates = await hybridSearch(canvas, queryVec, query, Math.max(k * 3, 20));
 	if (candidates.length === 0) return { chunks: [], verdict: "none" };
 
-	// rerank works on chunk text; re-attach source by text after ranking.
-	const sourceOf = new Map(candidates.map((c) => [c.text, c.source]));
+	// rerank works on chunk text; re-attach source + page by text after ranking.
+	const metaOf = new Map(candidates.map((c) => [c.text, { source: c.source, page: c.page }]));
 	const ranked = await rerank(query, candidates.map((c) => c.text)).catch(() => null);
 	if (!ranked) {
 		// Reranker unavailable — return hybrid order, score -1 signals "unscored".
 		return {
-			chunks: candidates.slice(0, k).map((c) => ({ text: c.text, score: -1, source: c.source })),
+			chunks: candidates.slice(0, k).map((c) => ({ text: c.text, score: -1, source: c.source, page: c.page })),
 			verdict: "weak",
 		};
 	}
 
-	const top = ranked.slice(0, k).map((r) => ({ ...r, source: sourceOf.get(r.text) ?? "" }));
+	const top = ranked.slice(0, k).map((r) => ({ ...r, ...(metaOf.get(r.text) ?? { source: "", page: undefined }) }));
 	const best = top[0]?.score ?? 0;
 	const verdict: Verdict = best >= STRONG ? "strong" : best >= WEAK ? "weak" : "none";
 	return { chunks: top, verdict };
@@ -114,9 +117,9 @@ export async function searchHits(
 	canvas: string,
 	query: string,
 	k = 8,
-): Promise<{ text: string; source: string; score: number }[]> {
+): Promise<{ text: string; source: string; score: number; page?: number }[]> {
 	const { chunks } = await searchGraded(canvas, query, k);
-	return chunks.map((c) => ({ text: c.text, source: c.source, score: c.score }));
+	return chunks.map((c) => ({ text: c.text, source: c.source, score: c.score, page: c.page }));
 }
 
 // Semantic neighbors of a node, for background auto-linking. Embeds the node's

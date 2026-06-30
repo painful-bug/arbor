@@ -14,7 +14,8 @@
 	import FindBar from './FindBar.svelte';
 	import { resizable } from '$lib/actions/resizable';
 
-	let { fileId, onclose }: { fileId: string; onclose: () => void } = $props();
+	let { fileId, onclose, initialQuery = '', initialPage = 0 }:
+		{ fileId: string; onclose: () => void; initialQuery?: string; initialPage?: number } = $props();
 
 	const node = $derived(flow.nodes.find((n) => n.id === fileId));
 	const isText = $derived(node?.type === 'text');
@@ -171,7 +172,7 @@
 	{:else if !blob && file?.kind !== 'markdown'}
 		<div class="empty">File bytes not loaded — re-drop "{file?.filename}" to view. (Bytes aren't persisted across reloads.)</div>
 	{:else if file?.kind === 'pdf'}
-		<PdfViewer fileId={fileId} blob={blob} />
+		<PdfViewer fileId={fileId} blob={blob} {initialQuery} {initialPage} />
 	{:else if editable}
 		<div class="toolbar">
 			<button onclick={() => exec('bold')}><b>B</b></button>

@@ -98,10 +98,12 @@ describe("KB routes", () => {
 		});
 		const res = await api(`/api/kb/${canvas}/search?q=third+normal+form&k=4&detail=1`);
 		expect(res.status).toBe(200);
-		const { results } = (await res.json()) as { results: { text: string; source: string; score: number }[] };
+		const { results } = (await res.json()) as { results: { text: string; source: string; score: number; page?: number }[] };
 		expect(results.length).toBeGreaterThan(0);
 		expect(results[0].source).toBe("notes.txt");
 		expect(typeof results[0].score).toBe("number");
+		// Page attribution survives ingestion → search (plain text is page 1).
+		expect(results[0].page).toBe(1);
 	}, 120_000);
 
 	it("excludes other cards' chat history from topic search (no cross-card contamination)", async () => {

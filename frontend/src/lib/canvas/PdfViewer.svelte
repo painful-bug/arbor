@@ -2,9 +2,11 @@
 	// Self-contained PDF viewer with toolbar: fit modes, zoom, page nav, highlight
 	// tool + color picker, search, and highlights persisted inside the canvas doc.
 	import { tick } from 'svelte';
-	import { flow, setFileHighlights, type PdfHL } from './store.svelte';
+	import { flow, currentCanvasId, setFileHighlights, type PdfHL } from './store.svelte';
+	import { kbSearchHits } from '$lib/ai/client';
 
-	let { fileId, blob }: { fileId: string; blob: { bytes: ArrayBuffer; mime: string; name: string } | undefined } = $props();
+	let { fileId, blob, initialQuery = '', initialPage = 0 }:
+		{ fileId: string; blob: { bytes: ArrayBuffer; mime: string; name: string } | undefined; initialQuery?: string; initialPage?: number } = $props();
 
 	// ── Highlight colors ────────────────────────────────────────────────────────
 	const COLORS = [
@@ -35,6 +37,13 @@
 	let searchIndex = $state<{ page: number; x: number; y: number; w: number; h: number; text: string }[][]>([]);
 	let searchHits = $state<{ page: number; idx: number; x: number; y: number; w: number; h: number }[]>([]);
 	let searchCursor = $state(0);
+	// KB fallback for scanned/OCR PDFs (empty embedded text layer): page-level hits
+	// from the knowledge base, since the only OCR text lives there.
+	let pageHits = $state<number[]>([]); // 1-based pages, sorted, deduped
+	let pageCursor = $state(0);
+	const filename = $derived(
+		((flow.nodes.find((n) => n.id === fileId)?.data as { filename?: string })?.filename) ?? blob?.name ?? ''
+	);
 
 	// Send-to-chat context popup
 	let selectionText = $state('');
@@ -168,7 +177,10 @@
 		searchIndex = index;
 	}
 
+	let kbTimer: ReturnType<typeof setTimeout>;
 	function runSearch() {
+		clearTimeout(kbTimer);
+		pageHits = [];
 		if (!query.trim()) { searchHits = []; return; }
 		const q = query.toLowerCase();
 		const hits: typeof searchHits = [];
@@ -182,7 +194,25 @@
 		}
 		searchHits = hits;
 		searchCursor = 0;
-		scrollToHit(0);
+		if (hits.length) { scrollToHit(0); return; }
+		// Nothing in the embedded text layer (scanned/OCR PDF) → ask the KB.
+		if (query.trim().length >= 2) kbTimer = setTimeout(() => void kbFallback(query.trim()), 200);
+	}
+
+	// Page-level OCR search via the KB. Hits carry their source page (added to the
+	// index pipeline), so we can jump even though the viewer has no text to match.
+	async function kbFallback(q: string) {
+		if (!filename) return;
+		const hits = await kbSearchHits(currentCanvasId() || 'default', q, 12);
+		if (query.trim() !== q) return; // stale
+		// Rows indexed before the page-tracking migration carry no `page` — still
+		// surface them (best-effort jump to page 1) instead of dropping the match.
+		const pages = [...new Set(
+			hits.filter((h) => h.source === filename).map((h) => h.page ?? 1)
+		)].sort((a, b) => a - b);
+		pageHits = pages;
+		pageCursor = 0;
+		if (pages.length) scrollToPage(pages[0]);
 	}
 
 	function scrollToHit(idx: number) {
@@ -192,8 +222,35 @@
 		wrap?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}
 
-	function prevHit() { searchCursor = (searchCursor - 1 + searchHits.length) % searchHits.length; scrollToHit(searchCursor); }
-	function nextHit() { searchCursor = (searchCursor + 1) % searchHits.length; scrollToHit(searchCursor); }
+	// 1-based page → 0-based [data-page] anchor.
+	function scrollToPage(page: number) {
+		pagesEl?.querySelector(`[data-page="${page - 1}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}
+
+	function prevHit() {
+		if (pageHits.length) { pageCursor = (pageCursor - 1 + pageHits.length) % pageHits.length; scrollToPage(pageHits[pageCursor]); return; }
+		searchCursor = (searchCursor - 1 + searchHits.length) % searchHits.length; scrollToHit(searchCursor);
+	}
+	function nextHit() {
+		if (pageHits.length) { pageCursor = (pageCursor + 1) % pageHits.length; scrollToPage(pageHits[pageCursor]); return; }
+		searchCursor = (searchCursor + 1) % searchHits.length; scrollToHit(searchCursor);
+	}
+
+	// Deep-link from global search. Once the index is built: run the query, and if the
+	// embedded text layer yields nothing (scanned/OCR PDF) fall back to the KB-provided
+	// page. `data-page` is 0-based; initialPage is the 1-based source page.
+	let appliedInitial = '';
+	$effect(() => {
+		if (!searchIndex.length || (!initialQuery && !initialPage)) return;
+		const key = `${initialQuery}|${initialPage}`;
+		if (key === appliedInitial) return;
+		appliedInitial = key;
+		if (initialQuery) { query = initialQuery; runSearch(); }
+		if (!searchHits.length && initialPage) {
+			pagesEl?.querySelector(`[data-page="${initialPage - 1}"]`)
+				?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}
+	});
 
 	// ── Fit/zoom effects ────────────────────────────────────────────────────────
 	let renderTimer: ReturnType<typeof setTimeout>;
@@ -425,12 +482,16 @@
 				bind:this={searchEl}
 				bind:value={query}
 				oninput={runSearch}
-				onkeydown={(e) => { if (e.key === 'Enter') { e.shiftKey ? prevHit() : nextHit(); } if (e.key === 'Escape') { query = ''; searchHits = []; } }}
+				onkeydown={(e) => { if (e.key === 'Enter') { e.shiftKey ? prevHit() : nextHit(); } if (e.key === 'Escape') { query = ''; searchHits = []; pageHits = []; } }}
 			/>
 			{#if searchHits.length}
 				<span class="search-count">{searchCursor + 1}/{searchHits.length}</span>
 				<button onclick={prevHit} aria-label="Previous match">‹</button>
 				<button onclick={nextHit} aria-label="Next match">›</button>
+			{:else if pageHits.length}
+				<span class="search-count" title="Page matches from OCR text">pg {pageCursor + 1}/{pageHits.length}</span>
+				<button onclick={prevHit} aria-label="Previous page match">‹</button>
+				<button onclick={nextHit} aria-label="Next page match">›</button>
 			{/if}
 		</div>
 

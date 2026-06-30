@@ -19,6 +19,7 @@
 	import CommandPalette, { type Command } from './CommandPalette.svelte';
 	import {
 		searchState,
+		deepLink,
 		openSearch,
 		closeSearch,
 		next as searchNext,
@@ -634,6 +635,19 @@
 		openFileId = (e as CustomEvent).detail.fileId;
 	}
 
+	// Deep-link from global search: a RAG hit on file content opens that file's
+	// preview and PdfViewer scrolls to / searches the matching page.
+	let previewQuery = $state('');
+	let previewPage = $state(0);
+	let lastDeepSeq = 0;
+	$effect(() => {
+		if (deepLink.seq === lastDeepSeq || !deepLink.nodeId) return;
+		lastDeepSeq = deepLink.seq;
+		previewQuery = deepLink.query;
+		previewPage = deepLink.page;
+		openFileId = deepLink.nodeId;
+	});
+
 	// ── KB overlay ───────────────────────────────────────────────────────────────
 	let kbOpen = $state(false);
 	let kbData = $state<{ sources: string[]; chunks: number } | null>(null);
@@ -798,7 +812,7 @@
 				</div>
 
 				{#if openFileId}
-					<FilePanel fileId={openFileId} onclose={() => (openFileId = null)} />
+					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onclose={() => { openFileId = null; previewQuery = ''; previewPage = 0; }} />
 				{/if}
 
 				<!-- Chat panel tiles as third column; open state lifted here -->
