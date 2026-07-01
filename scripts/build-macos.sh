@@ -7,6 +7,90 @@ TAURI_DIR="$REPO_ROOT/frontend/src-tauri"
 RESOURCES_DIR="$TAURI_DIR/resources"
 BINARIES_DIR="$TAURI_DIR/binaries"
 
+# Load CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN / R2_BUCKET from .env if present
+# (already-exported env vars still win, since `source` only sets what .env defines).
+if [ -f "$REPO_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+
+# --- Git release flow: commit dev, merge to main, push (triggers CI) ---------
+# Runs BEFORE the (slow) build so a merge conflict fails fast without wasting a
+# build. Set SKIP_GIT=1 to bypass entirely (e.g. re-running just the build).
+# Branch names override via DEV_BRANCH / MAIN_BRANCH; remote via GIT_REMOTE.
+DEV_BRANCH="${DEV_BRANCH:-dev}"
+MAIN_BRANCH="${MAIN_BRANCH:-main}"
+GIT_REMOTE="${GIT_REMOTE:-origin}"
+
+if [ "${SKIP_GIT:-0}" != "1" ] && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "=== Git release flow ($DEV_BRANCH -> $MAIN_BRANCH) ==="
+  cd "$REPO_ROOT"
+
+  # Fail early if a merge/rebase is already half-done (e.g. from a prior conflict).
+  if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+    echo "A merge is already in progress. Resolve it (git status), commit, then re-run." >&2
+    echo "To skip the git flow entirely: SKIP_GIT=1 $0" >&2
+    exit 1
+  fi
+
+  # Make sure the branches exist before touching anything.
+  if ! git show-ref --verify --quiet "refs/heads/$DEV_BRANCH"; then
+    echo "Branch '$DEV_BRANCH' not found. Set DEV_BRANCH or create it." >&2
+    exit 1
+  fi
+  if ! git show-ref --verify --quiet "refs/heads/$MAIN_BRANCH"; then
+    echo "Branch '$MAIN_BRANCH' not found. Set MAIN_BRANCH or create it." >&2
+    exit 1
+  fi
+
+  # Get onto dev (switching with a dirty tree fails loudly, which is correct).
+  CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  if [ "$CURRENT_BRANCH" != "$DEV_BRANCH" ]; then
+    echo "--- Switching to $DEV_BRANCH ---"
+    git checkout "$DEV_BRANCH"
+  fi
+
+  # Stage + commit any working-tree changes on dev. --porcelain is empty == clean.
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "--- Uncommitted changes on $DEV_BRANCH ---"
+    git add -A
+    COMMIT_MSG=""
+    while [ -z "$COMMIT_MSG" ]; do
+      printf "Commit message for %s: " "$DEV_BRANCH"
+      IFS= read -r COMMIT_MSG || { echo "No input; aborting." >&2; exit 1; }
+      [ -z "$COMMIT_MSG" ] && echo "Message can't be empty."
+    done
+    git commit -m "$COMMIT_MSG"
+  else
+    echo "No uncommitted changes on $DEV_BRANCH."
+  fi
+
+  # Merge dev into main. On conflict, git leaves the tree in the normal conflicted
+  # state — resolve with the usual `git add` + `git commit`, then re-run this script.
+  echo "--- Merging $DEV_BRANCH into $MAIN_BRANCH ---"
+  git checkout "$MAIN_BRANCH"
+  if ! git merge --no-edit "$DEV_BRANCH"; then
+    echo "" >&2
+    echo "Merge conflict merging $DEV_BRANCH into $MAIN_BRANCH." >&2
+    echo "Resolve the conflicts, then:  git add <files> && git commit" >&2
+    echo "Then re-run this script (it will continue: push + build)." >&2
+    echo "To abort the merge instead:   git merge --abort" >&2
+    exit 1
+  fi
+
+  # Push main to trigger the GitHub Actions build.
+  echo "--- Pushing $MAIN_BRANCH to $GIT_REMOTE ---"
+  git push "$GIT_REMOTE" "$MAIN_BRANCH"
+
+  # Return to dev so the working state matches where the user was developing.
+  git checkout "$DEV_BRANCH"
+  echo "=== Git release flow done (back on $DEV_BRANCH) ==="
+elif [ "${SKIP_GIT:-0}" = "1" ]; then
+  echo "SKIP_GIT=1 set — skipping git release flow."
+fi
+
 ARCH=$(uname -m)
 case "$ARCH" in
   arm64) TRIPLE="aarch64-apple-darwin" ;;
@@ -89,6 +173,32 @@ if [ -n "$APP_BUNDLE" ]; then
   echo "Installed: /Applications/$APP_NAME"
 else
   echo "WARNING: no .app bundle found"
+fi
+
+# --- Upload DMG to Cloudflare R2 (skipped unless creds + DMG present) ---
+# Uses R2's S3-compatible API via `aws s3 cp`, not `wrangler r2 object put` —
+# wrangler caps object-put at 300 MiB and the Arbor.dmg is ~400 MiB, so it
+# needs the multipart upload aws-cli does automatically.
+# Auth: dedicated R2 API token (R2 -> Manage R2 API Tokens -> Object Read &
+# Write), NOT the general CLOUDFLARE_API_TOKEN used elsewhere in this script.
+# Bucket: R2_BUCKET (default arbor-downloads). Uploads a stable Arbor.dmg (what
+# the website's Download button points at) plus a versioned copy for archives.
+# ponytail: inline env auth, no wrangler.toml — add one only if this grows steps.
+if [ -n "$DMG" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ]; then
+  R2_BUCKET="${R2_BUCKET:-arbor-downloads}"
+  VERSION=$(grep -m1 '"version"' "$TAURI_DIR/tauri.conf.json" | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
+  echo "--- Uploading DMG to R2 bucket: $R2_BUCKET (v$VERSION) ---"
+  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    aws s3 cp "$DMG" "s3://$R2_BUCKET/Arbor.dmg" \
+    --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+    --content-type application/x-apple-diskimage
+  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    aws s3 cp "$DMG" "s3://$R2_BUCKET/Arbor-$VERSION.dmg" \
+    --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+    --content-type application/x-apple-diskimage
+  echo "Uploaded: Arbor.dmg + Arbor-$VERSION.dmg"
+else
+  echo "Skipping R2 upload (need DMG + CLOUDFLARE_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY; optional R2_BUCKET)."
 fi
 
 echo "=== Build complete ==="
