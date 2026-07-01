@@ -16,6 +16,81 @@ if [ -f "$REPO_ROOT/.env" ]; then
   set +a
 fi
 
+# --- Git release flow: commit dev, merge to main, push (triggers CI) ---------
+# Runs BEFORE the (slow) build so a merge conflict fails fast without wasting a
+# build. Set SKIP_GIT=1 to bypass entirely (e.g. re-running just the build).
+# Branch names override via DEV_BRANCH / MAIN_BRANCH; remote via GIT_REMOTE.
+DEV_BRANCH="${DEV_BRANCH:-dev}"
+MAIN_BRANCH="${MAIN_BRANCH:-main}"
+GIT_REMOTE="${GIT_REMOTE:-origin}"
+
+if [ "${SKIP_GIT:-0}" != "1" ] && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "=== Git release flow ($DEV_BRANCH -> $MAIN_BRANCH) ==="
+  cd "$REPO_ROOT"
+
+  # Fail early if a merge/rebase is already half-done (e.g. from a prior conflict).
+  if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+    echo "A merge is already in progress. Resolve it (git status), commit, then re-run." >&2
+    echo "To skip the git flow entirely: SKIP_GIT=1 $0" >&2
+    exit 1
+  fi
+
+  # Make sure the branches exist before touching anything.
+  if ! git show-ref --verify --quiet "refs/heads/$DEV_BRANCH"; then
+    echo "Branch '$DEV_BRANCH' not found. Set DEV_BRANCH or create it." >&2
+    exit 1
+  fi
+  if ! git show-ref --verify --quiet "refs/heads/$MAIN_BRANCH"; then
+    echo "Branch '$MAIN_BRANCH' not found. Set MAIN_BRANCH or create it." >&2
+    exit 1
+  fi
+
+  # Get onto dev (switching with a dirty tree fails loudly, which is correct).
+  CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  if [ "$CURRENT_BRANCH" != "$DEV_BRANCH" ]; then
+    echo "--- Switching to $DEV_BRANCH ---"
+    git checkout "$DEV_BRANCH"
+  fi
+
+  # Stage + commit any working-tree changes on dev. --porcelain is empty == clean.
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "--- Uncommitted changes on $DEV_BRANCH ---"
+    git add -A
+    COMMIT_MSG=""
+    while [ -z "$COMMIT_MSG" ]; do
+      printf "Commit message for %s: " "$DEV_BRANCH"
+      IFS= read -r COMMIT_MSG || { echo "No input; aborting." >&2; exit 1; }
+      [ -z "$COMMIT_MSG" ] && echo "Message can't be empty."
+    done
+    git commit -m "$COMMIT_MSG"
+  else
+    echo "No uncommitted changes on $DEV_BRANCH."
+  fi
+
+  # Merge dev into main. On conflict, git leaves the tree in the normal conflicted
+  # state — resolve with the usual `git add` + `git commit`, then re-run this script.
+  echo "--- Merging $DEV_BRANCH into $MAIN_BRANCH ---"
+  git checkout "$MAIN_BRANCH"
+  if ! git merge --no-edit "$DEV_BRANCH"; then
+    echo "" >&2
+    echo "Merge conflict merging $DEV_BRANCH into $MAIN_BRANCH." >&2
+    echo "Resolve the conflicts, then:  git add <files> && git commit" >&2
+    echo "Then re-run this script (it will continue: push + build)." >&2
+    echo "To abort the merge instead:   git merge --abort" >&2
+    exit 1
+  fi
+
+  # Push main to trigger the GitHub Actions build.
+  echo "--- Pushing $MAIN_BRANCH to $GIT_REMOTE ---"
+  git push "$GIT_REMOTE" "$MAIN_BRANCH"
+
+  # Return to dev so the working state matches where the user was developing.
+  git checkout "$DEV_BRANCH"
+  echo "=== Git release flow done (back on $DEV_BRANCH) ==="
+elif [ "${SKIP_GIT:-0}" = "1" ]; then
+  echo "SKIP_GIT=1 set — skipping git release flow."
+fi
+
 ARCH=$(uname -m)
 case "$ARCH" in
   arm64) TRIPLE="aarch64-apple-darwin" ;;
