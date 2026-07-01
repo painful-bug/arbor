@@ -315,6 +315,27 @@
 				<span>Auto-connect related cards, notes & files</span>
 			</label>
 			<p class="sub">Draws dashed links between items about the same topic, in the background as you work.</p>
+			<label class="toggle-row">
+				<input type="checkbox" bind:checked={settings.autoCleanup.enabled} onchange={persistSettings} />
+				<span>Auto Clean Up</span>
+			</label>
+			<p class="sub">Repeats Clean Up (⌘C) on its own, forever, while this canvas is open.</p>
+			{#if settings.autoCleanup.enabled}
+				<div class="field">
+					<label for="auto-cleanup-interval">Every (minutes)</label>
+					<input
+						id="auto-cleanup-interval"
+						type="number"
+						min="1"
+						step="1"
+						bind:value={settings.autoCleanup.intervalMin}
+						onchange={() => {
+							settings.autoCleanup.intervalMin = Math.max(1, settings.autoCleanup.intervalMin || 1);
+							persistSettings();
+						}}
+					/>
+				</div>
+			{/if}
 		</section>
 
 		<!-- Tools -->
@@ -591,7 +612,8 @@
 
 	/* ── Inputs ── */
 	input[type='password'],
-	input[type='text'] {
+	input[type='text'],
+	input[type='number'] {
 		flex: 1;
 		height: 36px;
 		padding: 0 var(--s-sm);
@@ -606,7 +628,8 @@
 		min-width: 0;
 	}
 	input[type='password']:focus,
-	input[type='text']:focus {
+	input[type='text']:focus,
+	input[type='number']:focus {
 		border-color: var(--c-ink);
 	}
 

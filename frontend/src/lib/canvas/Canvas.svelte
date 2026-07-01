@@ -595,6 +595,14 @@
 		};
 	});
 
+	// Auto Clean Up: re-run Cmd-C on a timer while enabled, forever, at the user's interval.
+	$effect(() => {
+		if (!settings.autoCleanup.enabled) return;
+		const ms = Math.max(1, settings.autoCleanup.intervalMin) * 60_000;
+		const id = setInterval(() => { if (!cleaningUp) void doCleanUp(); }, ms);
+		return () => clearInterval(id);
+	});
+
 	// Autosave + push undo snapshot on change; debounced so streaming doesn't thrash.
 	// Skip the first run: it's the initial empty state before init() loads real data.
 	let saveTimer: ReturnType<typeof setTimeout>;
