@@ -323,6 +323,7 @@ interface Settings {
 	autoConnect: boolean;
 	theme: 'light' | 'dark';
 	clusterSpacing: number; // Clean Up inter-cluster gutter (avg-radius units)
+	autoCleanup: { enabled: boolean; intervalMin: number }; // periodic Clean Up (Cmd-C) while canvas open
 }
 
 const FALLBACK_SETTINGS: Settings = {
@@ -335,6 +336,7 @@ const FALLBACK_SETTINGS: Settings = {
 	autoConnect: true,
 	theme: 'dark',
 	clusterSpacing: 8,
+	autoCleanup: { enabled: false, intervalMin: 30 },
 };
 
 const LS_KEY = 'arbor:settings';
@@ -376,6 +378,12 @@ function applySettings(p: Record<string, unknown>): void {
 	if (p.theme === 'light' || p.theme === 'dark') settings.theme = p.theme;
 	if (typeof p.clusterSpacing === 'number' && p.clusterSpacing >= 0)
 		settings.clusterSpacing = p.clusterSpacing;
+	if (p.autoCleanup && typeof p.autoCleanup === 'object') {
+		const ac = p.autoCleanup as Record<string, unknown>;
+		if (typeof ac.enabled === 'boolean') settings.autoCleanup.enabled = ac.enabled;
+		if (typeof ac.intervalMin === 'number' && ac.intervalMin >= 1)
+			settings.autoCleanup.intervalMin = ac.intervalMin;
+	}
 }
 
 // Apply any localStorage-cached settings immediately (synchronous, before backend responds).
@@ -406,6 +414,7 @@ export function persistSettings(): void {
 		autoConnect: settings.autoConnect,
 		theme: settings.theme,
 		clusterSpacing: settings.clusterSpacing,
+		autoCleanup: { ...settings.autoCleanup },
 	};
 	try {
 		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));
