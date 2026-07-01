@@ -7,6 +7,15 @@ TAURI_DIR="$REPO_ROOT/frontend/src-tauri"
 RESOURCES_DIR="$TAURI_DIR/resources"
 BINARIES_DIR="$TAURI_DIR/binaries"
 
+# Load CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN / R2_BUCKET from .env if present
+# (already-exported env vars still win, since `source` only sets what .env defines).
+if [ -f "$REPO_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+
 ARCH=$(uname -m)
 case "$ARCH" in
   arm64) TRIPLE="aarch64-apple-darwin" ;;
@@ -89,6 +98,32 @@ if [ -n "$APP_BUNDLE" ]; then
   echo "Installed: /Applications/$APP_NAME"
 else
   echo "WARNING: no .app bundle found"
+fi
+
+# --- Upload DMG to Cloudflare R2 (skipped unless creds + DMG present) ---
+# Uses R2's S3-compatible API via `aws s3 cp`, not `wrangler r2 object put` —
+# wrangler caps object-put at 300 MiB and the Arbor.dmg is ~400 MiB, so it
+# needs the multipart upload aws-cli does automatically.
+# Auth: dedicated R2 API token (R2 -> Manage R2 API Tokens -> Object Read &
+# Write), NOT the general CLOUDFLARE_API_TOKEN used elsewhere in this script.
+# Bucket: R2_BUCKET (default arbor-downloads). Uploads a stable Arbor.dmg (what
+# the website's Download button points at) plus a versioned copy for archives.
+# ponytail: inline env auth, no wrangler.toml — add one only if this grows steps.
+if [ -n "$DMG" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ]; then
+  R2_BUCKET="${R2_BUCKET:-arbor-downloads}"
+  VERSION=$(grep -m1 '"version"' "$TAURI_DIR/tauri.conf.json" | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
+  echo "--- Uploading DMG to R2 bucket: $R2_BUCKET (v$VERSION) ---"
+  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    aws s3 cp "$DMG" "s3://$R2_BUCKET/Arbor.dmg" \
+    --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+    --content-type application/x-apple-diskimage
+  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    aws s3 cp "$DMG" "s3://$R2_BUCKET/Arbor-$VERSION.dmg" \
+    --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+    --content-type application/x-apple-diskimage
+  echo "Uploaded: Arbor.dmg + Arbor-$VERSION.dmg"
+else
+  echo "Skipping R2 upload (need DMG + CLOUDFLARE_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY; optional R2_BUCKET)."
 fi
 
 echo "=== Build complete ==="
