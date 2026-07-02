@@ -393,6 +393,8 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           R2_BUCKET: arbor-downloads
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$CF_ACCOUNT_ID" ]; then
@@ -404,8 +406,23 @@ jobs:
           DMG="release/Arbor-${VERSION}-macos.dmg"
           ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
           echo "Uploading $DMG to R2 bucket $R2_BUCKET ..."
+          # Arbor.dmg is the "latest" key — no-cache forces the CDN to revalidate
+          # with R2 on every request instead of trusting a long default TTL.
+          # Arbor-$VERSION.dmg never changes once published, so cache it hard.
           aws s3 cp "$DMG" "s3://${R2_BUCKET}/Arbor.dmg" \
-            --endpoint-url "$ENDPOINT" --content-type application/x-apple-diskimage
+            --endpoint-url "$ENDPOINT" --content-type application/x-apple-diskimage --cache-control "no-cache"
           aws s3 cp "$DMG" "s3://${R2_BUCKET}/Arbor-${VERSION}.dmg" \
-            --endpoint-url "$ENDPOINT" --content-type application/x-apple-diskimage
-          echo "Uploaded to R2: Arbor.dmg + Arbor-${VERSION}.dmg"
+            --endpoint-url "$ENDPOINT" --content-type application/x-apple-diskimage --cache-control "public, max-age=31536000, immutable"
+          printf '{"version":"%s","dmg_url":"https://dl.aishikb.dev/Arbor.dmg","released_at":"%s"}' \
+            "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > version.json
+          aws s3 cp version.json "s3://${R2_BUCKET}/version.json" \
+            --endpoint-url "$ENDPOINT" --content-type application/json --cache-control "no-store"
+          echo "Uploaded to R2: Arbor.dmg + Arbor-${VERSION}.dmg + version.json"
+          if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_ZONE_ID" ]; then
+            echo "--- Purging Cloudflare cache for dl.aishikb.dev ---"
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data '{"files":["https://dl.aishikb.dev/Arbor.dmg","https://dl.aishikb.dev/version.json"]}'
+            echo
+          fi
