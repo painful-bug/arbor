@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { settings, persistSettings, purgeSemanticEdges, DEFAULT_MODELS } from '$lib/canvas/store.svelte';
-	import { testConnection, PROVIDERS, type Provider } from '$lib/ai/client';
+	import { settings, persistSettings, purgeSemanticEdges } from '$lib/canvas/store.svelte';
+	import { PROVIDERS, type Provider } from '$lib/ai/client';
 	import { WORKFLOWS } from '$lib/ai/workflows';
 	import { apiJson, apiPut } from '$lib/api';
 	import {
@@ -11,6 +11,8 @@
 		forceUpdateCheck,
 		setForceUpdateCheck
 	} from '$lib/updates/store.svelte';
+	import ProviderCard from './ProviderCard.svelte';
+	import OllamaPanel from './OllamaPanel.svelte';
 
 	let appVersion = $state('');
 	onMount(async () => {
@@ -52,66 +54,33 @@
 	}
 
 	type Status = 'idle' | 'saving' | 'saved' | 'error';
-	type TestStatus = 'idle' | 'testing' | 'ok' | 'fail';
 
-	let keys = $state<Record<string, string>>({});
-	let keyExists = $state<Record<string, boolean>>({});
-	let saveStatus = $state<Record<string, Status>>({});
-	let testStatus = $state<Record<string, TestStatus>>({});
-	let testError = $state<Record<string, string>>({});
+	// Tavily key lives here (Web Search section); per-provider keys live in ProviderCard.
 	let tavilyKey = $state('');
+	let tavilyExists = $state(false);
 	let tavilyStatus = $state<Status>('idle');
 
 	$effect(() => {
 		(async () => {
-			for (const p of [...keyed.map((k) => k.id), 'tavily'] as string[]) {
-				try {
-					const { exists } = await apiJson<{ exists: boolean }>(`/api/keys/${p}`);
-					keyExists[p] = exists;
-				} catch {
-					/* backend unreachable */
-				}
+			try {
+				const { exists } = await apiJson<{ exists: boolean }>('/api/keys/tavily');
+				tavilyExists = exists;
+			} catch {
+				/* backend unreachable */
 			}
 		})();
 	});
 
-	async function saveKey(provider: string, value: string): Promise<boolean> {
-		try {
-			await apiPut(`/api/keys/${provider}`, { key: value });
-			keyExists[provider] = true;
-			return true;
-		} catch {
-			return false;
-		}
-	}
-
-	async function save(id: string) {
-		saveStatus[id] = 'saving';
-		saveStatus[id] = (await saveKey(id, keys[id] ?? '')) ? 'saved' : 'error';
-		setTimeout(() => (saveStatus[id] = 'idle'), 2000);
-	}
-
-	async function test(id: Provider) {
-		testStatus[id] = 'testing';
-		testError[id] = '';
-		const err = await testConnection(id);
-		if (err) {
-			testStatus[id] = 'fail';
-			testError[id] = err;
-		} else {
-			testStatus[id] = 'ok';
-		}
-		setTimeout(() => (testStatus[id] = 'idle'), 4000);
-	}
-
 	async function saveTavily() {
 		tavilyStatus = 'saving';
-		tavilyStatus = (await saveKey('tavily', tavilyKey)) ? 'saved' : 'error';
+		try {
+			await apiPut('/api/keys/tavily', { key: tavilyKey });
+			tavilyExists = true;
+			tavilyStatus = 'saved';
+		} catch {
+			tavilyStatus = 'error';
+		}
 		setTimeout(() => (tavilyStatus = 'idle'), 2000);
-	}
-
-	function onModelInput() {
-		persistSettings();
 	}
 
 	// Auto-connect toggle: turning on backfills existing nodes; turning off asks
@@ -132,72 +101,6 @@
 		if (remove) void purgeSemanticEdges();
 	}
 
-	let ollamaModels = $state<string[]>([]);
-	let ollamaPullModel = $state('');
-	type PullStatus = 'idle' | 'pulling' | 'done' | 'error';
-	let pullStatus = $state<PullStatus>('idle');
-	let pullProgress = $state('');
-
-	$effect(() => {
-		(async () => {
-			try {
-				const data = await apiJson<{ models: string[] }>('/api/ollama/models');
-				ollamaModels = data.models ?? [];
-				if (ollamaModels.length && !settings.models['ollama']) {
-					settings.models['ollama'] = ollamaModels[0];
-					persistSettings();
-				}
-			} catch {
-				/* ollama not running */
-			}
-		})();
-	});
-
-	async function pullModel() {
-		if (!ollamaPullModel.trim() || pullStatus === 'pulling') return;
-		pullStatus = 'pulling';
-		pullProgress = '';
-		const { apiFetch } = await import('$lib/api');
-		try {
-			const res = await apiFetch('/api/ollama/pull', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ model: ollamaPullModel.trim() })
-			});
-			if (!res || !res.body) { pullStatus = 'error'; pullProgress = 'Backend unreachable'; return; }
-			const reader = res.body.getReader();
-			const dec = new TextDecoder();
-			let buf = '';
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				buf += dec.decode(value, { stream: true });
-				const parts = buf.split('\n\n');
-				buf = parts.pop()!;
-				for (const part of parts) {
-					const line = part.replace(/^data: /, '').trim();
-					if (!line) continue;
-					const ev = JSON.parse(line) as { type: string; text?: string; message?: string };
-					if (ev.type === 'progress' && ev.text) pullProgress = ev.text;
-					else if (ev.type === 'done') {
-						pullStatus = 'done';
-						pullProgress = 'Download complete!';
-						const data = await apiJson<{ models: string[] }>('/api/ollama/models');
-						ollamaModels = data.models ?? [];
-						setTimeout(() => { pullStatus = 'idle'; ollamaPullModel = ''; }, 3000);
-						return;
-					} else if (ev.type === 'error') {
-						pullStatus = 'error';
-						pullProgress = ev.message ?? 'Pull failed';
-						return;
-					}
-				}
-			}
-		} catch (err) {
-			pullStatus = 'error';
-			pullProgress = String(err);
-		}
-	}
 </script>
 
 <div class="page">
@@ -352,48 +255,7 @@
 		</section>
 
 		<!-- Ollama -->
-		<section class="card">
-			<h2>Ollama (Local)</h2>
-			<p class="sub">Run models locally via Ollama. Requires <code>ollama</code> running on your Mac.</p>
-			{#if ollamaModels.length > 0}
-				<div class="field">
-					<label for="ollama-model-select">Active model</label>
-					<select id="ollama-model-select" class="select" bind:value={settings.models['ollama']} onchange={persistSettings}>
-						{#each ollamaModels as m (m)}
-							<option value={m}>{m}</option>
-						{/each}
-					</select>
-				</div>
-			{:else}
-				<p class="sub muted">No models found — is Ollama running?</p>
-			{/if}
-			<div class="field">
-				<label for="ollama-pull-input">Download a model</label>
-				<div class="input-row">
-					<input
-						id="ollama-pull-input"
-						type="text"
-						placeholder="e.g. llama3.2, mistral, gemma3"
-						bind:value={ollamaPullModel}
-						autocomplete="off"
-						spellcheck="false"
-						onkeydown={(e) => e.key === 'Enter' && pullModel()}
-					/>
-					<button
-						class="btn-primary"
-						onclick={pullModel}
-						disabled={!ollamaPullModel.trim() || pullStatus === 'pulling'}
-						class:done={pullStatus === 'done'}
-						class:error={pullStatus === 'error'}
-					>
-						{pullStatus === 'pulling' ? 'Pulling…' : pullStatus === 'done' ? 'Done ✓' : pullStatus === 'error' ? 'Error' : 'Download'}
-					</button>
-				</div>
-				{#if pullProgress}
-					<p class="pull-progress" class:pull-error={pullStatus === 'error'}>{pullProgress}</p>
-				{/if}
-			</div>
-		</section>
+		<OllamaPanel />
 
 		<!-- Web Search -->
 		<section class="card">
@@ -418,7 +280,7 @@
 							<input
 								id="tavily-key"
 								type="password"
-								placeholder={keyExists['tavily'] ? '•••••••• saved' : 'tvly-…'}
+								placeholder={tavilyExists ? '•••••••• saved' : 'tvly-…'}
 								bind:value={tavilyKey}
 								autocomplete="off"
 								spellcheck="false"
@@ -438,58 +300,7 @@
 			<p class="sub">Keys stored in macOS Keychain — never leave your device. Model name persists locally.</p>
 			<div class="key-grid">
 				{#each keyed as p (p.id)}
-					<div class="key-card" style="--accent: var(--block-{p.block})">
-						<div class="key-card-head">
-							<span class="kc-name">{p.name}</span>
-							<button
-								class="test-btn"
-								class:ok={testStatus[p.id] === 'ok'}
-								class:fail={testStatus[p.id] === 'fail'}
-								onclick={() => test(p.id)}
-								disabled={testStatus[p.id] === 'testing'}
-							>
-								{testStatus[p.id] === 'testing' ? 'Testing…'
-									: testStatus[p.id] === 'ok' ? 'Connected ✓'
-									: testStatus[p.id] === 'fail' ? 'Failed ✕'
-									: 'Test'}
-							</button>
-						</div>
-						<div class="field">
-							<label for="{p.id}-key">API key</label>
-							<div class="input-row">
-								<input
-									id="{p.id}-key"
-									type="password"
-									placeholder={keyExists[p.id] ? '•••••••• saved' : 'sk-…'}
-									bind:value={keys[p.id]}
-									autocomplete="off"
-									spellcheck="false"
-								/>
-								<button
-									class="btn-primary"
-									onclick={() => save(p.id)}
-									disabled={!keys[p.id] || saveStatus[p.id] === 'saving'}
-								>
-									{saveStatus[p.id] === 'saved' ? 'Saved ✓' : saveStatus[p.id] === 'error' ? 'Error' : 'Save'}
-								</button>
-							</div>
-						</div>
-						<div class="field">
-							<label for="{p.id}-model">Model</label>
-							<input
-								id="{p.id}-model"
-								type="text"
-								placeholder={DEFAULT_MODELS[p.id]}
-								bind:value={settings.models[p.id]}
-								oninput={onModelInput}
-								autocomplete="off"
-								spellcheck="false"
-							/>
-						</div>
-						{#if testStatus[p.id] === 'fail' && testError[p.id]}
-							<p class="test-error">{testError[p.id]}</p>
-						{/if}
-					</div>
+					<ProviderCard provider={p} />
 				{/each}
 			</div>
 		</section>
@@ -589,9 +400,6 @@
 		margin: 0;
 		line-height: 1.5;
 	}
-	.muted {
-		color: rgba(var(--ink-rgb), 0.35);
-	}
 
 	/* ── Field layout ── */
 	.field {
@@ -612,7 +420,6 @@
 
 	/* ── Inputs ── */
 	input[type='password'],
-	input[type='text'],
 	input[type='number'] {
 		flex: 1;
 		height: 36px;
@@ -628,7 +435,6 @@
 		min-width: 0;
 	}
 	input[type='password']:focus,
-	input[type='text']:focus,
 	input[type='number']:focus {
 		border-color: var(--c-ink);
 	}
@@ -717,16 +523,6 @@
 	.btn-primary:disabled {
 		opacity: 0.3;
 		cursor: default;
-	}
-	.btn-primary.done {
-		background: var(--block-mint);
-		color: var(--c-ink);
-		border-color: transparent;
-	}
-	.btn-primary.error {
-		background: var(--block-coral);
-		color: var(--c-ink);
-		border-color: transparent;
 	}
 	.btn-ghost {
 		align-self: flex-start;
@@ -819,67 +615,13 @@
 		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 		gap: var(--s-md);
 	}
-	.key-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--s-sm);
-		padding: var(--s-md);
-		border: 1px solid var(--c-hairline);
-		border-top: 3px solid var(--accent);
-		border-radius: var(--r-md);
-		background: var(--c-canvas);
-	}
-	.key-card-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-	.kc-name {
-		font-size: 14px;
-		font-weight: 600;
-	}
-	.test-btn {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		padding: 3px 10px;
-		border: 1px solid var(--c-hairline);
-		border-radius: var(--r-full);
-		background: transparent;
-		color: var(--c-ink);
-		cursor: pointer;
-		transition: all var(--ease-glass);
-	}
-	.test-btn:disabled { opacity: 0.5; cursor: default; }
-	.test-btn.ok { background: var(--block-mint); border-color: transparent; }
-	.test-btn.fail { background: var(--block-coral); border-color: transparent; }
-	.test-error {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		line-height: 1.4;
-		color: #a02020;
-		word-break: break-word;
-	}
 
 	/* ── Misc ── */
-	code {
-		font-family: var(--font-mono);
-		font-size: 12px;
-		background: var(--c-hairline);
-		padding: 1px 5px;
-		border-radius: 3px;
-	}
 	.warn {
 		font-size: 12px;
 		line-height: 1.4;
 		color: #a05a00;
 	}
-	.pull-progress {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		color: rgba(var(--ink-rgb), 0.5);
-		word-break: break-all;
-	}
-	.pull-progress.pull-error { color: #a02020; }
 
 	/* ── Auto-connect off modal ── */
 	.modal-backdrop {

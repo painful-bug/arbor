@@ -16,7 +16,9 @@
 	import CardChatPanel from './CardChatPanel.svelte';
 	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
 	import GlobalSearchBar from './GlobalSearchBar.svelte';
+	import KbOverlay from './KbOverlay.svelte';
 	import CommandPalette, { type Command } from './CommandPalette.svelte';
+	import { handleCanvasShortcut } from './shortcuts';
 	import {
 		searchState,
 		deepLink,
@@ -47,7 +49,6 @@
 		pushHistory,
 		undo,
 		redo,
-		deleteNodes,
 		groupNodes,
 		cleanUp,
 		nodeCenter,
@@ -60,13 +61,13 @@
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
 	import { asUrl } from '$lib/url';
-	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs, getFileBlob } from '$lib/files';
-	import { kbAdd, kbClear, kbContents, kbRemove, kbSearch } from '$lib/ai/client';
+	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs, getFileBlob, type FileKind } from '$lib/files';
+	import { kbAdd, kbRemove } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
 	import { currentCanvasId } from './store.svelte';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
-	import { scale, fade } from 'svelte/transition';
+	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 
@@ -368,152 +369,69 @@
 		flow.selected = addWebCard(pos, url);
 	}
 
-	// Keyboard: tool hotkeys, Escape, Cmd/Ctrl+Z undo/redo.
-	let lastC = 0;
+	// Keyboard: delegate to the pure shortcut handler with a state snapshot + actions.
 	function onKeydown(e: KeyboardEvent) {
 		const tag = (e.target as HTMLElement)?.tagName;
-		const inInput =
-			tag === 'INPUT' ||
-			tag === 'TEXTAREA' ||
-			(e.target as HTMLElement)?.isContentEditable;
+		handleCanvasShortcut(e, {
+			inInput:
+				tag === 'INPUT' || tag === 'TEXTAREA' || !!(e.target as HTMLElement)?.isContentEditable,
+			searchOpen: searchState.open,
+			searchHasMatches: searchState.matches.length > 0,
+			kbOpen,
+			paletteOpen,
+			pendingBranch: !!pendingBranch,
+			openFile: !!openFileId,
+			expanded: !!expandId,
+			chatOrSidebarOpen: chatOpen || ui.sidebarExpanded,
+			toolActive: tool.active,
+			connectPending: !!tool.connectFrom,
+			selectionCount: selectedNodes.length,
 
-		const mod = e.metaKey || e.ctrlKey;
-
-		// Global search (⌘⇧F) and command palette (⌘⇧P) — work regardless of focus.
-		if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
-			e.preventDefault();
-			if (searchState.open) closeSearch();
-			else openSearch();
-			return;
-		}
-		// ⌘F (no shift): focus the KB modal's search field if it's open; otherwise,
-		// with nothing selected on canvas, open global search instead.
-		if (mod && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
-			if (kbOpen) {
-				e.preventDefault();
-				kbInputEl?.focus();
-				kbInputEl?.select();
-				return;
-			}
-			if (!selectedNodes.length) {
-				e.preventDefault();
+			toggleSearch: () => (searchState.open ? closeSearch() : openSearch()),
+			focusKbSearch: () => kbOverlayRef?.focusSearch(),
+			togglePalette: () => (paletteOpen = !paletteOpen),
+			searchNext,
+			searchPrev,
+			closeOverlays: () => {
 				if (searchState.open) closeSearch();
-				else openSearch();
-				return;
-			}
-		}
-		if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
-			e.preventDefault();
-			paletteOpen = !paletteOpen;
-			return;
-		}
-		// Platform find-next secondary bindings, active while global search is open.
-		if (searchState.open && searchState.matches.length) {
-			if ((mod && (e.key === 'g' || e.key === 'G')) || e.key === 'F3') {
-				e.preventDefault();
-				if (e.shiftKey) searchPrev();
-				else searchNext();
-				return;
-			}
-		}
-
-		// Escape closes search / palette first (works whether or not their field has
-		// focus); return so it doesn't also close an underlying preview in the same press.
-		if (e.key === 'Escape' && (searchState.open || paletteOpen || kbOpen)) {
-			if (searchState.open) closeSearch();
-			paletteOpen = false;
-			kbOpen = false;
-			kbClearConfirm = false;
-			e.preventDefault();
-			return;
-		}
-
-		if (!inInput) {
-			if (e.key === 'Enter' && pendingBranch) { e.preventDefault(); confirmBranch(); return; }
-			// Backspace/Delete: delete selected nodes (also prevents browser back-nav in Tauri).
-			if (e.key === 'Backspace' || e.key === 'Delete') {
-				e.preventDefault();
-				if (selectedNodes.length) deleteSelected();
-				return;
-			}
-
-			// Escape: close panels/modals in priority order; last resort → reset to hand.
-			if (e.key === 'Escape') {
-				if (pendingBranch) { dismissBranch(); e.preventDefault(); return; }
-				if (openFileId) { openFileId = null; e.preventDefault(); return; }
-				if (expandId) { expandId = null; e.preventDefault(); return; }
-				if (chatOpen || ui.sidebarExpanded) {
-					chatOpen = false;
-					ui.sidebarExpanded = false;
-					e.preventDefault();
-					return;
-				}
-				if (tool.active !== 'hand' || tool.connectFrom) {
-					tool.active = 'hand';
-					tool.connectFrom = null;
-					e.preventDefault();
-					return;
-				}
-			}
-			// Delete/Backspace: remove selected nodes
-			if (e.key === 'Delete' || e.key === 'Backspace') {
-				const sel = flow.nodes.filter((n) => n.selected).map((n) => n.id);
-				if (sel.length) { deleteNodes(sel); e.preventDefault(); return; }
-			}
-
-			// Space: toggle the expanded preview of the selected card/file.
-			if (e.key === ' ') {
+				paletteOpen = false;
+				kbOpen = false;
+			},
+			confirmBranch,
+			dismissBranch,
+			closeFile: () => (openFileId = null),
+			closeExpand: () => (expandId = null),
+			closeChatAndSidebar: () => {
+				chatOpen = false;
+				ui.sidebarExpanded = false;
+			},
+			setTool: (t) => {
+				tool.active = t;
+				if (t === 'select') tool.connectFrom = null;
+			},
+			resetTool: () => {
+				tool.active = 'hand';
+				tool.connectFrom = null;
+			},
+			deleteSelection: deleteSelected,
+			toggleSpaceTarget: () => {
 				const multi = flow.nodes.filter((n) => n.selected);
 				const id = flow.selected ?? (multi.length === 1 ? multi[0].id : null);
 				const node = id ? flow.nodes.find((n) => n.id === id) : null;
-				if (node) {
-					e.preventDefault(); // stop page/canvas scroll
-					if (node.type === 'card') expandId = expandId === node.id ? null : node.id;
-					else openFileId = openFileId === node.id ? null : node.id; // file + text nodes
-					return;
-				}
-			}
-
-			// Tool hotkeys (no modifier).
-			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-				if (e.key === 'h' || e.key === 'H') { tool.active = 'hand'; tool.connectFrom = null; e.preventDefault(); }
-				else if (e.key === 'v' || e.key === 'V') { tool.active = 'select'; tool.connectFrom = null; e.preventDefault(); }
-				else if (e.key === 't' || e.key === 'T') { tool.active = 'text'; e.preventDefault(); }
-				else if (e.key === 'd' || e.key === 'D') {
-					if (tool.active === 'select' && selectedNodes.length) { duplicateSelected(); e.preventDefault(); }
-					else { tool.active = 'duplicate'; e.preventDefault(); }
-				}
-				else if (e.key === 'c' || e.key === 'C') {
-					const now = Date.now();
-					if (now - lastC < 350) { lastC = 0; tool.active = 'hand'; tool.connectFrom = null; void doCleanUp(); e.preventDefault(); return; }
-					lastC = now;
-					tool.active = 'connect'; e.preventDefault();
-				}
-				else if (e.key === 'u' || e.key === 'U') { doUndo(); e.preventDefault(); }
-				else if (e.key === 'r' || e.key === 'R') { doRedo(); e.preventDefault(); }
-				else if (e.key === 'f' || e.key === 'F') { doFitView(); e.preventDefault(); }
-				else if (e.key === 'g' || e.key === 'G') {
-					const sel = flow.nodes.filter((n) => n.selected).map((n) => n.id);
-					if (sel.length >= 2) { groupNodes(sel); e.preventDefault(); }
-				}
-			}
-		}
-
-		if ((e.metaKey || e.ctrlKey) && e.key === ',' && !inInput) {
-			e.preventDefault();
-			goto('/settings');
-			return;
-		}
-		if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
-			e.preventDefault();
-			chatOpen = !chatOpen;
-			return;
-		}
-		if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
-			e.preventDefault();
-			if (e.shiftKey) doRedo();
-			else doUndo();
-		}
+				if (!node) return false;
+				if (node.type === 'card') expandId = expandId === node.id ? null : node.id;
+				else openFileId = openFileId === node.id ? null : node.id; // file + text nodes
+				return true;
+			},
+			duplicateSelection: duplicateSelected,
+			undo: doUndo,
+			redo: doRedo,
+			fitView: doFitView,
+			groupSelection: () => groupNodes(flow.nodes.filter((n) => n.selected).map((n) => n.id)),
+			cleanUp: () => void doCleanUp(),
+			openSettings: () => goto('/settings'),
+			toggleChat: () => (chatOpen = !chatOpen)
+		});
 	}
 
 	// Click on the empty canvas background collapses the chat panel + sidebar and
@@ -567,11 +485,7 @@
 								const res = await apiFetch(`/api/files/read-bytes?path=${encodeURIComponent(filePath)}`);
 								const b64 = await res.text();
 								const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
-								putFileBlob(id, bytes, mime, name);
-								extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
-								const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
-								setFileStatus(id, chunks > 0 ? 'ready' : 'error');
-								if (chunks > 0) scheduleAutolink(id);
+								await indexDroppedFile(id, name, mime, kind, bytes);
 							} catch (err) {
 								console.error('tauri file drop read failed', err);
 								setFileStatus(id, 'error');
@@ -636,25 +550,11 @@
 		e.preventDefault();
 		let pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
 		// Cards spawn synchronously; indexing runs in parallel across files.
-		await Promise.all(files.map((file) => {
+		await Promise.all(files.map(async (file) => {
 			const kind = kindOf(file.name, file.type);
 			const id = addFileCard(pos, file.name, { mime: file.type, kind });
 			pos = { x: pos.x + 30, y: pos.y + 30 };
-			return (async () => {
-				try {
-					const buf = await file.arrayBuffer();
-					putFileBlob(id, buf, file.type, file.name);
-					extractText(buf, kind)
-						.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
-						.catch(() => {});
-					const chunks = await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
-					setFileStatus(id, chunks > 0 ? 'ready' : 'error');
-					if (chunks > 0) scheduleAutolink(id);
-				} catch (err) {
-					console.error('kb index failed', err);
-					setFileStatus(id, 'error');
-				}
-			})();
+			await indexDroppedFile(id, file.name, file.type, kind, await file.arrayBuffer());
 		}));
 	}
 
@@ -662,6 +562,23 @@
 	let viewTextId = $state<string | null>(null);
 	function onOpenFileEvent(e: Event) {
 		openFileId = (e as CustomEvent).detail.fileId;
+	}
+
+	// Shared tail of both drop paths (OS drag via Tauri + browser DataTransfer):
+	// stash bytes, extract a preview, index into the KB, mark status, autolink.
+	async function indexDroppedFile(id: string, name: string, mime: string, kind: FileKind, bytes: ArrayBuffer) {
+		try {
+			putFileBlob(id, bytes, mime, name);
+			extractText(bytes, kind)
+				.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
+				.catch(() => {}); // justified: preview is cosmetic; indexing below still runs
+			const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
+			setFileStatus(id, chunks > 0 ? 'ready' : 'error');
+			if (chunks > 0) scheduleAutolink(id);
+		} catch (err) {
+			console.error('file index failed', err);
+			setFileStatus(id, 'error');
+		}
 	}
 
 	// Deep-link from global search: a RAG hit on file content opens that file's
@@ -677,46 +594,11 @@
 		openFileId = deepLink.nodeId;
 	});
 
-	// ── KB overlay ───────────────────────────────────────────────────────────────
+	// ── KB overlay (UI lives in KbOverlay.svelte) ───────────────────────────────
 	let kbOpen = $state(false);
-	let kbInputEl = $state<HTMLInputElement | null>(null);
-	let kbData = $state<{ sources: string[]; chunks: number } | null>(null);
-	let kbLoading = $state(false);
-	let kbClearing = $state(false);
-	let kbClearConfirm = $state(false);
-	let kbQuery = $state('');
-	let kbResults = $state<string[] | null>(null);
-	let kbSearching = $state(false);
-	const kbSearchDebounced = debounce(async (q: string) => {
-		const results = await kbSearch(currentCanvasId() || 'default', q);
-		if (kbQuery === q) { kbResults = results; kbSearching = false; }
-	}, 250);
-
-	async function openKB() {
+	let kbOverlayRef = $state<KbOverlay | null>(null);
+	function openKB() {
 		kbOpen = true;
-		kbData = null;
-		kbLoading = true;
-		kbClearConfirm = false;
-		kbQuery = '';
-		kbResults = null;
-		kbData = await kbContents(currentCanvasId() || 'default');
-		kbLoading = false;
-	}
-
-	function onKBQueryInput() {
-		const q = kbQuery;
-		if (!q.trim()) { kbSearchDebounced.cancel(); kbResults = null; kbSearching = false; return; }
-		kbSearching = true;
-		kbSearchDebounced(q);
-	}
-
-	async function doKBClear() {
-		if (!kbClearConfirm) { kbClearConfirm = true; return; }
-		kbClearing = true;
-		await kbClear(currentCanvasId() || 'default');
-		kbClearConfirm = false;
-		kbData = await kbContents(currentCanvasId() || 'default');
-		kbClearing = false;
 	}
 
 	function submit(text: string) {
@@ -865,83 +747,7 @@
 
 			<GlobalSearchBar />
 			<CommandPalette open={paletteOpen} {commands} onclose={() => (paletteOpen = false)} />
-
-			{#if kbOpen}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div
-					class="kb-backdrop"
-					transition:fade={{ duration: reducedMotion() ? 0 : 150 }}
-					onpointerdown={() => { kbOpen = false; kbClearConfirm = false; }}
-				>
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div
-						class="kb-panel"
-						role="dialog"
-						aria-modal="true"
-						aria-label="Knowledge base"
-						transition:scale={{ duration: reducedMotion() ? 0 : 220, start: 0.96, easing: backOut, opacity: 0 }}
-						onpointerdown={(e) => e.stopPropagation()}
-					>
-						<header class="kb-header">
-							<span class="kb-title">Knowledge Base</span>
-							<div class="kb-actions">
-								<input
-									bind:this={kbInputEl}
-									class="kb-search"
-									type="text"
-									placeholder="Search KB…"
-									bind:value={kbQuery}
-									oninput={onKBQueryInput}
-								/>
-								<button
-									class="kb-btn kb-clear"
-									class:confirm={kbClearConfirm}
-									onclick={doKBClear}
-									disabled={kbClearing}
-								>
-									{kbClearing ? 'Clearing…' : kbClearConfirm ? 'Confirm clear?' : 'Clear KB'}
-								</button>
-								{#if kbClearConfirm}
-									<button class="kb-btn" onclick={() => (kbClearConfirm = false)}>Cancel</button>
-								{/if}
-								<button class="kb-btn" onclick={openKB} disabled={kbLoading} title="Refresh">↺</button>
-								<button class="kb-btn" onclick={() => { kbOpen = false; kbClearConfirm = false; }} aria-label="Close">✕</button>
-							</div>
-						</header>
-						<div class="kb-body">
-							{#if kbQuery.trim()}
-								{#if kbSearching}
-									<div class="kb-empty"><span class="spinner"></span> Searching…</div>
-								{:else if !kbResults || kbResults.length === 0}
-									<div class="kb-empty">No matching chunks.</div>
-								{:else}
-									<section>
-										<h3>Matching chunks ({kbResults.length})</h3>
-										<ul class="kb-chunks">
-											{#each kbResults as chunk, i (i)}
-												<li class="kb-chunk">{chunk}</li>
-											{/each}
-										</ul>
-									</section>
-								{/if}
-							{:else if kbLoading}
-								<div class="kb-empty"><span class="spinner"></span> Loading…</div>
-							{:else if !kbData || kbData.sources.length === 0}
-								<div class="kb-empty">KB is empty — drop files onto the canvas to index them.</div>
-							{:else}
-								<section>
-									<h3>Indexed sources ({kbData.chunks} chunks)</h3>
-									<ul>
-										{#each kbData.sources as s (s)}
-											<li>{s}</li>
-										{/each}
-									</ul>
-								</section>
-							{/if}
-						</div>
-					</div>
-				</div>
-			{/if}
+			<KbOverlay bind:this={kbOverlayRef} bind:open={kbOpen} />
 		</div>
 	{/if}
 </div>
@@ -1183,129 +989,6 @@
 	.sel-btn--danger:hover { background: rgba(255, 80, 80, 0.5); }
 
 
-	/* ── KB overlay ──────────────────────────────────────────────────────────── */
-	/* Same dialog language as CommandPalette: fixed full-screen scrim, centered
-	   pill-cornered panel, scale-in entrance. */
-	.kb-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 200;
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-		padding-top: 14vh;
-		background: rgba(0, 0, 0, 0.28);
-	}
-	.kb-panel {
-		width: min(680px, 92vw);
-		max-height: 72vh;
-		background: var(--c-canvas, #fff);
-		border-radius: 14px;
-		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
-		box-shadow: var(--elev-3, 0 18px 50px rgba(0, 0, 0, 0.25));
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-	}
-	.kb-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 12px 16px;
-		border-bottom: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
-		flex: none;
-	}
-	.kb-title {
-		font-weight: 600;
-		font-size: 14px;
-		color: var(--c-ink);
-	}
-	.kb-actions {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-	}
-	.kb-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		border: none;
-		background: transparent;
-		border-radius: var(--r-pill, 999px);
-		padding: 5px 10px;
-		font-size: 12px;
-		font-weight: 500;
-		color: var(--c-ink);
-		cursor: pointer;
-		white-space: nowrap;
-		transition: background 0.12s;
-	}
-	.kb-btn:hover:not(:disabled) { background: rgba(var(--ink-rgb), 0.06); }
-	.kb-btn:disabled { opacity: 0.5; cursor: default; }
-	.kb-btn.kb-clear { color: rgb(255, 80, 80); }
-	.kb-btn.kb-clear:hover:not(:disabled) { background: rgba(255, 80, 80, 0.1); }
-	.kb-btn.kb-clear.confirm { background: rgb(255, 80, 80); color: #fff; }
-	.kb-btn.kb-clear.confirm:hover { background: rgb(235, 60, 60); }
-	.kb-search {
-		border: none;
-		outline: none;
-		background: rgba(var(--ink-rgb), 0.05);
-		border-radius: var(--r-pill, 999px);
-		padding: 5px 12px;
-		font-size: 12px;
-		color: var(--c-ink);
-		width: 180px;
-	}
-	.kb-search::placeholder { color: var(--c-ink); opacity: 0.4; }
-	.kb-chunks { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
-	.kb-chunk {
-		padding: 8px 10px;
-		border: 1px solid var(--c-hairline);
-		border-radius: 8px;
-		background: var(--c-surface-soft, #fff);
-		white-space: pre-wrap;
-	}
-	.kb-body {
-		flex: 1;
-		overflow-y: auto;
-		padding: 16px;
-		font-size: 13px;
-		line-height: 1.55;
-	}
-	.kb-empty {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		color: rgba(var(--ink-rgb),0.45);
-		text-align: center;
-		padding: 32px 0;
-	}
-	.kb-body section { margin-bottom: 20px; }
-	.kb-body h3 {
-		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.6px;
-		color: rgba(var(--ink-rgb),0.45);
-		margin: 0 0 8px;
-	}
-	.kb-body ul {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.kb-body li {
-		padding: 5px 10px;
-		background: var(--c-surface-soft, rgba(0,0,0,0.03));
-		border-radius: 6px;
-		font-family: var(--font-mono);
-		font-size: 12px;
-		word-break: break-word;
-	}
 	/* 3-col grid: [spacer 1fr] [toolbar auto] [canvas-actions 1fr].
 	   Toolbar stays centered; canvas-actions can never push into it. */
 	.topbar {

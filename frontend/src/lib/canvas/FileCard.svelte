@@ -10,6 +10,7 @@ import CardHandles from './CardHandles.svelte';
 	import { getFileBlob } from '$lib/files';
 	import { searchHighlight } from './globalSearch.svelte';
 	import { markHTML } from './highlights';
+	import { isDocxFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
 
 	let { id, data, selected }: NodeProps = $props();
 	const isSelected = $derived(flow.selected === id || selected);
@@ -48,9 +49,9 @@ import CardHandles from './CardHandles.svelte';
 
 	// Preview body: markdown → rendered, docx → raw HTML (mammoth), text/pdf → plain.
 	const previewHtml = $derived(
-		file.kind === 'markdown' && file.preview
+		isMarkdownFile(file) && file.preview
 			? hlPrev(renderMarkdown(file.preview))
-			: file.kind === 'docx'
+			: isDocxFile(file)
 				? hlPrev(file.preview ?? '')
 				: ''
 	);
@@ -59,7 +60,7 @@ import CardHandles from './CardHandles.svelte';
 	// $derived recompute — harmless until blobs became reactive, see files.ts).
 	let imgSrc = $state<string | null>(null);
 	$effect(() => {
-		if (file.kind !== 'image' || !blob) { imgSrc = null; return; }
+		if (!isImageFile(file) || !blob) { imgSrc = null; return; }
 		const url = URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }));
 		imgSrc = url;
 		return () => URL.revokeObjectURL(url);
@@ -68,7 +69,7 @@ import CardHandles from './CardHandles.svelte';
 	let pdfThumbCanvas = $state<HTMLCanvasElement | null>(null);
 
 	$effect(() => {
-		if (file.kind !== 'pdf' || !blob || !pdfThumbCanvas) return;
+		if (!isPdfFile(file) || !blob || !pdfThumbCanvas) return;
 		const canvas = pdfThumbCanvas;
 		const bytes = blob.bytes;
 		(async () => {
@@ -110,9 +111,9 @@ import CardHandles from './CardHandles.svelte';
 	<div class="preview">
 		{#if imgSrc}
 			<img src={imgSrc} alt={file.filename} class="fill" />
-		{:else if file.kind === 'image'}
+		{:else if isImageFile(file)}
 			<div class="center-icon">{icon}</div>
-		{:else if file.kind === 'pdf' && blob}
+		{:else if isPdfFile(file) && blob}
 			<canvas bind:this={pdfThumbCanvas} class="pdf-fill"></canvas>
 		{:else if previewHtml}
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->

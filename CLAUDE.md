@@ -129,12 +129,25 @@ src/lib/
     client.ts            — runAgent() SSE reader, cancelAgent(), testConnection(), ragAdd()
     workflows.ts         — system prompt templates per workflow
   canvas/
-    Canvas.svelte        — main canvas, drag-drop → /api/files/read-bytes → ragAdd
-    store.svelte.ts      — canvas state, persisted via /api/canvases
+    Canvas.svelte        — main canvas, drag-drop → /api/files/read-bytes → kbAdd
+    store.svelte.ts      — canvas state + thin actions; re-exports the satellites below
+    cards.ts             — buildCardNode() factory, per-kind frame defaults, card/file/text/tag types
+    persistence.ts        — canvas index + doc load/save over /api/canvases (fire-and-forget)
+    history.ts            — createHistory(): bounded undo/redo stack of deep-cloned snapshots
+    kb-sync.ts             — debounced text-card KB indexing, file-node KB/blob cleanup
+    context.ts             — digest builders (connected/canvas/ancestry) fed into agent system prompts
+    runs.ts                — runModel/runSession/continueCard/retryCard — agent run orchestration
+    shortcuts.ts            — handleCanvasShortcut(): pure keydown → action dispatch
+    kinds.ts                — file-kind type guards (isPdfFile, isImageFile, …)
+    KbOverlay.svelte        — knowledge-base search/contents modal
     AgentTimeline.svelte — tool event display
   files.ts               — readFile/writeFile → /api/files/*, openPath → Tauri invoke
   settings/
     store.svelte.ts      — settings state, persisted via /api/settings
+routes/settings/
+  +page.svelte           — composes ProviderCard list + OllamaPanel + general settings
+  ProviderCard.svelte    — one provider's key save/test/model fields
+  OllamaPanel.svelte     — local model list + pull-with-progress
 ```
 
 ### Tauri IPC (the only two remaining commands)

@@ -12,6 +12,7 @@
 	import MarkdownBody from './MarkdownBody.svelte';
 	import PdfViewer from './PdfViewer.svelte';
 	import FindBar from './FindBar.svelte';
+	import { isDocxFile, isEditableFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
 	import { resizable } from '$lib/actions/resizable';
 
 	let { fileId, onclose, initialQuery = '', initialPage = 0 }:
@@ -52,11 +53,11 @@
 
 	// ── Rich text edit (markdown / text / docx) ─────────────────────────────────
 	let editor = $state<HTMLDivElement>();
-	const editable = $derived(file?.kind === 'markdown' || file?.kind === 'text' || file?.kind === 'docx');
+	const editable = $derived(isEditableFile(file));
 
 	async function initEditor(el: HTMLDivElement) {
 		if (!file) return;
-		if (file.kind === 'docx') {
+		if (isDocxFile(file)) {
 			if (blob) {
 				const mammoth = await import('mammoth');
 				const { value } = await mammoth.convertToHtml({ arrayBuffer: blob.bytes });
@@ -75,7 +76,7 @@
 				}
 			}
 			if (!text && blob) text = new TextDecoder().decode(blob.bytes);
-			el.innerHTML = file.kind === 'markdown' ? renderMarkdown(text) : `<pre>${escapeHtml(text)}</pre>`;
+			el.innerHTML = isMarkdownFile(file) ? renderMarkdown(text) : `<pre>${escapeHtml(text)}</pre>`;
 		}
 	}
 
@@ -91,7 +92,7 @@
 	// Save markdown/text back to disk. docx has no in-app writer (Open file instead).
 	async function save() {
 		if (!file || !editor) return;
-		if (file.kind === 'docx') return;
+		if (isDocxFile(file)) return;
 		const text = editor.innerText; // contenteditable → plain text (md is text)
 		setFilePreview(fileId, text.slice(0, 4000));
 		if (!file.path || !canUseFs()) {
@@ -129,7 +130,7 @@
 					<button onclick={clearNoteHL}>Clear marks</button>
 				{/if}
 			{:else}
-				{#if editable && file?.kind !== 'docx'}
+				{#if editable && !isDocxFile(file)}
 					<button onclick={save} class="save">
 						{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Save (desktop)' : 'Save'}
 					</button>
@@ -140,7 +141,7 @@
 		</div>
 	</header>
 
-	{#if file?.kind !== 'pdf'}
+	{#if !isPdfFile(file)}
 		<!-- ponytail: PDF has its own positional find (PdfViewer); FindBar for the rest.
 		     CSS Highlight API can't reach textarea content, so edit-mode find is a gap. -->
 		<FindBar target={contentEl ?? null} />
@@ -169,21 +170,21 @@
 				/>
 			{/if}
 		{/if}
-	{:else if !blob && file?.kind !== 'markdown'}
+	{:else if !blob && !isMarkdownFile(file)}
 		<div class="empty">File bytes not loaded — re-drop "{file?.filename}" to view. (Bytes aren't persisted across reloads.)</div>
-	{:else if file?.kind === 'pdf'}
+	{:else if isPdfFile(file)}
 		<PdfViewer fileId={fileId} blob={blob} {initialQuery} {initialPage} />
 	{:else if editable}
 		<div class="toolbar">
 			<button onclick={() => exec('bold')}><b>B</b></button>
 			<button onclick={() => exec('italic')}><i>I</i></button>
 			<button onclick={() => exec('underline')}><u>U</u></button>
-			{#if file?.kind === 'docx'}<span class="note">docx — edits in-app only; use "Open file" to edit on disk</span>{/if}
+			{#if isDocxFile(file)}<span class="note">docx — edits in-app only; use "Open file" to edit on disk</span>{/if}
 		</div>
 		<div class="editor" bind:this={editor} contenteditable="true"></div>
-	{:else if file?.kind === 'image'}
+	{:else if isImageFile(file)}
 		<div class="imgwrap">
-			{#if blob}<img src={URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }))} alt={file.filename} />{/if}
+			{#if blob}<img src={URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }))} alt={file?.filename} />{/if}
 		</div>
 	{:else}
 		<div class="empty">No preview for this file type. Use "Open file".</div>
