@@ -6,6 +6,10 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { FIRST_PORT, HOST } from "./config.ts";
+import { AppError } from "./errors.ts";
+import { log } from "./log.ts";
 import { ARBOR_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
 import { agentRoutes } from "./routes/agent.ts";
 import { blobRoutes } from "./routes/blobs.ts";
@@ -18,13 +22,18 @@ import { ollamaRoutes } from "./routes/ollama.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { importLegacyIfNeeded } from "./store/import-legacy.ts";
 
-const HOST = "127.0.0.1";
-const FIRST_PORT = 8765;
-
 // Build the API. `token` is the shared secret the frontend echoes as a Bearer
 // header. Routes are added here; everything under /api requires the token.
 export function createApp(token: string) {
 	const app = new Hono();
+
+	// Central error boundary: AppError → its status/code, anything else → 500.
+	// Response keeps the `error: string` key the frontend already reads.
+	app.onError((err, c) => {
+		const e = err instanceof AppError ? err : new AppError(err.message ?? "internal error");
+		log.error("http", e.message);
+		return c.json({ error: e.message, code: e.code }, e.status as ContentfulStatusCode);
+	});
 
 	// Liveness check — unauthenticated so the shell can probe readiness.
 	app.get("/health", (c) => c.json({ ok: true }));

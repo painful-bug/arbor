@@ -4,6 +4,7 @@
 // `searchHighlight` to <mark> the matched word on their face.
 import type { Node } from "@xyflow/svelte";
 import { kbSearchHits } from "$lib/ai/client";
+import { debounce } from "$lib/debounce";
 import { currentCanvasId, flow } from "./store.svelte";
 
 // One Match per occurrence (local) or per file node (deep RAG hit). `ordInNode` is the
@@ -174,22 +175,22 @@ async function runRag(q: string): Promise<void> {
 	if (hadNone) focus(0);
 }
 
-let localTimer: ReturnType<typeof setTimeout>;
-let ragTimer: ReturnType<typeof setTimeout>;
+const localDebounced = debounce((q: string) => runLocal(q), 120);
+const ragDebounced = debounce((q: string) => void runRag(q), 260);
 
 export function rebuild(query: string): void {
 	searchState.query = query;
-	clearTimeout(localTimer);
-	clearTimeout(ragTimer);
 	const q = query.trim();
 	if (!q) {
+		localDebounced.cancel();
+		ragDebounced.cancel();
 		searchState.matches = [];
 		searchState.cursor = 0;
 		clearHighlight();
 		return;
 	}
-	localTimer = setTimeout(() => runLocal(q), 120);
-	ragTimer = setTimeout(() => void runRag(q), 260);
+	localDebounced(q);
+	ragDebounced(q);
 }
 
 export function openSearch(): void {
@@ -197,8 +198,8 @@ export function openSearch(): void {
 }
 
 export function closeSearch(): void {
-	clearTimeout(localTimer);
-	clearTimeout(ragTimer);
+	localDebounced.cancel();
+	ragDebounced.cancel();
 	searchState.open = false;
 	searchState.query = "";
 	searchState.matches = [];

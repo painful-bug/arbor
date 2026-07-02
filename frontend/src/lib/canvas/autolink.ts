@@ -7,6 +7,7 @@
 // edges and reconciled independently.
 import type { Edge } from "@xyflow/svelte";
 import { kbRelate } from "$lib/ai/client";
+import { debounce } from "$lib/debounce";
 import { currentCanvasId, flow, settings, snippetOf } from "./store.svelte";
 
 const MAX_DEGREE = 2; // ponytail: 2 keeps graph sparse; raise only if canvas feels disconnected
@@ -96,20 +97,18 @@ function eligible(n: { type?: string; data: Record<string, unknown> }): boolean 
 	return ELIGIBLE.has(n.type ?? "") && !!snippetOf(n as Parameters<typeof snippetOf>[0]).trim();
 }
 
-const timers = new Map<string, ReturnType<typeof setTimeout>>();
+const debouncers = new Map<string, () => void>();
 
 // Debounced per node — coalesces bursts (typing, rapid file drops). The backend's
 // embed queue serializes the actual work, so a backfill of many nodes is safe.
 export function scheduleAutolink(nodeId: string): void {
 	if (!settings.autoConnect) return;
-	clearTimeout(timers.get(nodeId));
-	timers.set(
-		nodeId,
-		setTimeout(() => {
-			timers.delete(nodeId);
-			void runAutolink(nodeId);
-		}, DEBOUNCE_MS),
-	);
+	let d = debouncers.get(nodeId);
+	if (!d) {
+		d = debounce(() => void runAutolink(nodeId), DEBOUNCE_MS);
+		debouncers.set(nodeId, d);
+	}
+	d();
 }
 
 // Re-link every eligible node — used on canvas load and when the toggle is enabled,

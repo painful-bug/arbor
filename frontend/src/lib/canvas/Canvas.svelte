@@ -62,6 +62,7 @@
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs, getFileBlob } from '$lib/files';
 	import { kbAdd, kbClear, kbContents, kbRemove, kbSearch } from '$lib/ai/client';
+	import { debounce } from '$lib/debounce';
 	import { currentCanvasId } from './store.svelte';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
@@ -605,7 +606,10 @@
 
 	// Autosave + push undo snapshot on change; debounced so streaming doesn't thrash.
 	// Skip the first run: it's the initial empty state before init() loads real data.
-	let saveTimer: ReturnType<typeof setTimeout>;
+	const saveDebounced = debounce(() => {
+		saveCanvas();
+		pushHistory();
+	}, 400);
 	let mounted = false;
 	$effect(() => {
 		flow.nodes;
@@ -614,11 +618,7 @@
 			mounted = true;
 			return;
 		}
-		clearTimeout(saveTimer);
-		saveTimer = setTimeout(() => {
-			saveCanvas();
-			pushHistory();
-		}, 400);
+		saveDebounced();
 	});
 
 	async function onDrop(e: DragEvent) {
@@ -687,7 +687,10 @@
 	let kbQuery = $state('');
 	let kbResults = $state<string[] | null>(null);
 	let kbSearching = $state(false);
-	let kbSearchTimer: ReturnType<typeof setTimeout> | undefined;
+	const kbSearchDebounced = debounce(async (q: string) => {
+		const results = await kbSearch(currentCanvasId() || 'default', q);
+		if (kbQuery === q) { kbResults = results; kbSearching = false; }
+	}, 250);
 
 	async function openKB() {
 		kbOpen = true;
@@ -701,14 +704,10 @@
 	}
 
 	function onKBQueryInput() {
-		clearTimeout(kbSearchTimer);
 		const q = kbQuery;
-		if (!q.trim()) { kbResults = null; kbSearching = false; return; }
+		if (!q.trim()) { kbSearchDebounced.cancel(); kbResults = null; kbSearching = false; return; }
 		kbSearching = true;
-		kbSearchTimer = setTimeout(async () => {
-			const results = await kbSearch(currentCanvasId() || 'default', q);
-			if (kbQuery === q) { kbResults = results; kbSearching = false; }
-		}, 250);
+		kbSearchDebounced(q);
 	}
 
 	async function doKBClear() {

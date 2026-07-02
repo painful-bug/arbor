@@ -3,6 +3,7 @@
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
+import { fetchJson, fetchText } from "../http.ts";
 import type { GradedSearch } from "../kb/index.ts";
 
 export type WebBackend = "tavily" | "duckduckgo";
@@ -23,7 +24,10 @@ async function tavily(
 	max: number,
 	apiKey: string,
 ): Promise<{ hits: Hit[]; answer?: string }> {
-	const res = await fetch("https://api.tavily.com/search", {
+	const data = await fetchJson<{
+		answer?: string;
+		results?: { title: string; url: string; content: string }[];
+	}>("https://api.tavily.com/search", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
@@ -34,11 +38,6 @@ async function tavily(
 			include_answer: true,
 		}),
 	});
-	if (!res.ok) throw new Error(`Tavily ${res.status}: ${(await res.text()).slice(0, 200)}`);
-	const data = (await res.json()) as {
-		answer?: string;
-		results?: { title: string; url: string; content: string }[];
-	};
 	const hits = (data.results ?? []).map((r) => ({
 		title: r.title,
 		url: r.url,
@@ -60,11 +59,9 @@ const unwrap = (url: string) => {
 };
 
 async function ddgHtml(query: string, max: number): Promise<Hit[]> {
-	const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+	const html = await fetchText(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
 		headers: { "user-agent": UA },
 	});
-	if (!res.ok) throw new Error(`DuckDuckGo ${res.status}`);
-	const html = await res.text();
 	const hits: Hit[] = [];
 	const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/g;
 	let m: RegExpExecArray | null;
@@ -75,11 +72,9 @@ async function ddgHtml(query: string, max: number): Promise<Hit[]> {
 }
 
 async function ddgLite(query: string, max: number): Promise<Hit[]> {
-	const res = await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, {
+	const html = await fetchText(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, {
 		headers: { "user-agent": UA },
 	});
-	if (!res.ok) throw new Error(`DuckDuckGo lite ${res.status}`);
-	const html = await res.text();
 	const hits: Hit[] = [];
 	const re = /<a[^>]*class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/g;
 	let m: RegExpExecArray | null;
@@ -142,9 +137,7 @@ async function openAlex(query: string, max: number): Promise<Paper[]> {
 		"https://api.openalex.org/works?search=" +
 		encodeURIComponent(query) +
 		`&per_page=${max}&mailto=loom-app@example.com`;
-	const res = await fetch(url, { headers: { "user-agent": UA } });
-	if (!res.ok) throw new Error(`OpenAlex ${res.status}`);
-	const data = (await res.json()) as { results?: any[] };
+	const data = await fetchJson<{ results?: any[] }>(url, { headers: { "user-agent": UA } });
 	return (data.results ?? []).map((w) => ({
 		title: w.title ?? w.display_name ?? "(untitled)",
 		authors: (w.authorships ?? [])
@@ -170,9 +163,7 @@ async function arxiv(query: string, max: number): Promise<Paper[]> {
 		"http://export.arxiv.org/api/query?search_query=all:" +
 		encodeURIComponent(query) +
 		`&start=0&max_results=${max}`;
-	const res = await fetch(url, { headers: { "user-agent": UA } });
-	if (!res.ok) throw new Error(`arXiv ${res.status}`);
-	const xml = await res.text();
+	const xml = await fetchText(url, { headers: { "user-agent": UA } });
 	const entries = xml.split("<entry>").slice(1);
 	return entries.slice(0, max).map((e) => {
 		const abs = xmlTag(e, "id") ?? "";

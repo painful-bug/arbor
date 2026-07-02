@@ -10,6 +10,7 @@ import {
 } from "$lib/ai/client";
 import { workflowSystemPrompt } from "$lib/ai/workflows";
 import { apiFetch, apiJson, apiPut } from "$lib/api";
+import { debounce } from "$lib/debounce";
 
 // One exchange in a card's conversation: user prompt → agent answer + its timeline.
 export interface Turn {
@@ -639,22 +640,19 @@ export function addTextCard(position: XYPosition, text = ""): string {
 	return id;
 }
 
-const _textIndexTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// Per-card debounced KB indexing so we don't re-embed on every keystroke.
+const _textIndexDebounced = new Map<string, (text: string) => void>();
 
 export function setCardText(id: string, text: string): void {
 	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, text } } : n));
-	// Debounce KB indexing so we don't re-embed on every keystroke
-	const prev = _textIndexTimers.get(id);
-	if (prev) clearTimeout(prev);
-	_textIndexTimers.set(
-		id,
-		setTimeout(() => {
-			_textIndexTimers.delete(id);
-			if (text.trim()) {
-				void indexTextCard(id, text);
-			}
-		}, 2000),
-	);
+	let d = _textIndexDebounced.get(id);
+	if (!d) {
+		d = debounce((t: string) => {
+			if (t.trim()) void indexTextCard(id, t);
+		}, 2000);
+		_textIndexDebounced.set(id, d);
+	}
+	d(text);
 }
 
 async function indexTextCard(cardId: string, text: string): Promise<void> {
@@ -1051,11 +1049,7 @@ export function setClusterSpacing(gap: number): void {
 }
 
 // Coalesce the rapid-fire slider writes into one settings save.
-let spacingSaveTimer: ReturnType<typeof setTimeout> | null = null;
-function persistSettingsDebounced(): void {
-	if (spacingSaveTimer) clearTimeout(spacingSaveTimer);
-	spacingSaveTimer = setTimeout(() => persistSettings(), 400);
-}
+const persistSettingsDebounced = debounce(() => persistSettings(), 400);
 
 // Append a streamed agent event (tool call / reasoning) to the active turn's timeline.
 function pushEvent(id: string, ev: AgentEvent): void {

@@ -2,9 +2,7 @@
 // .md files) splits on headings/lists so a section stays whole; everything else uses
 // the recursive splitter that prefers paragraph/sentence boundaries over mid-word cuts.
 import { MarkdownTextSplitter, RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-
-const SIZE = 800;
-const OVERLAP = 120;
+import { KB_CHUNK_OVERLAP as OVERLAP, KB_CHUNK_SIZE as SIZE } from "../config.ts";
 
 function looksMarkdown(filename: string, text: string): boolean {
 	if (/\.(md|markdown)$/i.test(filename)) return true;

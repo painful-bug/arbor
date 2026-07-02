@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { extract, toMarkdownPages } from "@arbor/mosaic";
+import { RERANK_STRONG as STRONG, RERANK_WEAK as WEAK } from "../config.ts";
 import { MODELS_DIR } from "../paths.ts";
 import { chunkPages } from "./chunk.ts";
 import { cloudOcrImage } from "./cloud-ocr.ts";
@@ -22,11 +23,8 @@ export interface GradedSearch {
 	verdict: Verdict;
 }
 
-// Cross-encoder sigmoid score bands (calibrated on bge-reranker-base):
-// relevant pairs land ~0.9+, irrelevant ~0.0. A best hit below WEAK means the KB
-// almost certainly lacks the answer — the agent should fall back to web/tools.
-const STRONG = 0.5;
-const WEAK = 0.05;
+// Cross-encoder sigmoid score bands for STRONG/WEAK (calibrated on
+// bge-reranker-base) live in config.ts as RERANK_STRONG/RERANK_WEAK.
 
 export async function addFile(
 	canvas: string,

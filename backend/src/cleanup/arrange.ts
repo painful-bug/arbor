@@ -21,6 +21,13 @@ import {
 } from "d3-force";
 import Graph from "graphology";
 import louvain from "graphology-communities-louvain";
+import {
+	ARRANGE_PAD as PAD,
+	ARRANGE_REF_GAP as REF_GAP,
+	ARRANGE_SIM_FLOOR as SIM_FLOOR,
+	ARRANGE_SIM_K as SIM_K,
+	ARRANGE_TICKS as TICKS,
+} from "../config.ts";
 
 export interface ArrangeNode {
 	id: string;
@@ -46,12 +53,6 @@ export interface ArrangeLayout {
 	cols: number;
 	nodes: Record<string, { col: number; row: number; lx: number; ly: number }>;
 }
-
-const SIM_K = 4; // similarity links per node
-const SIM_FLOOR = 0.3; // min cosine to draw a similarity link
-const TICKS = 400;
-const PAD = 36; // extra gap added to each card's collision radius (breathing room)
-const REF_GAP = 8; // gutter (in avg-radius units) the simulation is solved at
 
 // Derive pixel positions from a layout at a given inter-cluster gap (avg-radius
 // units). Pure + instant — this is what the spacing slider calls on every tick.

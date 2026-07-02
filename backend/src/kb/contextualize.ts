@@ -1,4 +1,6 @@
 import { eq } from "drizzle-orm";
+import { CONTEXTUALIZE_BATCH } from "../config.ts";
+import { fetchJson } from "../http.ts";
 import { db } from "../store/db.ts";
 import { settings } from "../store/schema.ts";
 
@@ -25,27 +27,30 @@ async function chatComplete(prompt: string): Promise<string> {
 	if (!apiKey && provider !== "ollama") return "";
 
 	if (provider === "anthropic") {
-		const res = await fetch("https://api.anthropic.com/v1/messages", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"x-api-key": apiKey!,
-				"anthropic-version": "2023-06-01",
+		const data = await fetchJson<{ content: { type: string; text: string }[] }>(
+			"https://api.anthropic.com/v1/messages",
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-api-key": apiKey!,
+					"anthropic-version": "2023-06-01",
+				},
+				body: JSON.stringify({
+					model: model || "claude-haiku-4-5-20251001",
+					max_tokens: 200,
+					messages: [{ role: "user", content: prompt }],
+				}),
 			},
-			body: JSON.stringify({
-				model: model || "claude-haiku-4-5-20251001",
-				max_tokens: 200,
-				messages: [{ role: "user", content: prompt }],
-			}),
-		});
-		if (!res.ok) return "";
-		const data = (await res.json()) as { content: { type: string; text: string }[] };
+		);
 		return data.content.find((c) => c.type === "text")?.text ?? "";
 	}
 
 	if (provider === "google") {
 		const m = model || "gemini-2.0-flash";
-		const res = await fetch(
+		const data = await fetchJson<{
+			candidates: { content: { parts: { text?: string }[] } }[];
+		}>(
 			`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`,
 			{
 				method: "POST",
@@ -53,10 +58,6 @@ async function chatComplete(prompt: string): Promise<string> {
 				body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
 			},
 		);
-		if (!res.ok) return "";
-		const data = (await res.json()) as {
-			candidates: { content: { parts: { text?: string }[] } }[];
-		};
 		return data.candidates[0]?.content?.parts?.find((p) => p.text)?.text ?? "";
 	}
 
@@ -74,17 +75,18 @@ async function chatComplete(prompt: string): Promise<string> {
 	const headers: Record<string, string> = { "content-type": "application/json" };
 	if (apiKey) headers.authorization = `Bearer ${apiKey}`;
 
-	const res = await fetch(`${base}/chat/completions`, {
-		method: "POST",
-		headers,
-		body: JSON.stringify({
-			model: model || "gpt-4o-mini",
-			max_tokens: 200,
-			messages: [{ role: "user", content: prompt }],
-		}),
-	});
-	if (!res.ok) return "";
-	const data = (await res.json()) as { choices: { message: { content: string } }[] };
+	const data = await fetchJson<{ choices: { message: { content: string } }[] }>(
+		`${base}/chat/completions`,
+		{
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				model: model || "gpt-4o-mini",
+				max_tokens: 200,
+				messages: [{ role: "user", content: prompt }],
+			}),
+		},
+	);
 	return data.choices[0]?.message?.content ?? "";
 }
 
@@ -94,7 +96,7 @@ const CONTEXT_PROMPT = (source: string, chunk: string) =>
 export async function contextualize(source: string, chunks: string[]): Promise<string[]> {
 	const headers: string[] = new Array(chunks.length).fill("");
 
-	const BATCH = 5;
+	const BATCH = CONTEXTUALIZE_BATCH;
 	for (let i = 0; i < chunks.length; i += BATCH) {
 		const batch = chunks.slice(i, i + BATCH);
 		const results = await Promise.all(

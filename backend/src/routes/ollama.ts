@@ -1,17 +1,10 @@
 // Ollama local model management: list downloaded models + pull new ones.
 import { Hono } from "hono";
+import { OLLAMA_SEARCH_PATHS } from "../config.ts";
 
 export const ollamaRoutes = new Hono();
 
-// Common install locations on macOS for ollama.
-const OLLAMA_SEARCH_PATH = [
-	"/opt/homebrew/bin",
-	"/usr/local/bin",
-	"/usr/bin",
-	process.env.HOME ? `${process.env.HOME}/.local/bin` : "",
-]
-	.filter(Boolean)
-	.join(":");
+const OLLAMA_SEARCH_PATH = OLLAMA_SEARCH_PATHS.join(":");
 
 // Resolve ollama binary: prefer explicit common paths over PATH lookup,
 // since the backend may be spawned by Tauri with a minimal PATH.

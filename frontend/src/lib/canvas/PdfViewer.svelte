@@ -4,6 +4,7 @@
 	import { tick } from 'svelte';
 	import { flow, currentCanvasId, setFileHighlights, type PdfHL } from './store.svelte';
 	import { kbSearchHits } from '$lib/ai/client';
+	import { debounce } from '$lib/debounce';
 
 	let { fileId, blob, initialQuery = '', initialPage = 0 }:
 		{ fileId: string; blob: { bytes: ArrayBuffer; mime: string; name: string } | undefined; initialQuery?: string; initialPage?: number } = $props();
@@ -177,9 +178,9 @@
 		searchIndex = index;
 	}
 
-	let kbTimer: ReturnType<typeof setTimeout>;
+	const kbFallbackDebounced = debounce((q: string) => void kbFallback(q), 200);
 	function runSearch() {
-		clearTimeout(kbTimer);
+		kbFallbackDebounced.cancel();
 		pageHits = [];
 		if (!query.trim()) { searchHits = []; return; }
 		const q = query.toLowerCase();
@@ -196,7 +197,7 @@
 		searchCursor = 0;
 		if (hits.length) { scrollToHit(0); return; }
 		// Nothing in the embedded text layer (scanned/OCR PDF) → ask the KB.
-		if (query.trim().length >= 2) kbTimer = setTimeout(() => void kbFallback(query.trim()), 200);
+		if (query.trim().length >= 2) kbFallbackDebounced(query.trim());
 	}
 
 	// Page-level OCR search via the KB. Hits carry their source page (added to the
@@ -253,19 +254,18 @@
 	});
 
 	// ── Fit/zoom effects ────────────────────────────────────────────────────────
-	let renderTimer: ReturnType<typeof setTimeout>;
+	const renderDebounced = debounce(async () => {
+		const pdfjs = await import('pdfjs-dist');
+		pdfjs.GlobalWorkerOptions.workerSrc = (
+			await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+		).default;
+		await renderAll(pdfjs, pdfDoc!);
+	}, 60);
 	$effect(() => {
 		// Re-render when fit/zoom changes (containerW/H tracked via ResizeObserver)
 		fitMode; zoomFactor; containerW; containerH;
 		if (!pdfDoc || !pagesEl) return;
-		clearTimeout(renderTimer);
-		renderTimer = setTimeout(async () => {
-			const pdfjs = await import('pdfjs-dist');
-			pdfjs.GlobalWorkerOptions.workerSrc = (
-				await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-			).default;
-			await renderAll(pdfjs, pdfDoc!);
-		}, 60);
+		renderDebounced();
 	});
 
 	// Initial load
