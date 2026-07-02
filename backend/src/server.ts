@@ -87,7 +87,7 @@ export function serveOnFreePort(
 
 if (import.meta.main) {
 	const imported = importLegacyIfNeeded();
-	if (imported) console.error(`[arbor] legacy import: ${imported}`);
+	if (imported) log.info("arbor", `legacy import: ${imported}`);
 
 	const token = randomBytes(24).toString("hex");
 	const app = createApp(token);

@@ -4,18 +4,26 @@ import { OLLAMA_SEARCH_PATHS } from "../config.ts";
 
 export const ollamaRoutes = new Hono();
 
-const OLLAMA_SEARCH_PATH = OLLAMA_SEARCH_PATHS.join(":");
-
-// Resolve ollama binary: prefer explicit common paths over PATH lookup,
-// since the backend may be spawned by Tauri with a minimal PATH.
-function ollamaCmd(...args: string[]): string[] {
-	return ["/bin/sh", "-c", `export PATH="${OLLAMA_SEARCH_PATH}:$PATH"; ollama ${args.join(" ")}`];
+/**
+ * Absolute path to the ollama binary, or null when not installed. Searches
+ * ARBOR_OLLAMA_DIR (test hook), the common macOS install locations, then the
+ * inherited PATH — the backend may be spawned by Tauri with a minimal PATH.
+ * Spawning the resolved binary directly (no shell wrapper) means proc.kill()
+ * reaches ollama itself, not an intermediate sh.
+ */
+function ollamaBin(): string | null {
+	const dirs = [process.env.ARBOR_OLLAMA_DIR, ...OLLAMA_SEARCH_PATHS, process.env.PATH].filter(
+		Boolean,
+	);
+	return Bun.which("ollama", { PATH: dirs.join(":") });
 }
 
 // List models installed locally.
 ollamaRoutes.get("/models", async (c) => {
 	try {
-		const proc = Bun.spawnSync(ollamaCmd("list"), { stdout: "pipe", stderr: "pipe" });
+		const bin = ollamaBin();
+		if (!bin) return c.json({ models: [] });
+		const proc = Bun.spawnSync([bin, "list"], { stdout: "pipe", stderr: "pipe" });
 		if (proc.exitCode !== 0) return c.json({ models: [] });
 		const models = proc.stdout
 			.toString()
@@ -26,11 +34,14 @@ ollamaRoutes.get("/models", async (c) => {
 			.filter(Boolean);
 		return c.json({ models });
 	} catch {
+		// justified: missing/broken ollama degrades to an empty model list.
 		return c.json({ models: [] });
 	}
 });
 
-// Pull a model — SSE stream of progress lines until done/error.
+// Pull a model — SSE stream of progress lines until done/error. The subprocess
+// is killed when the client disconnects so an abandoned pull doesn't keep
+// downloading gigabytes.
 ollamaRoutes.post("/pull", async (c) => {
 	const { model } = (await c.req.json()) as { model: string };
 	if (!model?.trim()) return c.json({ error: "model required" }, 400);
@@ -39,14 +50,23 @@ ollamaRoutes.post("/pull", async (c) => {
 	const writer = writable.getWriter();
 	const enc = new TextEncoder();
 	const emit = (ev: object) =>
+		// justified: a failed write means the stream already closed.
 		writer.write(enc.encode(`data: ${JSON.stringify(ev)}\n\n`)).catch(() => {});
 
 	(async () => {
+		let proc: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
 		try {
-			const proc = Bun.spawn(ollamaCmd("pull", model.trim()), {
+			const bin = ollamaBin();
+			if (!bin) {
+				emit({ type: "error", message: "ollama binary not found" });
+				return;
+			}
+			proc = Bun.spawn([bin, "pull", model.trim()], {
 				stdout: "pipe",
 				stderr: "pipe",
 			});
+			// Client gone (cancel, window closed) → stop the download immediately.
+			c.req.raw.signal.addEventListener("abort", () => proc?.kill());
 
 			// ollama writes progress to stdout; forward line by line (strip ANSI + CR).
 			const pipe = async (stream: ReadableStream<Uint8Array>) => {
@@ -75,9 +95,10 @@ ollamaRoutes.post("/pull", async (c) => {
 			if (exit === 0) emit({ type: "done" });
 			else emit({ type: "error", message: `ollama pull exited with code ${exit}` });
 		} catch (err) {
+			proc?.kill();
 			emit({ type: "error", message: String(err) });
 		} finally {
-			writer.close().catch(() => {});
+			writer.close().catch(() => {}); // justified: double-close is a no-op we ignore.
 		}
 	})();
 

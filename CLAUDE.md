@@ -63,7 +63,13 @@ src/
   agent/
     run.ts               — handlePrompt(), runs map (cancel), Bun.secrets for keys
     providers.ts         — pi-ai provider catalog
-    tools.ts             — web search, scholar search, kb_search, research plan tools
+    llm.ts               — completeText(): one-shot non-streaming provider completion
+    tools/               — one module per tool domain, re-exported via tools/index.ts
+      web-search.ts      — Tavily + DuckDuckGo web search
+      scholar.ts         — OpenAlex + arXiv scholarly search
+      research.ts        — research plan tool
+      kb.ts              — knowledge base search/overview/read-source tools
+      cards.ts           — create_note / create_card / update_card canvas tools
   kb/
     index.ts             — addFile(), search() orchestration (extract → chunk → embed → store)
     store.ts             — LanceDB table per canvas, hybrid search
@@ -102,7 +108,7 @@ All `/api/*` routes require `Authorization: Bearer <token>`. `GET /health` is un
 Text extraction lives in `@arbor/mosaic` (`packages/mosaic`); `backend/src/kb/index.ts` wires extraction → chunking → embedding. Add new MIME handling there.
 
 ### Adding an agent tool
-In `backend/src/agent/tools.ts` — define a TypeBox schema + return an `AgentTool` object. Wire into the tools array in `backend/src/agent/run.ts`.
+Add it to the matching `backend/src/agent/tools/<domain>.ts` (or a new domain file) — define a TypeBox schema + return an `AgentTool` object. Re-export it from `backend/src/agent/tools/index.ts`, then wire it into the tools array in `backend/src/agent/run.ts`.
 
 ### Tests
 ```bash

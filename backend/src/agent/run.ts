@@ -17,7 +17,7 @@ import {
 	scholarSearchTool,
 	updateCardTool,
 	webSearchTool,
-} from "./tools.ts";
+} from "./tools/index.ts";
 
 const SERVICE = "app.arbor.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);

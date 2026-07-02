@@ -2,6 +2,7 @@
 // server-sent events until `done` or `error`. Cancel via POST /api/agent/:cardId/cancel.
 import { Hono } from "hono";
 import { handlePrompt, type PromptRequest, runs } from "../agent/run.ts";
+import { HEARTBEAT_MS } from "../config.ts";
 
 export const agentRoutes = new Hono();
 
@@ -17,8 +18,17 @@ agentRoutes.post("/prompt", async (c) => {
 		writer.write(enc.encode(`data: ${JSON.stringify(ev)}\n\n`)).catch(() => {});
 	};
 
+	// Heartbeat: SSE comment every 25s so idle timeouts don't kill a long run.
+	const hb = setInterval(() => {
+		// justified: a failed ping means the stream is closing; finally clears us.
+		writer.write(enc.encode(": ping\n\n")).catch(() => {});
+	}, HEARTBEAT_MS);
+
 	// Run agent concurrently; close the SSE stream when it finishes.
-	handlePrompt(req, emit).finally(() => writer.close().catch(() => {}));
+	handlePrompt(req, emit).finally(() => {
+		clearInterval(hb);
+		writer.close().catch(() => {});
+	});
 
 	return new Response(readable, {
 		headers: {

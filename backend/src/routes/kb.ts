@@ -8,6 +8,7 @@ import {
 	search,
 	searchHits,
 } from "../kb/index.ts";
+import { log } from "../log.ts";
 
 export const kbRoutes = new Hono();
 
@@ -20,7 +21,7 @@ kbRoutes.post("/:canvas/files", async (c) => {
 		const chunks = await addFile(canvas, filename, mime, bytes);
 		return c.json({ chunks });
 	} catch (err) {
-		console.error(`[KB] addFile error [${filename}]:`, err);
+		log.error("kb", `addFile error [${filename}]`, err);
 		return c.json({ error: String((err as Error)?.message ?? err) }, 500);
 	}
 });

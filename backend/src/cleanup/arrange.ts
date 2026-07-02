@@ -28,6 +28,7 @@ import {
 	ARRANGE_SIM_K as SIM_K,
 	ARRANGE_TICKS as TICKS,
 } from "../config.ts";
+import { embed } from "../kb/embeddings.ts";
 
 export interface ArrangeNode {
 	id: string;
@@ -317,4 +318,48 @@ export function arrange(nodes: ArrangeNode[], edges: ArrangeEdge[]): ArrangeLayo
 	});
 	out.cellBase = Math.max(cellBase, 2 * maxExtent);
 	return out;
+}
+
+/** Node shape the cleanup route receives: raw text (embedded here) + geometry. */
+export interface ArrangeReqNode {
+	id: string;
+	text: string;
+	w: number;
+	h: number;
+	x: number;
+	y: number;
+}
+
+/**
+ * Orchestrator for the cleanup route: embeds each node's text (one batched
+ * call), then runs arrange(). Returns null for fewer than 2 nodes. Throws if
+ * embedding fails — the route maps that to {layout:null}.
+ */
+export async function arrangeCanvas(
+	nodes: ArrangeReqNode[],
+	edges: ArrangeEdge[],
+): Promise<ArrangeLayout | null> {
+	if (nodes.length < 2) return null;
+
+	// Empty-text nodes get a zero vector → no similarity links (float free, pulled
+	// only by any edges + collision). One batched embed call (BGE-small, normalized).
+	const dim = 384;
+	const nonEmpty = nodes.filter((n) => n.text.trim());
+	const vectors = nonEmpty.length ? await embed(nonEmpty.map((n) => n.text.slice(0, 512))) : [];
+	const vecById = new Map<string, number[]>();
+	nonEmpty.forEach((n, i) => {
+		vecById.set(n.id, vectors[i]);
+	});
+
+	return arrange(
+		nodes.map((n) => ({
+			id: n.id,
+			vec: vecById.get(n.id) ?? new Array(dim).fill(0),
+			w: n.w,
+			h: n.h,
+			x: n.x,
+			y: n.y,
+		})),
+		edges,
+	);
 }

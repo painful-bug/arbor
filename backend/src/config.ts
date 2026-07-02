@@ -38,6 +38,9 @@ export const OLLAMA_SEARCH_PATHS: string[] = [
 	process.env.HOME ? `${process.env.HOME}/.local/bin` : "",
 ].filter(Boolean);
 
+/** SSE comment-ping interval — under typical 30s proxy/TCP idle cutoffs. */
+export const HEARTBEAT_MS = 25_000;
+
 /** Default timeout for outbound HTTP requests (see http.ts). */
 export const HTTP_TIMEOUT_MS = 15_000;
 

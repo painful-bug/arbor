@@ -1,6 +1,9 @@
+// Contextual chunk headers: ask the user's configured LLM for a one-sentence
+// "where does this chunk sit in the document" header per chunk. Optional —
+// returns empty headers when no provider/key is configured or calls fail.
 import { eq } from "drizzle-orm";
+import { type CompleteReq, completeText } from "../agent/llm.ts";
 import { CONTEXTUALIZE_BATCH } from "../config.ts";
-import { fetchJson } from "../http.ts";
 import { db } from "../store/db.ts";
 import { settings } from "../store/schema.ts";
 
@@ -18,89 +21,72 @@ function getSettings(): SettingsJson | null {
 	return JSON.parse(row.json) as SettingsJson;
 }
 
-async function chatComplete(prompt: string): Promise<string> {
+// OpenAI-compatible providers and their API bases.
+const OPENAI_COMPAT_BASES: Record<string, string> = {
+	openai: "https://api.openai.com/v1",
+	groq: "https://api.groq.com/openai/v1",
+	openrouter: "https://openrouter.ai/api/v1",
+	nim: "https://integrate.api.nvidia.com/v1",
+	ollama: "http://localhost:11434/v1",
+};
+
+// Build a CompleteReq from settings, or null when no usable provider/key.
+async function completionReq(prompt: string): Promise<CompleteReq | null> {
 	const s = getSettings();
-	if (!s?.provider) return "";
+	if (!s?.provider) return null;
 	const provider = s.provider;
 	const model = s.models?.[provider] ?? "";
 	const apiKey = await getKey(provider);
-	if (!apiKey && provider !== "ollama") return "";
+	if (!apiKey && provider !== "ollama") return null;
 
 	if (provider === "anthropic") {
-		const data = await fetchJson<{ content: { type: string; text: string }[] }>(
-			"https://api.anthropic.com/v1/messages",
-			{
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-					"x-api-key": apiKey!,
-					"anthropic-version": "2023-06-01",
-				},
-				body: JSON.stringify({
-					model: model || "claude-haiku-4-5-20251001",
-					max_tokens: 200,
-					messages: [{ role: "user", content: prompt }],
-				}),
-			},
-		);
-		return data.content.find((c) => c.type === "text")?.text ?? "";
+		return {
+			provider: "anthropic",
+			model: model || "claude-haiku-4-5-20251001",
+			apiKey: apiKey ?? "",
+			prompt,
+			maxTokens: 200,
+		};
 	}
-
 	if (provider === "google") {
-		const m = model || "gemini-2.0-flash";
-		const data = await fetchJson<{
-			candidates: { content: { parts: { text?: string }[] } }[];
-		}>(
-			`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`,
-			{
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-			},
-		);
-		return data.candidates[0]?.content?.parts?.find((p) => p.text)?.text ?? "";
+		return {
+			provider: "google",
+			model: model || "gemini-2.0-flash",
+			apiKey: apiKey ?? "",
+			prompt,
+			maxTokens: 200,
+		};
 	}
-
-	// OpenAI-compatible: openai, groq, openrouter, nim, ollama
-	const baseUrls: Record<string, string> = {
-		openai: "https://api.openai.com/v1",
-		groq: "https://api.groq.com/openai/v1",
-		openrouter: "https://openrouter.ai/api/v1",
-		nim: "https://integrate.api.nvidia.com/v1",
-		ollama: "http://localhost:11434/v1",
+	const baseUrl = OPENAI_COMPAT_BASES[provider];
+	if (!baseUrl) return null;
+	return {
+		provider: "openai-compat",
+		baseUrl,
+		model: model || "gpt-4o-mini",
+		apiKey: apiKey ?? "",
+		prompt,
+		maxTokens: 200,
 	};
-	const base = baseUrls[provider];
-	if (!base) return "";
+}
 
-	const headers: Record<string, string> = { "content-type": "application/json" };
-	if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-
-	const data = await fetchJson<{ choices: { message: { content: string } }[] }>(
-		`${base}/chat/completions`,
-		{
-			method: "POST",
-			headers,
-			body: JSON.stringify({
-				model: model || "gpt-4o-mini",
-				max_tokens: 200,
-				messages: [{ role: "user", content: prompt }],
-			}),
-		},
-	);
-	return data.choices[0]?.message?.content ?? "";
+async function chatComplete(prompt: string): Promise<string> {
+	const req = await completionReq(prompt);
+	if (!req) return "";
+	return completeText(req);
 }
 
 const CONTEXT_PROMPT = (source: string, chunk: string) =>
 	`You are processing a document titled "${source}". Here is a chunk from it:\n\n<chunk>\n${chunk}\n</chunk>\n\nWrite ONE short sentence (under 25 words) that situates this chunk within the document — what topic or section it belongs to. Output ONLY the sentence, nothing else.`;
 
+/** One situating header per chunk ("" where generation failed or is disabled). */
 export async function contextualize(source: string, chunks: string[]): Promise<string[]> {
 	const headers: string[] = new Array(chunks.length).fill("");
 
-	const BATCH = CONTEXTUALIZE_BATCH;
-	for (let i = 0; i < chunks.length; i += BATCH) {
-		const batch = chunks.slice(i, i + BATCH);
+	for (let i = 0; i < chunks.length; i += CONTEXTUALIZE_BATCH) {
+		const batch = chunks.slice(i, i + CONTEXTUALIZE_BATCH);
 		const results = await Promise.all(
 			batch.map((chunk) =>
+				// justified: headers are best-effort — a failed call degrades to no header.
 				chatComplete(CONTEXT_PROMPT(source, chunk.slice(0, 1500))).catch(() => ""),
 			),
 		);

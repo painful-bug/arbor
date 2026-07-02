@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { extract, toMarkdownPages } from "@arbor/mosaic";
 import { RERANK_STRONG as STRONG, RERANK_WEAK as WEAK } from "../config.ts";
+import { log } from "../log.ts";
 import { MODELS_DIR } from "../paths.ts";
 import { chunkPages } from "./chunk.ts";
 import { cloudOcrImage } from "./cloud-ocr.ts";
@@ -33,7 +34,7 @@ export async function addFile(
 	bytes: Uint8Array,
 ): Promise<number> {
 	if (!canvas) {
-		console.warn("[KB] addFile called with empty canvas id — skipping");
+		log.warn("kb", "addFile called with empty canvas id — skipping");
 		return 0;
 	}
 	// @arbor/mosaic: bytes → typed AST → Markdown (text layer + OCR + layout). Cloud
@@ -48,8 +49,9 @@ export async function addFile(
 	if (pages.length === 0) return 0;
 
 	const totalChars = pages.reduce((n, p) => n + p.text.length, 0);
-	console.log(
-		`[KB] addFile ${filename} (${canvas}): ${totalChars} chars across ${pages.length} pages extracted`,
+	log.info(
+		"kb",
+		`addFile ${filename} (${canvas}): ${totalChars} chars across ${pages.length} pages extracted`,
 	);
 	const chunks = await chunkPages(pages, filename); // { text, page }[]
 	if (chunks.length === 0) return 0;
@@ -83,7 +85,7 @@ export async function addChat(
 	answer: string,
 ): Promise<void> {
 	if (!canvas) {
-		console.warn("[KB] addChat called with empty canvas id — skipping");
+		log.warn("kb", "addChat called with empty canvas id — skipping");
 		return;
 	}
 	const body = `User: ${prompt}\n\nAssistant: ${answer}`;
