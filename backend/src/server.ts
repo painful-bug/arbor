@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { FIRST_PORT, HOST } from "./config.ts";
+import { FIRST_PORT, HOST, SERVER_IDLE_TIMEOUT_S } from "./config.ts";
 import { AppError } from "./errors.ts";
 import { log } from "./log.ts";
 import { ARBOR_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
@@ -74,7 +74,15 @@ export function serveOnFreePort(
 ) {
 	for (let port = first; port < first + 50; port++) {
 		try {
-			const server = Bun.serve({ hostname: HOST, port, fetch, idleTimeout: 0 });
+			// Bounded idle timeout — safe for SSE: the agent stream sends 25s heartbeats
+			// (routes/agent.ts) and ollama pull streams progress continuously, so an
+			// active connection never goes 120s without traffic.
+			const server = Bun.serve({
+				hostname: HOST,
+				port,
+				fetch,
+				idleTimeout: SERVER_IDLE_TIMEOUT_S,
+			});
 			return { server, port };
 		} catch (e) {
 			const code = (e as { code?: string }).code;

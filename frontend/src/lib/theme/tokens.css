@@ -220,3 +220,12 @@ mark.mark-active {
 	border-radius: 2px;
 	box-shadow: 0 0 0 1px rgba(109, 40, 217, 0.45);
 }
+
+/* Power: pause every CSS animation while the window is hidden/minimized/occluded
+   (power.svelte.ts sets this attribute on visibilitychange). Cheaper than tearing
+   down each animation individually; resumes automatically when visible again. */
+body[data-hidden] *,
+body[data-hidden] *::before,
+body[data-hidden] *::after {
+	animation-play-state: paused !important;
+}

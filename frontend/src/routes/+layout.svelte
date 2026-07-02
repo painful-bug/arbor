@@ -7,6 +7,8 @@
 	import { apiJson } from '$lib/api';
 	import { settings, ui } from '$lib/canvas/store.svelte';
 	import { checkForUpdates, registerOnAction } from '$lib/updates/store.svelte';
+	import { maybeCheckUpdates } from '$lib/update-check';
+	import { initPower } from '$lib/power.svelte';
 
 	let { children } = $props();
 
@@ -15,16 +17,19 @@
 	});
 
 	// Auto-update: register the notification click handler, check at startup, then
-	// re-check every 6 hours. ponytail: fixed interval; make configurable if asked.
+	// re-check at most every 6h — gated by timestamp instead of a persistent timer,
+	// so a hidden/minimized window burns zero timer wakeups (see power.svelte.ts).
 	onMount(() => {
+		initPower();
 		registerOnAction(async () => {
 			const { getCurrentWindow } = await import('@tauri-apps/api/window');
 			await getCurrentWindow().setFocus();
 			await goto('/settings#updates');
 		});
-		void checkForUpdates(true);
-		const id = setInterval(() => void checkForUpdates(true), 6 * 60 * 60 * 1000);
-		return () => clearInterval(id);
+		const check = () => void maybeCheckUpdates(Date.now, () => checkForUpdates(true));
+		check();
+		document.addEventListener('visibilitychange', check);
+		return () => document.removeEventListener('visibilitychange', check);
 	});
 
 	// Dev sanity check: confirm the UI can reach the backend over the API.

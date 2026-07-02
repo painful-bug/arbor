@@ -70,6 +70,7 @@
 	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { power } from '$lib/power.svelte';
 
 	// Swoop: spring scale + drop. Out = canvas falls away to the Library; in = a
 	// canvas springs back into view. Shared by both layers so they cross-fade.
@@ -197,12 +198,15 @@
 	let cleaningUp = $state(false);
 	async function doCleanUp() {
 		cleaningUp = true;
-		if (reducedMotion()) { await cleanUp(); cleaningUp = false; return; }
-		animatingCleanup = true;
-		await tick();
-		await cleanUp();
-		cleaningUp = false;
-		setTimeout(() => { animatingCleanup = false; }, 550);
+		try {
+			if (reducedMotion()) { await cleanUp(); return; }
+			animatingCleanup = true;
+			await tick();
+			await cleanUp();
+			setTimeout(() => { animatingCleanup = false; }, 550);
+		} finally {
+			cleaningUp = false;
+		}
 	}
 
 	// Undo/redo restore a prior node snapshot under the same ids, so reuse the
@@ -510,9 +514,11 @@
 		};
 	});
 
-	// Auto Clean Up: re-run Cmd-C on a timer while enabled, forever, at the user's interval.
+	// Auto Clean Up: re-run Cmd-C on a timer while enabled AND the window is visible —
+	// no timer exists at all while hidden/minimized (power.visible gates it), so a
+	// background window burns zero wakeups on this.
 	$effect(() => {
-		if (!settings.autoCleanup.enabled) return;
+		if (!settings.autoCleanup.enabled || !power.visible) return;
 		const ms = Math.max(1, settings.autoCleanup.intervalMin) * 60_000;
 		const id = setInterval(() => { if (!cleaningUp) void doCleanUp(); }, ms);
 		return () => clearInterval(id);

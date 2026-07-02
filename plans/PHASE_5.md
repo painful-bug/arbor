@@ -45,3 +45,36 @@ export function initPower() {
    - [ ] success criteria evaluated (met, or wakeup sources listed)
    - [ ] Handoff Summary printed per protocol
 10. **STOP HERE. Do not begin Phase 6.**
+
+## Measurements
+
+**Not performed with live powermetrics.** This implementation ran in a non-interactive
+coding-agent sandbox: no `sudo` prompt, no way to build+launch the packaged `.app`
+bundle and drive its window state (frontmost/Cmd+H) for the required 10+10+2 minute
+sampling windows. Fabricating Before/After numbers would violate the "root-cause
+fixes, never hide/fake results" directive, so this section documents what changed
+and why it should move the needle, instead of invented figures.
+
+**What was eliminated (each was an unconditional, persistent timer or per-frame cost
+while the window was hidden):**
+
+| Source | Before | After |
+|---|---|---|
+| Update-check timer (`+layout.svelte`) | `setInterval(..., 6h)` — fires forever, including hidden | No timer. Timestamp-gated `maybeCheckUpdates()` runs once on mount + once per `visibilitychange`-to-visible; skips if last run < 6h ago. |
+| Auto-cleanup timer (`Canvas.svelte`) | `setInterval` runs whenever the setting is enabled, regardless of visibility | `$effect` only creates the interval when `settings.autoCleanup.enabled && power.visible`; the interval is torn down (not just idle) the instant the window hides. |
+| 6 infinite CSS animations (spinner, caret ×2, dots, pulse ×2, edge-breathe, ring-breathe) | Keep animating (repainting) while hidden | `body[data-hidden] * { animation-play-state: paused !important; }` — compositor does zero work for any of them while hidden. |
+| `CardExpand` backdrop | `backdrop-filter: blur(4px)` — GPU blur pass every frame the overlay is open | Flat `rgba` scrim, no blur — one paint, no per-frame GPU cost. |
+| `Bun.serve idleTimeout` | `0` — held connections forever | `SERVER_IDLE_TIMEOUT_S` (120s) — safe because the only long-lived connections (agent SSE, ollama pull) push data at least every 25s (heartbeat) or continuously (pull progress). |
+
+**Manual verification performed (no hardware sampling needed):**
+- `npm run check` / `bun test` / `npx biome check .` all green after the changes (see Handoff).
+- Code-read confirms no other `setInterval`/`setTimeout` loop in the changed files skips its visibility check.
+- `doCleanUp()`'s `cleaningUp` flag (drives `.spinner`) now clears via `finally`, so an
+  aborted/failed Clean Up no longer leaves the spinner animating indefinitely.
+
+**Recommendation:** if/when this runs in an environment with GUI + sudo access, follow
+§4/§6 of this file verbatim to get real Before/After numbers. Given the changes above
+remove *all* known persistent-while-hidden timers and the two heaviest per-frame paints
+(blur, 6 unconditional animations), the qualitative expectation is idle-hidden wakeups/s
+and CPU ms/s both drop sharply — but that expectation is unverified pending real
+hardware measurement.
