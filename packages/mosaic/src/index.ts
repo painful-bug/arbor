@@ -3,16 +3,16 @@
 // text (PDF text layer, DOCX, PPTX, CSV, EPUB, HTML, txt); OCR/layout/formula
 // arrive in later phases without changing this public surface.
 
-import { type Block, type MosaicDoc, type MosaicPage } from "./ast.ts";
-import { parseText, parseHtml } from "./parse/text.ts";
-import { parsePdf, pdfPageCount } from "./parse/pdf.ts";
-import { parseDocx, parsePptx, parseCsv, parseEpub } from "./parse/office.ts";
+import type { Block, MosaicDoc, MosaicPage } from "./ast.ts";
 import { ocrImage } from "./ocr/index.ts";
 import { detectLayout } from "./ocr/layout.ts";
+import { parseCsv, parseDocx, parseEpub, parsePptx } from "./parse/office.ts";
+import { parsePdf, pdfPageCount } from "./parse/pdf.ts";
+import { parseHtml, parseText } from "./parse/text.ts";
 
-export { toMarkdown, toMarkdownPages } from "./markdown.ts";
+export type { BBox, Block, BlockType, Method, MosaicDoc, MosaicPage } from "./ast.ts";
 export { blocksInOrder, plainText } from "./ast.ts";
-export type { Block, BlockType, BBox, Method, MosaicDoc, MosaicPage } from "./ast.ts";
+export { toMarkdown, toMarkdownPages } from "./markdown.ts";
 
 export interface ExtractOptions {
 	filename?: string;
@@ -111,8 +111,15 @@ export async function extract(bytes: Uint8Array, opts: ExtractOptions = {}): Pro
 		// Apple Vision already returns clean ordered full-page text, and DocLayout-YOLO
 		// mis-segments handwriting, so skip cropping there. (Phase 4 adds formula/table
 		// region extraction on top of the macOS full-page text.)
-		const layout = process.platform === "darwin" ? undefined : (png: Uint8Array) => detectLayout(png, opts.modelDir);
-		const { blocks, dims } = await parsePdf(bytes, range, { ocr, layout, onProgress: opts.onProgress });
+		const layout =
+			process.platform === "darwin"
+				? undefined
+				: (png: Uint8Array) => detectLayout(png, opts.modelDir);
+		const { blocks, dims } = await parsePdf(bytes, range, {
+			ocr,
+			layout,
+			onProgress: opts.onProgress,
+		});
 		return assemble(filename, mime, blocks, dims);
 	}
 	if (mime.includes("wordprocessingml") || lower.endsWith(".docx")) {
@@ -141,7 +148,11 @@ export async function extract(bytes: Uint8Array, opts: ExtractOptions = {}): Pro
 }
 
 /** Render an image to PNG via mupdf, OCR it, return one paragraph block. */
-async function ocrImageFile(bytes: Uint8Array, mime: string, opts: ExtractOptions): Promise<Block[]> {
+async function ocrImageFile(
+	bytes: Uint8Array,
+	mime: string,
+	opts: ExtractOptions,
+): Promise<Block[]> {
 	const { default: mupdf } = await import("mupdf");
 	let png = bytes;
 	let imgW = 0;
@@ -163,6 +174,12 @@ async function ocrImageFile(bytes: Uint8Array, mime: string, opts: ExtractOption
 		imgHeight: imgH || 1,
 		cloudOcrImage: opts.ocr?.cloudOcrImage,
 	});
-	const text = lines.map((l) => l.text.trim()).filter(Boolean).join("\n").trim();
-	return text ? [{ type: "paragraph", page: 1, readingOrder: 0, method: "ocr", confidence: 1, text }] : [];
+	const text = lines
+		.map((l) => l.text.trim())
+		.filter(Boolean)
+		.join("\n")
+		.trim();
+	return text
+		? [{ type: "paragraph", page: 1, readingOrder: 0, method: "ocr", confidence: 1, text }]
+		: [];
 }

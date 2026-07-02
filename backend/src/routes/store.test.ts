@@ -6,7 +6,11 @@ import { createApp } from "../server.ts";
 const app = createApp("secret");
 const auth = { Authorization: "Bearer secret" } as Record<string, string>;
 const jsonReq = (path: string, method: string, body: unknown) =>
-	app.request(path, { method, headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+	app.request(path, {
+		method,
+		headers: { ...auth, "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
 
 describe("canvases", () => {
 	test("upsert → list → get → reorder → delete", async () => {
@@ -27,9 +31,19 @@ describe("canvases", () => {
 		expect(list.list[0]).not.toHaveProperty("doc"); // metas only, no doc payload
 
 		const doc = await (await app.request("/api/canvases/ca", { headers: auth })).json();
-		expect(doc).toEqual({ id: "ca", name: "A", createdAt: 1, updatedAt: 1, nodes: [{ id: "n1" }], edges: [], session: [] });
+		expect(doc).toEqual({
+			id: "ca",
+			name: "A",
+			createdAt: 1,
+			updatedAt: 1,
+			nodes: [{ id: "n1" }],
+			edges: [],
+			session: [],
+		});
 
-		expect((await app.request("/api/canvases/ca", { method: "DELETE", headers: auth })).status).toBe(200);
+		expect(
+			(await app.request("/api/canvases/ca", { method: "DELETE", headers: auth })).status,
+		).toBe(200);
 		expect((await app.request("/api/canvases/ca", { headers: auth })).status).toBe(404);
 		const after = await (await app.request("/api/canvases", { headers: auth })).json();
 		expect(after.list.map((m: { id: string }) => m.id)).toEqual(["cb"]);
@@ -71,11 +85,15 @@ describe("keys (real OS keychain, throwaway provider)", () => {
 	afterAll(() => Bun.secrets.delete({ service: "app.arbor.canvas", name: provider }));
 
 	test("absent → set → present → test ok", async () => {
-		expect(await (await app.request(`/api/keys/${provider}`, { headers: auth })).json()).toEqual({ exists: false });
+		expect(await (await app.request(`/api/keys/${provider}`, { headers: auth })).json()).toEqual({
+			exists: false,
+		});
 		expect((await jsonReq(`/api/providers/${provider}/test`, "POST", {})).status).toBe(400);
 
 		await jsonReq(`/api/keys/${provider}`, "PUT", { key: "sk-test-123" });
-		expect(await (await app.request(`/api/keys/${provider}`, { headers: auth })).json()).toEqual({ exists: true });
+		expect(await (await app.request(`/api/keys/${provider}`, { headers: auth })).json()).toEqual({
+			exists: true,
+		});
 		expect((await jsonReq(`/api/providers/${provider}/test`, "POST", {})).status).toBe(200);
 	});
 

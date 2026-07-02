@@ -1,12 +1,20 @@
-import { extract, toMarkdownPages } from "@arbor/mosaic";
-import { cloudOcrImage } from "./cloud-ocr.ts";
-import { MODELS_DIR } from "../paths.ts";
-import { embed } from "./embeddings.ts";
-import { upsert, hybridSearch, clear, removeSource, relate, sources as storeSources, sourceContent } from "./store.ts";
-import { contextualize } from "./contextualize.ts";
-import { rerank } from "./rerank.ts";
-import { chunkPages } from "./chunk.ts";
 import { randomBytes } from "node:crypto";
+import { extract, toMarkdownPages } from "@arbor/mosaic";
+import { MODELS_DIR } from "../paths.ts";
+import { chunkPages } from "./chunk.ts";
+import { cloudOcrImage } from "./cloud-ocr.ts";
+import { contextualize } from "./contextualize.ts";
+import { embed } from "./embeddings.ts";
+import { rerank } from "./rerank.ts";
+import {
+	clear,
+	hybridSearch,
+	relate,
+	removeSource,
+	sourceContent,
+	sources as storeSources,
+	upsert,
+} from "./store.ts";
 
 export type Verdict = "strong" | "weak" | "none";
 export interface GradedSearch {
@@ -26,15 +34,25 @@ export async function addFile(
 	mime: string,
 	bytes: Uint8Array,
 ): Promise<number> {
-	if (!canvas) { console.warn("[KB] addFile called with empty canvas id — skipping"); return 0; }
+	if (!canvas) {
+		console.warn("[KB] addFile called with empty canvas id — skipping");
+		return 0;
+	}
 	// @arbor/mosaic: bytes → typed AST → Markdown (text layer + OCR + layout). Cloud
 	// VLM OCR is injected so keys stay in the backend (Bun.secrets), never the package.
-	const doc = await extract(bytes, { filename, mime, modelDir: MODELS_DIR, ocr: { cloudOcrImage } });
+	const doc = await extract(bytes, {
+		filename,
+		mime,
+		modelDir: MODELS_DIR,
+		ocr: { cloudOcrImage },
+	});
 	const pages = toMarkdownPages(doc);
 	if (pages.length === 0) return 0;
 
 	const totalChars = pages.reduce((n, p) => n + p.text.length, 0);
-	console.log(`[KB] addFile ${filename} (${canvas}): ${totalChars} chars across ${pages.length} pages extracted`);
+	console.log(
+		`[KB] addFile ${filename} (${canvas}): ${totalChars} chars across ${pages.length} pages extracted`,
+	);
 	const chunks = await chunkPages(pages, filename); // { text, page }[]
 	if (chunks.length === 0) return 0;
 
@@ -44,9 +62,7 @@ export async function addFile(
 		new Array<string>(texts.length).fill(""),
 	);
 
-	const embedTexts = texts.map((text, i) =>
-		headers[i] ? `${headers[i]}\n\n${text}` : text,
-	);
+	const embedTexts = texts.map((text, i) => (headers[i] ? `${headers[i]}\n\n${text}` : text));
 
 	const vectors = await embed(embedTexts);
 
@@ -68,16 +84,21 @@ export async function addChat(
 	prompt: string,
 	answer: string,
 ): Promise<void> {
-	if (!canvas) { console.warn("[KB] addChat called with empty canvas id — skipping"); return; }
+	if (!canvas) {
+		console.warn("[KB] addChat called with empty canvas id — skipping");
+		return;
+	}
 	const body = `User: ${prompt}\n\nAssistant: ${answer}`;
 	const source = `chat:${cardId}`;
 	const vectors = await embed([body]);
-	await upsert(canvas, source, [{
-		id: randomBytes(8).toString("hex"),
-		source,
-		text: body,
-		vector: vectors[0],
-	}]);
+	await upsert(canvas, source, [
+		{
+			id: randomBytes(8).toString("hex"),
+			source,
+			text: body,
+			vector: vectors[0],
+		},
+	]);
 }
 
 // Retrieve → rerank → grade. Over-fetch with hybrid search, rerank with the
@@ -91,16 +112,23 @@ export async function searchGraded(canvas: string, query: string, k = 6): Promis
 
 	// rerank works on chunk text; re-attach source + page by text after ranking.
 	const metaOf = new Map(candidates.map((c) => [c.text, { source: c.source, page: c.page }]));
-	const ranked = await rerank(query, candidates.map((c) => c.text)).catch(() => null);
+	const ranked = await rerank(
+		query,
+		candidates.map((c) => c.text),
+	).catch(() => null);
 	if (!ranked) {
 		// Reranker unavailable — return hybrid order, score -1 signals "unscored".
 		return {
-			chunks: candidates.slice(0, k).map((c) => ({ text: c.text, score: -1, source: c.source, page: c.page })),
+			chunks: candidates
+				.slice(0, k)
+				.map((c) => ({ text: c.text, score: -1, source: c.source, page: c.page })),
 			verdict: "weak",
 		};
 	}
 
-	const top = ranked.slice(0, k).map((r) => ({ ...r, ...(metaOf.get(r.text) ?? { source: "", page: undefined }) }));
+	const top = ranked
+		.slice(0, k)
+		.map((r) => ({ ...r, ...(metaOf.get(r.text) ?? { source: "", page: undefined }) }));
 	const best = top[0]?.score ?? 0;
 	const verdict: Verdict = best >= STRONG ? "strong" : best >= WEAK ? "weak" : "none";
 	return { chunks: top, verdict };

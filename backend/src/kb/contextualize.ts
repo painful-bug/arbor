@@ -91,10 +91,7 @@ async function chatComplete(prompt: string): Promise<string> {
 const CONTEXT_PROMPT = (source: string, chunk: string) =>
 	`You are processing a document titled "${source}". Here is a chunk from it:\n\n<chunk>\n${chunk}\n</chunk>\n\nWrite ONE short sentence (under 25 words) that situates this chunk within the document — what topic or section it belongs to. Output ONLY the sentence, nothing else.`;
 
-export async function contextualize(
-	source: string,
-	chunks: string[],
-): Promise<string[]> {
+export async function contextualize(source: string, chunks: string[]): Promise<string[]> {
 	const headers: string[] = new Array(chunks.length).fill("");
 
 	const BATCH = 5;

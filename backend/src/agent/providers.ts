@@ -18,44 +18,44 @@ const PROVIDERS: Record<string, ProviderDef> = {
 		label: "Anthropic",
 		api: "anthropic-messages",
 		baseUrl: "https://api.anthropic.com",
-		defaultModel: "claude-sonnet-4-5"
+		defaultModel: "claude-sonnet-4-5",
 	},
 	openai: {
 		label: "OpenAI",
 		api: "openai-completions",
 		baseUrl: "https://api.openai.com/v1",
-		defaultModel: "gpt-4o"
+		defaultModel: "gpt-4o",
 	},
 	google: {
 		label: "Google Gemini",
 		api: "google-generative-ai",
 		baseUrl: "https://generativelanguage.googleapis.com",
-		defaultModel: "gemini-2.5-flash"
+		defaultModel: "gemini-2.5-flash",
 	},
 	groq: {
 		label: "Groq",
 		api: "openai-completions",
 		baseUrl: "https://api.groq.com/openai/v1",
-		defaultModel: "openai/gpt-oss-20b"
+		defaultModel: "openai/gpt-oss-20b",
 	},
 	openrouter: {
 		label: "OpenRouter",
 		api: "openai-completions",
 		baseUrl: "https://openrouter.ai/api/v1",
-		defaultModel: "meta-llama/llama-3.3-70b-instruct:free"
+		defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
 	},
 	nim: {
 		label: "NVIDIA NIM",
 		api: "openai-completions",
 		baseUrl: "https://integrate.api.nvidia.com/v1",
-		defaultModel: "nvidia/nvidia-nemotron-nano-9b-v2"
+		defaultModel: "nvidia/nvidia-nemotron-nano-9b-v2",
 	},
 	ollama: {
 		label: "Ollama (local)",
 		api: "openai-completions",
 		baseUrl: "http://localhost:11434/v1",
-		defaultModel: "llama3.2"
-	}
+		defaultModel: "llama3.2",
+	},
 };
 
 export function buildModel(provider: string, modelId: string): Model<Api> {
@@ -72,6 +72,6 @@ export function buildModel(provider: string, modelId: string): Model<Api> {
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 128000,
-		maxTokens: 16384
+		maxTokens: 16384,
 	} as Model<Api>;
 }

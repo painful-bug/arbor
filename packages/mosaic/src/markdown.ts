@@ -1,4 +1,4 @@
-import { type Block, type MosaicDoc, blocksInOrder } from "./ast.ts";
+import { type Block, blocksInOrder, type MosaicDoc } from "./ast.ts";
 
 function tableToMarkdown(rows: string[][]): string {
 	if (rows.length === 0) return "";
@@ -29,8 +29,6 @@ function blockToMarkdown(b: Block): string {
 			const cap = (b.text ?? "").trim();
 			return cap ? `> _Figure:_ ${cap}` : "";
 		}
-		case "list":
-		case "paragraph":
 		default:
 			return (b.text ?? "").trim();
 	}

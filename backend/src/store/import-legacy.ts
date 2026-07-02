@@ -3,13 +3,13 @@
 // check guards re-runs) and non-destructive — original JSON files are left in place
 // as a backup. Blob *bytes* already live in ~/.arbor/blobs and stay there; we only
 // record their mime/name rows.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
-import { db } from "./db.ts";
-import { canvases, settings, blobMeta } from "./schema.ts";
+import { BLOBS_DIR, LEGACY_INDEX, LEGACY_SETTINGS, legacyDoc } from "../paths.ts";
 import { setCurrentAndOrder } from "../routes/canvases.ts";
-import { LEGACY_INDEX, legacyDoc, LEGACY_SETTINGS, BLOBS_DIR } from "../paths.ts";
+import { db } from "./db.ts";
+import { blobMeta, canvases, settings } from "./schema.ts";
 
 interface LegacyMeta {
 	id: string;
@@ -50,7 +50,10 @@ export function importLegacyIfNeeded(): string | null {
 			.run();
 		canvasCount++;
 	}
-	setCurrentAndOrder(index.current, index.list.map((m) => m.id));
+	setCurrentAndOrder(
+		index.current,
+		index.list.map((m) => m.id),
+	);
 
 	// Settings.
 	const legacySettings = readJson<unknown>(LEGACY_SETTINGS);

@@ -1,6 +1,7 @@
 // App settings: one JSON blob (provider, models, workflow, toggles). Single row.
-import { Hono } from "hono";
+
 import { eq } from "drizzle-orm";
+import { Hono } from "hono";
 import { db } from "../store/db.ts";
 import { settings } from "../store/schema.ts";
 

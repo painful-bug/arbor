@@ -1,10 +1,10 @@
 // Shared ONNX plumbing: lazy model download into modelDir + cached sessions.
 // All models are local after first fetch; no network at steady state.
+
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { createWriteStream } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { InferenceSession } from "onnxruntime-node";
@@ -14,7 +14,12 @@ export function modelsRoot(modelDir?: string): string {
 }
 
 /** Download `url` → `<modelsRoot>/<sub>/<file>` once; return the local path. */
-export async function ensureModel(modelDir: string | undefined, sub: string, file: string, url: string): Promise<string> {
+export async function ensureModel(
+	modelDir: string | undefined,
+	sub: string,
+	file: string,
+	url: string,
+): Promise<string> {
 	const dir = join(modelsRoot(modelDir), sub);
 	const dest = join(dir, file);
 	if (existsSync(dest)) return dest;

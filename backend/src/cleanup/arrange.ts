@@ -10,14 +10,14 @@
 // blended similarity+edge graph, drop each community into its own grid cell with
 // big gaps between cells, then settle each cluster locally with a force sim.
 import {
-	forceSimulation,
+	forceCollide,
 	forceLink,
 	forceManyBody,
-	forceCollide,
+	forceSimulation,
 	forceX,
 	forceY,
-	type SimulationNodeDatum,
 	type SimulationLinkDatum,
+	type SimulationNodeDatum,
 } from "d3-force";
 import Graph from "graphology";
 import louvain from "graphology-communities-louvain";
@@ -55,7 +55,10 @@ const REF_GAP = 8; // gutter (in avg-radius units) the simulation is solved at
 
 // Derive pixel positions from a layout at a given inter-cluster gap (avg-radius
 // units). Pure + instant — this is what the spacing slider calls on every tick.
-export function place(layout: ArrangeLayout, gap: number): Record<string, { x: number; y: number }> {
+export function place(
+	layout: ArrangeLayout,
+	gap: number,
+): Record<string, { x: number; y: number }> {
 	const cell = layout.cellBase + Math.max(0, gap) * layout.unit;
 	const out: Record<string, { x: number; y: number }> = {};
 	for (const id in layout.nodes) {
@@ -105,7 +108,10 @@ export function arrange(nodes: ArrangeNode[], edges: ArrangeEdge[]): ArrangeLayo
 	const empty: ArrangeLayout = { cellBase: 0, unit: 0, cols: 1, nodes: {} };
 	if (nodes.length === 0) return empty;
 	if (nodes.length === 1)
-		return { ...empty, nodes: { [nodes[0].id]: { col: 0, row: 0, lx: nodes[0].x, ly: nodes[0].y } } };
+		return {
+			...empty,
+			nodes: { [nodes[0].id]: { col: 0, row: 0, lx: nodes[0].x, ly: nodes[0].y } },
+		};
 
 	const ids = new Set(nodes.map((n) => n.id));
 
@@ -168,8 +174,7 @@ export function arrange(nodes: ArrangeNode[], edges: ArrangeEdge[]): ArrangeLayo
 		const s = sizeById.get(id)!;
 		return Math.hypot(s.w, s.h) / 2 + PAD;
 	};
-	const avgR =
-		nodes.reduce((s, n) => s + Math.hypot(n.w, n.h) / 2 + PAD, 0) / nodes.length;
+	const avgR = nodes.reduce((s, n) => s + Math.hypot(n.w, n.h) / 2 + PAD, 0) / nodes.length;
 
 	// ── Place clusters on a grid with big gaps, members in a ring per cell ────
 	// Cell size fits the largest cluster (a roughly circular packing of its cards);
@@ -226,8 +231,18 @@ export function arrange(nodes: ArrangeNode[], edges: ArrangeEdge[]): ArrangeLayo
 		// Repulsion is LOCAL (distanceMax) — it only declutters cards inside the same
 		// cluster. Global repulsion would push clusters into each other's cells and
 		// erase the gaps; here the grid does the separating, not charge.
-		.force("charge", forceManyBody().strength(-avgR * 2).distanceMax(avgR * 2.5))
-		.force("collide", forceCollide<SimNode>().radius((d) => d.r).iterations(4))
+		.force(
+			"charge",
+			forceManyBody()
+				.strength(-avgR * 2)
+				.distanceMax(avgR * 2.5),
+		)
+		.force(
+			"collide",
+			forceCollide<SimNode>()
+				.radius((d) => d.r)
+				.iterations(4),
+		)
 		// Strong pull toward the assigned cell center keeps each cluster compact and
 		// anchored in its own cell — this is what holds the gaps open between islands.
 		.force("x", forceX<SimNode>((d) => d.cx).strength(0.5))
@@ -257,7 +272,7 @@ export function arrange(nodes: ArrangeNode[], edges: ArrangeEdge[]): ArrangeLayo
 					const minDX = (sa.w + sb.w) / 2 + GAP;
 					const minDY = (sa.h + sb.h) / 2 + GAP;
 					let dx = (b.x ?? 0) - (a.x ?? 0);
-					let dy = (b.y ?? 0) - (a.y ?? 0);
+					const dy = (b.y ?? 0) - (a.y ?? 0);
 					// Exactly coincident → deterministic nudge so the push has a direction.
 					if (dx === 0 && dy === 0) dx = a.id < b.id ? -1 : 1;
 					const ox = minDX - Math.abs(dx);

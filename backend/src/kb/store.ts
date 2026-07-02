@@ -10,7 +10,7 @@ function getLancedb() {
 	return _lancedb;
 }
 
-let _db: Awaited<ReturnType<(typeof import("@lancedb/lancedb"))["connect"]>> | null = null;
+let _db: Awaited<ReturnType<typeof import("@lancedb/lancedb")["connect"]>> | null = null;
 
 async function getDb() {
 	if (!_db) _db = await getLancedb().connect(LANCEDB_DIR);
@@ -43,15 +43,18 @@ export async function upsert(canvas: string, source: string, rows: Row[]): Promi
 	if (names.includes(name)) {
 		const tbl = await db.openTable(name);
 		// Legacy table without a `page` column: drop page so add() matches the schema.
-		const add = (await fieldNames(tbl)).has("page")
-			? rows
-			: rows.map(({ page, ...r }) => r);
+		const add = (await fieldNames(tbl)).has("page") ? rows : rows.map(({ page, ...r }) => r);
 		await tbl.delete(`source = '${source.replace(/'/g, "''")}'`);
 		await tbl.add(add);
-		try { await tbl.createIndex("text", { config: getLancedb().Index.fts(), replace: true }); } catch {}
+		try {
+			await tbl.createIndex("text", { config: getLancedb().Index.fts(), replace: true });
+		} catch {}
 	} else {
-		const tbl = await db.createTable(name, rows);
-		try { await tbl.createIndex("text", { config: getLancedb().Index.fts() }); } catch {}
+		// Row lacks an index signature, so widen for LanceDB's Record<string, unknown>[] overload.
+		const tbl = await db.createTable(name, rows as unknown as Record<string, unknown>[]);
+		try {
+			await tbl.createIndex("text", { config: getLancedb().Index.fts() });
+		} catch {}
 	}
 }
 
@@ -71,7 +74,7 @@ export async function hybridSearch(
 	canvas: string,
 	queryVec: number[],
 	queryText: string,
-	k = 6
+	k = 6,
 ): Promise<Hit[]> {
 	const db = await getDb();
 	const name = tname(canvas);
@@ -86,31 +89,20 @@ export async function hybridSearch(
 
 	// Try FTS first for hybrid-quality results
 	try {
-		const ftsResults = await tbl
-			.search(queryText)
-			.where(NOT_CHAT)
-			.select(cols)
-			.limit(k)
-			.toArray();
+		const ftsResults = await tbl.search(queryText).where(NOT_CHAT).select(cols).limit(k).toArray();
 
-		const vecResults = await tbl
-			.search(queryVec)
-			.where(NOT_CHAT)
-			.select(cols)
-			.limit(k)
-			.toArray();
+		const vecResults = await tbl.search(queryVec).where(NOT_CHAT).select(cols).limit(k).toArray();
 
 		// Manual RRF fusion
 		return rrfFuse(vecResults, ftsResults, k);
 	} catch {
 		// FTS unavailable — pure vector fallback
-		const results = await tbl
-			.search(queryVec)
-			.where(NOT_CHAT)
-			.select(cols)
-			.limit(k)
-			.toArray();
-		return results.map((r: any) => ({ text: r.text as string, source: r.source as string, page: r.page ?? undefined }));
+		const results = await tbl.search(queryVec).where(NOT_CHAT).select(cols).limit(k).toArray();
+		return results.map((r: any) => ({
+			text: r.text as string,
+			source: r.source as string,
+			page: r.page ?? undefined,
+		}));
 	}
 }
 

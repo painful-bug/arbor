@@ -6,9 +6,9 @@
 		<meta name="text-scale" content="scale" />
 		<script>
 			try {
-				var s = JSON.parse(localStorage.getItem('arbor:settings') || '{}');
+				const s = JSON.parse(localStorage.getItem('arbor:settings') || '{}');
 				document.documentElement.setAttribute('data-theme', s.theme === 'light' ? 'light' : 'dark');
-			} catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+			} catch { document.documentElement.setAttribute('data-theme', 'dark'); }
 		</script>
 		%sveltekit.head%
 	</head>

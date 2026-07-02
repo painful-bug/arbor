@@ -5,7 +5,8 @@
 	"scripts": {
 		"dev": "bun --watch src/server.ts",
 		"start": "bun src/server.ts",
-		"test": "ARBOR_DIR=\"$(mktemp -d)\" bun test"
+		"test": "ARBOR_DIR=\"$(mktemp -d)\" bun test",
+		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
 		"@arbor/mosaic": "file:../packages/mosaic",
@@ -24,6 +25,7 @@
 	},
 	"devDependencies": {
 		"@types/bun": "^1.1.14",
-		"@types/d3-force": "^3.0.10"
+		"@types/d3-force": "^3.0.10",
+		"typescript": "^6.0.3"
 	}
 }

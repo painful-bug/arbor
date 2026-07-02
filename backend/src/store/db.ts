@@ -4,9 +4,9 @@
 // bundle later). ponytail: CREATE TABLE IF NOT EXISTS, add migrations only if the
 // schema ever needs versioned changes.
 import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
 import { mkdirSync } from "node:fs";
-import { DB_PATH, ARBOR_DIR, BLOBS_DIR } from "../paths.ts";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { ARBOR_DIR, BLOBS_DIR, DB_PATH } from "../paths.ts";
 import * as schema from "./schema.ts";
 
 mkdirSync(ARBOR_DIR, { recursive: true });
@@ -42,9 +42,9 @@ export const db = drizzle(sqlite, { schema });
 
 // Small kv helpers over the meta table for "current" + "order".
 export function metaGet(key: string): string | null {
-	const row = sqlite.query("SELECT value FROM meta WHERE key = ?").get(key) as
-		| { value: string }
-		| null;
+	const row = sqlite.query("SELECT value FROM meta WHERE key = ?").get(key) as {
+		value: string;
+	} | null;
 	return row?.value ?? null;
 }
 

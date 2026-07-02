@@ -40,9 +40,8 @@
 	--c-on-block-rgb: 28, 28, 28;
 
 	/* type */
-	--font-sans:
-		-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
-	--font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+	--font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 
 	/* sidebar / nav button geometry (shared across rail buttons) */
 	--nav-btn: 40px;
@@ -120,7 +119,7 @@
 	position: relative;
 }
 .node-glow-selected::after {
-	content: '';
+	content: "";
 	position: absolute;
 	inset: -3px;
 	border-radius: inherit;

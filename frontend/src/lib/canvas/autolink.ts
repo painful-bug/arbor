@@ -5,13 +5,13 @@
 // Edges are stored in flow.edges like any other edge (so they persist + undo for
 // free) but carry `data.auto = true` so they can be told apart from manual/branch
 // edges and reconciled independently.
-import type { Edge } from '@xyflow/svelte';
-import { flow, settings, currentCanvasId, snippetOf } from './store.svelte';
-import { kbRelate } from '$lib/ai/client';
+import type { Edge } from "@xyflow/svelte";
+import { kbRelate } from "$lib/ai/client";
+import { currentCanvasId, flow, settings, snippetOf } from "./store.svelte";
 
 const MAX_DEGREE = 2; // ponytail: 2 keeps graph sparse; raise only if canvas feels disconnected
 const DEBOUNCE_MS = 1500;
-const ELIGIBLE = new Set(['card', 'text', 'file']);
+const ELIGIBLE = new Set(["card", "text", "file"]);
 
 // Undirected, deterministic id so the same pair never produces two edges.
 export function semEdgeId(a: string, b: string): string {
@@ -29,10 +29,11 @@ function makeSemEdge(a: string, b: string): Edge {
 		id: semEdgeId(a, b),
 		source: lo,
 		target: hi,
-		type: 'bezier',
+		type: "bezier",
 		data: { auto: true },
 		// Color resolves per theme via the CSS var (light: violet, dark: light violet).
-		style: 'stroke: var(--c-edge-semantic); stroke-width: 1; stroke-dasharray: 3 10; opacity: 0.45;'
+		style:
+			"stroke: var(--c-edge-semantic); stroke-width: 1; stroke-dasharray: 3 10; opacity: 0.45;",
 	};
 }
 
@@ -41,7 +42,7 @@ function makeSemEdge(a: string, b: string): Edge {
 export function reconcileSemanticEdges(
 	nodeId: string,
 	neighborIds: string[],
-	edges: Edge[]
+	edges: Edge[],
 ): Edge[] {
 	const targets = neighborIds.filter((id) => id && id !== nodeId).slice(0, MAX_DEGREE);
 	const desired = new Set(targets.map((nb) => semEdgeId(nodeId, nb)));
@@ -58,7 +59,7 @@ export function reconcileSemanticEdges(
 		.map((nb) => semEdgeId(nodeId, nb))
 		.filter((id) => !existing.has(id))
 		.map((id) => {
-			const [, lo, hi] = id.split(':');
+			const [, lo, hi] = id.split(":");
 			return makeSemEdge(lo, hi);
 		});
 
@@ -68,15 +69,17 @@ export function reconcileSemanticEdges(
 // The KB source id a node was indexed under (see store: file→filename,
 // note→text:id, card→chat:id). Used to exclude the node from its own results.
 function sourceOf(node: { id: string; type?: string; data: Record<string, unknown> }): string {
-	if (node.type === 'file') return (node.data.filename as string) ?? '';
-	return `${node.type === 'text' ? 'text' : 'chat'}:${node.id}`;
+	if (node.type === "file") return (node.data.filename as string) ?? "";
+	return `${node.type === "text" ? "text" : "chat"}:${node.id}`;
 }
 
 // Reverse: map a KB source back to an on-canvas node id (or undefined if gone).
 function nodeIdForSource(source: string): string | undefined {
 	const m = source.match(/^(?:text|chat|card):(.+)$/);
 	if (m) return m[1];
-	const f = flow.nodes.find((n) => n.type === 'file' && (n.data as { filename?: string }).filename === source);
+	const f = flow.nodes.find(
+		(n) => n.type === "file" && (n.data as { filename?: string }).filename === source,
+	);
 	return f?.id;
 }
 
@@ -85,12 +88,12 @@ function hasManualEdge(a: string, b: string, edges: Edge[]): boolean {
 	return edges.some(
 		(e) =>
 			!isSemanticEdge(e) &&
-			((e.source === a && e.target === b) || (e.source === b && e.target === a))
+			((e.source === a && e.target === b) || (e.source === b && e.target === a)),
 	);
 }
 
 function eligible(n: { type?: string; data: Record<string, unknown> }): boolean {
-	return ELIGIBLE.has(n.type ?? '') && !!snippetOf(n as Parameters<typeof snippetOf>[0]).trim();
+	return ELIGIBLE.has(n.type ?? "") && !!snippetOf(n as Parameters<typeof snippetOf>[0]).trim();
 }
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -105,7 +108,7 @@ export function scheduleAutolink(nodeId: string): void {
 		setTimeout(() => {
 			timers.delete(nodeId);
 			void runAutolink(nodeId);
-		}, DEBOUNCE_MS)
+		}, DEBOUNCE_MS),
 	);
 }
 
@@ -123,8 +126,12 @@ async function runAutolink(nodeId: string): Promise<void> {
 	if (flow.nodes.filter(eligible).length < 2) return; // nothing to link to
 
 	const text = snippetOf(node);
-	const canvas = currentCanvasId() || 'default';
-	const neighbors = await kbRelate(canvas, text, { exclude: sourceOf(node), k: MAX_DEGREE, minScore: 0.70 });
+	const canvas = currentCanvasId() || "default";
+	const neighbors = await kbRelate(canvas, text, {
+		exclude: sourceOf(node),
+		k: MAX_DEGREE,
+		minScore: 0.7,
+	});
 
 	// Re-check after the await: the toggle may have flipped or the node been deleted.
 	if (!settings.autoConnect || !flow.nodes.some((n) => n.id === nodeId)) return;

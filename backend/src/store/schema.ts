@@ -3,7 +3,7 @@
 //   meta       — kv for "current" canvas id and "order" (JSON array of ids).
 //   settings   — single row (id=1) holding the settings JSON blob.
 //   blob_meta  — mime/name for each dropped file; bytes live on disk in ~/.arbor/blobs.
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const canvases = sqliteTable("canvases", {
 	id: text("id").primaryKey(),

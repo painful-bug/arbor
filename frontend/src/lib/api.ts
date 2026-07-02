@@ -6,18 +6,18 @@
 let cached: Promise<{ base: string; token: string }> | null = null;
 
 function isTauri(): boolean {
-	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 async function connect(): Promise<{ base: string; token: string }> {
 	if (isTauri()) {
-		const { invoke } = await import('@tauri-apps/api/core');
-		const info = await invoke<{ port: number; token: string }>('backend_info');
+		const { invoke } = await import("@tauri-apps/api/core");
+		const info = await invoke<{ port: number; token: string }>("backend_info");
 		return { base: `http://127.0.0.1:${info.port}`, token: info.token };
 	}
 	// Browser dev fallback: run `bun src/server.ts` in backend/ and pass its token.
-	const token = (import.meta.env.VITE_BACKEND_TOKEN as string | undefined) ?? 'dev';
-	const port = (import.meta.env.VITE_BACKEND_PORT as string | undefined) ?? '8765';
+	const token = (import.meta.env.VITE_BACKEND_TOKEN as string | undefined) ?? "dev";
+	const port = (import.meta.env.VITE_BACKEND_PORT as string | undefined) ?? "8765";
 	return { base: `http://127.0.0.1:${port}`, token };
 }
 
@@ -30,7 +30,7 @@ function backend(): Promise<{ base: string; token: string }> {
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
 	const { base, token } = await backend();
 	const headers = new Headers(init.headers);
-	headers.set('Authorization', `Bearer ${token}`);
+	headers.set("Authorization", `Bearer ${token}`);
 	return fetch(base + path, { ...init, headers });
 }
 
@@ -44,8 +44,8 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 // PUT a JSON body. Returns the response (callers usually fire-and-forget).
 export function apiPut(path: string, body: unknown): Promise<Response> {
 	return apiFetch(path, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
 	});
 }

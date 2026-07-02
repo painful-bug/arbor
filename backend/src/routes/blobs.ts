@@ -1,13 +1,14 @@
 // Dropped-file blobs. Bytes live on disk in ~/.arbor/blobs/<id>; mime/name in a row.
 // Lets files survive restart without re-dropping. Raw bytes in/out (no base64).
-import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+
 import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
+import { Hono } from "hono";
+import { BLOBS_DIR } from "../paths.ts";
 import { db } from "../store/db.ts";
 import { blobMeta } from "../store/schema.ts";
-import { BLOBS_DIR } from "../paths.ts";
 
 // ids come from the webview — keep them to a single path segment.
 function safeId(id: string): boolean {

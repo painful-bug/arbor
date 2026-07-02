@@ -1,5 +1,13 @@
 import { Hono } from "hono";
-import { addFile, search, searchHits, clearCanvas, contentsOf, removeFile, relateNode } from "../kb/index.ts";
+import {
+	addFile,
+	clearCanvas,
+	contentsOf,
+	relateNode,
+	removeFile,
+	search,
+	searchHits,
+} from "../kb/index.ts";
 
 export const kbRoutes = new Hono();
 

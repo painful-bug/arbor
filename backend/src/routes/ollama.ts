@@ -9,7 +9,9 @@ const OLLAMA_SEARCH_PATH = [
 	"/usr/local/bin",
 	"/usr/bin",
 	process.env.HOME ? `${process.env.HOME}/.local/bin` : "",
-].filter(Boolean).join(":");
+]
+	.filter(Boolean)
+	.join(":");
 
 // Resolve ollama binary: prefer explicit common paths over PATH lookup,
 // since the backend may be spawned by Tauri with a minimal PATH.
@@ -50,7 +52,7 @@ ollamaRoutes.post("/pull", async (c) => {
 		try {
 			const proc = Bun.spawn(ollamaCmd("pull", model.trim()), {
 				stdout: "pipe",
-				stderr: "pipe"
+				stderr: "pipe",
 			});
 
 			// ollama writes progress to stdout; forward line by line (strip ANSI + CR).
@@ -67,6 +69,7 @@ ollamaRoutes.post("/pull", async (c) => {
 					buf = parts.pop() ?? "";
 					for (const line of parts) {
 						// Strip ANSI escape codes.
+						// biome-ignore lint/suspicious/noControlCharactersInRegex: \x1b is the ANSI escape prefix being stripped
 						const clean = line.replace(/\x1b\[[0-9;]*m/g, "").trim();
 						if (clean) emit({ type: "progress", text: clean });
 					}
@@ -89,7 +92,7 @@ ollamaRoutes.post("/pull", async (c) => {
 		headers: {
 			"Content-Type": "text/event-stream",
 			"Cache-Control": "no-cache",
-			Connection: "keep-alive"
-		}
+			Connection: "keep-alive",
+		},
 	});
 });

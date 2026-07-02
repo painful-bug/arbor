@@ -1,22 +1,23 @@
 // Agent runner — the sidecar's handlePrompt loop, moved in-process.
 // Keys come from Bun.secrets instead of being injected per-call by Rust.
 // Emits AgentEvent objects to the caller (caller streams them as SSE).
-import { streamSimple, type Api, type Message, type Model } from "@mariozechner/pi-ai";
-import { Agent, type AgentEvent as PiEvent, type AgentMessage } from "@mariozechner/pi-agent-core";
+
+import { Agent, type AgentMessage, type AgentEvent as PiEvent } from "@mariozechner/pi-agent-core";
+import { type Api, type Message, type Model, streamSimple } from "@mariozechner/pi-ai";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
+import { addChat, contentsOf, searchGraded as kbSearchGraded, readSource } from "../kb/index.ts";
 import { buildModel } from "./providers.ts";
 import {
-	webSearchTool,
-	scholarSearchTool,
-	researchPlanTool,
-	knowledgeBaseSearchTool,
-	knowledgeBaseOverviewTool,
-	knowledgeBaseReadSourceTool,
 	createCardTool,
 	createNoteTool,
-	updateCardTool
+	knowledgeBaseOverviewTool,
+	knowledgeBaseReadSourceTool,
+	knowledgeBaseSearchTool,
+	researchPlanTool,
+	scholarSearchTool,
+	updateCardTool,
+	webSearchTool,
 } from "./tools.ts";
-import { searchGraded as kbSearchGraded, addChat, contentsOf, readSource } from "../kb/index.ts";
 
 const SERVICE = "app.arbor.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
@@ -25,7 +26,14 @@ const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(
 export const runs = new Map<string, Agent>();
 
 export interface AgentEvent {
-	type: "text_delta" | "thinking_delta" | "tool_start" | "tool_end" | "provider_switch" | "done" | "error";
+	type:
+		| "text_delta"
+		| "thinking_delta"
+		| "tool_start"
+		| "tool_end"
+		| "provider_switch"
+		| "done"
+		| "error";
 	id: string;
 	delta?: string;
 	message?: string;
@@ -61,7 +69,7 @@ function detailOf(result: unknown): string | undefined {
 	const text = content?.find((c) => c.type === "text")?.text;
 	if (!text) return undefined;
 	const oneLine = text.replace(/\s+/g, " ").trim();
-	return oneLine.length > 200 ? oneLine.slice(0, 200) + "…" : oneLine;
+	return oneLine.length > 200 ? `${oneLine.slice(0, 200)}…` : oneLine;
 }
 
 // Rewrite the provider's raw "400 ... input tokens ... context length" error into
@@ -86,7 +94,7 @@ function estimateTokens(text: string): number {
 function trimToContext(
 	msgs: { role: "user" | "assistant"; content: string }[],
 	systemPrompt: string,
-	model: Model<Api>
+	model: Model<Api>,
 ): { role: "user" | "assistant"; content: string }[] {
 	const budget = (model.contextWindow ?? 128000) - (model.maxTokens ?? 16384) - 2000;
 	let total = estimateTokens(systemPrompt);
@@ -104,7 +112,7 @@ function trimToContext(
 // content as a block array; promote each assistant turn so follow-up turns don't crash.
 function toLlmMessages(
 	msgs: { role: "user" | "assistant"; content: string }[],
-	model: Model<Api>
+	model: Model<Api>,
 ): Message[] {
 	const now = Date.now();
 	return msgs.map((m): Message => {
@@ -121,10 +129,10 @@ function toLlmMessages(
 					cacheRead: 0,
 					cacheWrite: 0,
 					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				},
 				stopReason: "stop",
-				timestamp: now
+				timestamp: now,
 			};
 		}
 		return { role: "user", content: m.content, timestamp: now };
@@ -133,7 +141,7 @@ function toLlmMessages(
 
 export async function handlePrompt(
 	req: PromptRequest,
-	emit: (e: AgentEvent) => void
+	emit: (e: AgentEvent) => void,
 ): Promise<void> {
 	const { cardId } = req;
 	const canvas = req.canvas || "default";
@@ -184,8 +192,8 @@ export async function handlePrompt(
 					systemPrompt,
 					model,
 					tools,
-					messages: toLlmMessages(trimmedMessages, model) as AgentMessage[]
-				}
+					messages: toLlmMessages(trimmedMessages, model) as AgentMessage[],
+				},
 			});
 
 			runs.set(cardId, agent);
@@ -203,15 +211,31 @@ export async function handlePrompt(
 						} else if (a.type === "thinking_delta") {
 							emit({ type: "thinking_delta", id: cardId, delta: a.delta });
 						} else if (a.type === "error") {
-							emit({ type: "error", id: cardId, message: a.error?.errorMessage ?? a.reason ?? "stream error" });
+							emit({
+								type: "error",
+								id: cardId,
+								message: a.error?.errorMessage ?? a.reason ?? "stream error",
+							});
 						}
 						break;
 					}
 					case "tool_execution_start":
-						emit({ type: "tool_start", id: cardId, toolId: ev.toolCallId, name: ev.toolName, args: ev.args });
+						emit({
+							type: "tool_start",
+							id: cardId,
+							toolId: ev.toolCallId,
+							name: ev.toolName,
+							args: ev.args,
+						});
 						break;
 					case "tool_execution_end":
-						emit({ type: "tool_end", id: cardId, toolId: ev.toolCallId, ok: !ev.isError, detail: detailOf(ev.result) });
+						emit({
+							type: "tool_end",
+							id: cardId,
+							toolId: ev.toolCallId,
+							ok: !ev.isError,
+							detail: detailOf(ev.result),
+						});
 						break;
 				}
 			});
@@ -221,7 +245,8 @@ export async function handlePrompt(
 			if (!err) {
 				emit({ type: "done", id: cardId });
 				// Ingest this conversation turn into the canvas KB (fire-and-forget).
-				const userPrompt = [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+				const userPrompt =
+					[...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
 				if (userPrompt && answerText) void addChat(canvas, cardId, userPrompt, answerText);
 				return;
 			}
@@ -234,7 +259,7 @@ export async function handlePrompt(
 					id: cardId,
 					provider: next.provider,
 					model: next.model,
-					message: `Rate-limited on ${rung.provider} — falling back to ${next.provider}.`
+					message: `Rate-limited on ${rung.provider} — falling back to ${next.provider}.`,
 				});
 				continue;
 			}
@@ -244,9 +269,17 @@ export async function handlePrompt(
 		}
 
 		// Every rung was either skipped (no key) or rate-limited.
-		emit({ type: "error", id: cardId, message: friendlyError(lastError ?? "All providers in the ladder failed.") });
+		emit({
+			type: "error",
+			id: cardId,
+			message: friendlyError(lastError ?? "All providers in the ladder failed."),
+		});
 	} catch (err) {
-		emit({ type: "error", id: cardId, message: friendlyError(String((err as Error)?.message ?? err)) });
+		emit({
+			type: "error",
+			id: cardId,
+			message: friendlyError(String((err as Error)?.message ?? err)),
+		});
 	} finally {
 		runs.delete(cardId);
 	}

@@ -1,6 +1,6 @@
 // Agent route tests. These don't hit a real LLM — they verify the SSE plumbing
 // and graceful-degradation path (no key saved → error event, not a 500).
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { makeTestApp } from "./test-utils.ts";
 
 const { api } = makeTestApp("test-agent-token");
@@ -33,8 +33,8 @@ describe("agent routes", () => {
 			body: JSON.stringify({
 				cardId: "c1",
 				messages: [{ role: "user", content: "hello" }],
-				providers: [{ provider: "anthropic", model: "claude-haiku-4-5-20251001" }]
-			})
+				providers: [{ provider: "anthropic", model: "claude-haiku-4-5-20251001" }],
+			}),
 		});
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toContain("text/event-stream");

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { arrange, place, type ArrangeNode } from "./arrange.ts";
+import { describe, expect, it } from "bun:test";
+import { type ArrangeNode, arrange, place } from "./arrange.ts";
 
 const GAP = 8;
 // Run the layout and resolve it to pixel positions at the default gap.
@@ -50,7 +50,8 @@ describe("arrange()", () => {
 		const p = run(nodes);
 		for (let i = 0; i < nodes.length; i++) {
 			for (let j = i + 1; j < nodes.length; j++) {
-				const a = nodes[i].id, b = nodes[j].id;
+				const a = nodes[i].id,
+					b = nodes[j].id;
 				const ra = Math.hypot(nodes[i].w, nodes[i].h) / 2 + 24;
 				const rb = Math.hypot(nodes[j].w, nodes[j].h) / 2 + 24;
 				expect(dist(p, a, b)).toBeGreaterThan((ra + rb) * 0.85);
@@ -72,8 +73,10 @@ describe("arrange()", () => {
 			const p = place(layout, gap);
 			for (let i = 0; i < nodes.length; i++) {
 				for (let j = i + 1; j < nodes.length; j++) {
-					const a = nodes[i].id, b = nodes[j].id;
-					const sa = wh.get(a)!, sb = wh.get(b)!;
+					const a = nodes[i].id,
+						b = nodes[j].id;
+					const sa = wh.get(a)!,
+						sb = wh.get(b)!;
 					const overlapX = Math.abs(p[a].x - p[b].x) < (sa.w + sb.w) / 2;
 					const overlapY = Math.abs(p[a].y - p[b].y) < (sa.h + sb.h) / 2;
 					expect(overlapX && overlapY).toBe(false);

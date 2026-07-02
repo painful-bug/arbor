@@ -1,15 +1,15 @@
 // Canvas state: nodes/edges for Svelte Flow + actions to grow the tree.
-import type { Node, Edge, XYPosition } from '@xyflow/svelte';
+import type { Edge, Node, XYPosition } from "@xyflow/svelte";
 import {
-	runAgent,
+	type AgentEvent,
+	type ChatMessage,
 	kbRemove,
 	PROVIDERS,
 	type Provider,
-	type ChatMessage,
-	type AgentEvent
-} from '$lib/ai/client';
-import { workflowSystemPrompt } from '$lib/ai/workflows';
-import { apiJson, apiPut, apiFetch } from '$lib/api';
+	runAgent,
+} from "$lib/ai/client";
+import { workflowSystemPrompt } from "$lib/ai/workflows";
+import { apiFetch, apiJson, apiPut } from "$lib/api";
 
 // One exchange in a card's conversation: user prompt → agent answer + its timeline.
 export interface Turn {
@@ -31,14 +31,14 @@ export interface CardData {
 // Last turn helper — the one being streamed / replied to.
 export const lastTurn = (d: CardData): Turn => d.turns[d.turns.length - 1];
 
-const BLOCKS = ['lime', 'lilac', 'cream', 'pink', 'mint', 'coral'];
+const BLOCKS = ["lime", "lilac", "cream", "pink", "mint", "coral"];
 let blockIdx = 0;
 
 // ── Tool state (shared by toolbar + canvas) ──────────────────────────────────
-export type Tool = 'hand' | 'select' | 'text' | 'duplicate' | 'connect' | 'color';
+export type Tool = "hand" | "select" | "text" | "duplicate" | "connect" | "color";
 export const tool = $state<{ active: Tool; connectFrom: string | null }>({
-	active: 'hand',
-	connectFrom: null
+	active: "hand",
+	connectFrom: null,
 });
 let idCounter = 0;
 const nextId = () => `n${++idCounter}`;
@@ -46,13 +46,13 @@ const nextId = () => `n${++idCounter}`;
 export const flow = $state<{ nodes: Node[]; edges: Edge[]; selected: string | null }>({
 	nodes: [],
 	edges: [],
-	selected: null
+	selected: null,
 });
 
 // Hub session: canvas-wide agent chat (active when no card is selected).
 export const session = $state<{ turns: Turn[]; streaming: boolean }>({
 	turns: [],
-	streaming: false
+	streaming: false,
 });
 
 // ── Multi-canvas persistence ────────────────────────────────────────────────
@@ -77,21 +77,21 @@ interface CanvasIndex {
 
 // Reactive registry + view state the Library/Sidebar bind to.
 export const library = $state<{ list: CanvasMeta[] }>({ list: [] });
-export const ui = $state<{ view: 'canvas' | 'library'; sidebarExpanded: boolean }>({
-	view: 'canvas',
-	sidebarExpanded: false
+export const ui = $state<{ view: "canvas" | "library"; sidebarExpanded: boolean }>({
+	view: "canvas",
+	sidebarExpanded: false,
 });
-let currentId = '';
+let currentId = "";
 export const currentCanvasId = () => currentId;
 
-const uid = () => 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const uid = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 async function readIndex(): Promise<CanvasIndex> {
-	return apiJson<CanvasIndex>('/api/canvases');
+	return apiJson<CanvasIndex>("/api/canvases");
 }
 
 function writeIndex(current: string, list: CanvasMeta[]): void {
-	void apiPut('/api/canvases', { current, list });
+	void apiPut("/api/canvases", { current, list });
 }
 
 // In-memory doc cache: populated on load/write so Library.svelte can show previews sync.
@@ -120,20 +120,20 @@ function writeDoc(doc: CanvasDoc): void {
 // Normalize loaded nodes: clear mid-stream flags, migrate pre-thread Q→A cards.
 function normalize(nodes: Node[]): Node[] {
 	for (const n of nodes ?? []) {
-		if (n.data && n.data.streaming) n.data.streaming = false;
+		if (n.data?.streaming) n.data.streaming = false;
 		// Height is always content-driven; width persists so user-resized cards restore.
-		if (n.type === 'card' || n.type === 'file') {
+		if (n.type === "card" || n.type === "file") {
 			if (!n.width) n.width = 400;
 			delete n.height;
 		}
-		if (n.data && n.type === 'card' && !Array.isArray(n.data.turns)) {
-			n.data.title = n.data.title ?? n.data.prompt ?? '';
+		if (n.data && n.type === "card" && !Array.isArray(n.data.turns)) {
+			n.data.title = n.data.title ?? n.data.prompt ?? "";
 			n.data.turns = [
 				{
-					prompt: n.data.prompt ?? '',
-					answer: n.data.answer ?? '',
-					events: Array.isArray(n.data.events) ? n.data.events : []
-				}
+					prompt: n.data.prompt ?? "",
+					answer: n.data.answer ?? "",
+					events: Array.isArray(n.data.events) ? n.data.events : [],
+				},
 			];
 			delete n.data.prompt;
 			delete n.data.answer;
@@ -157,8 +157,8 @@ function applyDoc(doc: CanvasDoc | null): void {
 	session.streaming = false;
 	idCounter = 0;
 	for (const n of nodes) {
-		const num = parseInt(String(n.id).replace(/\D/g, ''), 10);
-		if (!isNaN(num) && num > idCounter) idCounter = num;
+		const num = parseInt(String(n.id).replace(/\D/g, ""), 10);
+		if (!Number.isNaN(num) && num > idCounter) idCounter = num;
 	}
 	// Capture loaded state as first undo snapshot after effects settle.
 	setTimeout(() => {
@@ -166,7 +166,7 @@ function applyDoc(doc: CanvasDoc | null): void {
 		pushHistory();
 		// Backfill: link any nodes that aren't semantically connected yet.
 		if (settings.autoConnect) {
-			void import('./autolink').then((m) => m.autolinkAll()).catch(() => {});
+			void import("./autolink").then((m) => m.autolinkAll()).catch(() => {});
 		}
 	}, 10);
 }
@@ -182,7 +182,7 @@ export async function init(): Promise<void> {
 
 	if (!stored.list.length) {
 		// Fresh install — create default canvas.
-		const doc = newDoc('Canvas 1');
+		const doc = newDoc("Canvas 1");
 		writeDoc(doc);
 		const meta = { id: doc.id, name: doc.name, createdAt: doc.createdAt, updatedAt: doc.updatedAt };
 		library.list = [meta];
@@ -194,9 +194,7 @@ export async function init(): Promise<void> {
 	}
 
 	library.list = stored.list;
-	currentId = stored.list.some((c) => c.id === stored.current)
-		? stored.current
-		: stored.list[0].id;
+	currentId = stored.list.some((c) => c.id === stored.current) ? stored.current : stored.list[0].id;
 
 	applyDoc(await loadDoc(currentId));
 	await loadSettingsAsync();
@@ -208,7 +206,13 @@ export function saveCanvas(): void {
 	const meta = library.list.find((c) => c.id === currentId);
 	if (!meta) return;
 	const now = Date.now();
-	writeDoc({ ...meta, updatedAt: now, nodes: flow.nodes, edges: flow.edges, session: session.turns });
+	writeDoc({
+		...meta,
+		updatedAt: now,
+		nodes: flow.nodes,
+		edges: flow.edges,
+		session: session.turns,
+	});
 	library.list = library.list.map((c) => (c.id === currentId ? { ...c, updatedAt: now } : c));
 	writeIndex(currentId, library.list);
 }
@@ -217,7 +221,10 @@ export function newCanvas(name?: string): string {
 	saveCanvas();
 	const doc = newDoc(name || `Canvas ${library.list.length + 1}`);
 	writeDoc(doc);
-	library.list = [{ id: doc.id, name: doc.name, createdAt: doc.createdAt, updatedAt: doc.updatedAt }, ...library.list];
+	library.list = [
+		{ id: doc.id, name: doc.name, createdAt: doc.createdAt, updatedAt: doc.updatedAt },
+		...library.list,
+	];
 	writeIndex(doc.id, library.list);
 	currentId = doc.id;
 	applyDoc(doc);
@@ -242,15 +249,15 @@ export async function renameCanvas(id: string, name: string): Promise<void> {
 }
 
 export async function deleteCanvas(id: string): Promise<void> {
-	void apiFetch(`/api/canvases/${id}`, { method: 'DELETE' });
+	void apiFetch(`/api/canvases/${id}`, { method: "DELETE" });
 	// Drop this canvas's whole RAG index (clearCanvas → dropTable). ponytail: orphaned
 	// per-canvas blobs are left on disk; cheap to ignore vs. listing every file node.
-	void apiFetch(`/api/rag/${encodeURIComponent(id)}/files`, { method: 'DELETE' });
+	void apiFetch(`/api/rag/${encodeURIComponent(id)}/files`, { method: "DELETE" });
 	library.list = library.list.filter((c) => c.id !== id);
 	writeIndex(currentId, library.list);
 	if (currentId === id) {
-		currentId = '';
-		if (!library.list.length) newCanvas('Canvas 1');
+		currentId = "";
+		if (!library.list.length) newCanvas("Canvas 1");
 		else await switchCanvas(library.list[0].id);
 	}
 }
@@ -286,7 +293,9 @@ export function undo(): void {
 	flow.edges = JSON.parse(JSON.stringify(snap.edges));
 	flow.selected = null;
 	saveCanvas();
-	setTimeout(() => { _histLock = false; }, 500); // past the 400ms save debounce
+	setTimeout(() => {
+		_histLock = false;
+	}, 500); // past the 400ms save debounce
 }
 
 export function redo(): void {
@@ -298,30 +307,40 @@ export function redo(): void {
 	flow.edges = JSON.parse(JSON.stringify(snap.edges));
 	flow.selected = null;
 	saveCanvas();
-	setTimeout(() => { _histLock = false; }, 500);
+	setTimeout(() => {
+		_histLock = false;
+	}, 500);
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 export const DEFAULT_MODELS = Object.fromEntries(
-	PROVIDERS.map((p) => [p.id, p.defaultModel])
+	PROVIDERS.map((p) => [p.id, p.defaultModel]),
 ) as Record<Provider, string>;
 
 const VALID_PROVIDERS = new Set(PROVIDERS.map((p) => p.id));
 
 // Model ladder: tried in order, falls back to the next rung on rate-limit.
 // Gemini first (generous free tier), then fast/cheap inference, then the rest.
-export const DEFAULT_LADDER: Provider[] = ['google', 'nim', 'groq', 'openrouter', 'anthropic', 'openai', 'ollama'];
+export const DEFAULT_LADDER: Provider[] = [
+	"google",
+	"nim",
+	"groq",
+	"openrouter",
+	"anthropic",
+	"openai",
+	"ollama",
+];
 
 interface Settings {
 	providerLadder: Provider[];
 	models: Record<Provider, string>;
 	workflow: string;
 	bashEnabled: boolean;
-	websearch: { enabled: boolean; backend: 'duckduckgo' | 'tavily' };
+	websearch: { enabled: boolean; backend: "duckduckgo" | "tavily" };
 	snapToGrid: boolean;
 	autoConnect: boolean;
-	theme: 'light' | 'dark';
+	theme: "light" | "dark";
 	clusterSpacing: number; // Clean Up inter-cluster gutter (avg-radius units)
 	autoCleanup: { enabled: boolean; intervalMin: number }; // periodic Clean Up (Cmd-C) while canvas open
 }
@@ -329,77 +348,83 @@ interface Settings {
 const FALLBACK_SETTINGS: Settings = {
 	providerLadder: [...DEFAULT_LADDER],
 	models: { ...DEFAULT_MODELS },
-	workflow: 'general',
+	workflow: "general",
 	bashEnabled: false,
-	websearch: { enabled: false, backend: 'duckduckgo' },
+	websearch: { enabled: false, backend: "duckduckgo" },
 	snapToGrid: false,
 	autoConnect: true,
-	theme: 'dark',
+	theme: "dark",
 	clusterSpacing: 8,
 	autoCleanup: { enabled: false, intervalMin: 30 },
 };
 
-const LS_KEY = 'arbor:settings';
+const LS_KEY = "arbor:settings";
 export const settings = $state<Settings>({ ...FALLBACK_SETTINGS, models: { ...DEFAULT_MODELS } });
 
 // {provider, model} ladder ready to send to the backend, in user-chosen order.
 export function activeLadder(): { provider: Provider; model: string }[] {
 	return settings.providerLadder.map((provider) => ({
 		provider,
-		model: settings.models[provider] || DEFAULT_MODELS[provider]
+		model: settings.models[provider] || DEFAULT_MODELS[provider],
 	}));
 }
 
 function applySettings(p: Record<string, unknown>): void {
 	if (Array.isArray(p.providerLadder)) {
 		const ladder = p.providerLadder.filter(
-			(x, i, arr): x is Provider => typeof x === 'string' && VALID_PROVIDERS.has(x as Provider) && arr.indexOf(x) === i
+			(x, i, arr): x is Provider =>
+				typeof x === "string" && VALID_PROVIDERS.has(x as Provider) && arr.indexOf(x) === i,
 		);
 		if (ladder.length) settings.providerLadder = ladder;
-	} else if (typeof p.provider === 'string' && VALID_PROVIDERS.has(p.provider as Provider)) {
+	} else if (typeof p.provider === "string" && VALID_PROVIDERS.has(p.provider as Provider)) {
 		// Legacy single-provider settings — migrate to a one-rung ladder.
 		settings.providerLadder = [p.provider as Provider];
 	}
-	if (p.models && typeof p.models === 'object') {
+	if (p.models && typeof p.models === "object") {
 		const m = p.models as Record<string, string>;
 		for (const k of Object.keys(m)) {
 			if (VALID_PROVIDERS.has(k as Provider)) settings.models[k as Provider] = m[k];
 		}
 	}
-	if (typeof p.workflow === 'string') settings.workflow = p.workflow;
-	if (typeof p.bashEnabled === 'boolean') settings.bashEnabled = p.bashEnabled;
-	if (p.websearch && typeof p.websearch === 'object') {
+	if (typeof p.workflow === "string") settings.workflow = p.workflow;
+	if (typeof p.bashEnabled === "boolean") settings.bashEnabled = p.bashEnabled;
+	if (p.websearch && typeof p.websearch === "object") {
 		const ws = p.websearch as Record<string, unknown>;
-		if (typeof ws.enabled === 'boolean') settings.websearch.enabled = ws.enabled;
-		if (ws.backend === 'duckduckgo' || ws.backend === 'tavily') settings.websearch.backend = ws.backend;
+		if (typeof ws.enabled === "boolean") settings.websearch.enabled = ws.enabled;
+		if (ws.backend === "duckduckgo" || ws.backend === "tavily")
+			settings.websearch.backend = ws.backend;
 	}
-	if (typeof p.snapToGrid === 'boolean') settings.snapToGrid = p.snapToGrid;
-	if (typeof p.autoConnect === 'boolean') settings.autoConnect = p.autoConnect;
-	if (p.theme === 'light' || p.theme === 'dark') settings.theme = p.theme;
-	if (typeof p.clusterSpacing === 'number' && p.clusterSpacing >= 0)
+	if (typeof p.snapToGrid === "boolean") settings.snapToGrid = p.snapToGrid;
+	if (typeof p.autoConnect === "boolean") settings.autoConnect = p.autoConnect;
+	if (p.theme === "light" || p.theme === "dark") settings.theme = p.theme;
+	if (typeof p.clusterSpacing === "number" && p.clusterSpacing >= 0)
 		settings.clusterSpacing = p.clusterSpacing;
-	if (p.autoCleanup && typeof p.autoCleanup === 'object') {
+	if (p.autoCleanup && typeof p.autoCleanup === "object") {
 		const ac = p.autoCleanup as Record<string, unknown>;
-		if (typeof ac.enabled === 'boolean') settings.autoCleanup.enabled = ac.enabled;
-		if (typeof ac.intervalMin === 'number' && ac.intervalMin >= 1)
+		if (typeof ac.enabled === "boolean") settings.autoCleanup.enabled = ac.enabled;
+		if (typeof ac.intervalMin === "number" && ac.intervalMin >= 1)
 			settings.autoCleanup.intervalMin = ac.intervalMin;
 	}
 }
 
 // Apply any localStorage-cached settings immediately (synchronous, before backend responds).
 try {
-	const raw = typeof localStorage !== 'undefined' && localStorage.getItem(LS_KEY);
+	const raw = typeof localStorage !== "undefined" && localStorage.getItem(LS_KEY);
 	if (raw) applySettings(JSON.parse(raw) as Record<string, unknown>);
 } catch {}
 
 async function loadSettingsAsync(): Promise<void> {
 	let p: Record<string, unknown> | null = null;
-	try { p = await apiJson<Record<string, unknown> | null>('/api/settings'); } catch { return; }
+	try {
+		p = await apiJson<Record<string, unknown> | null>("/api/settings");
+	} catch {
+		return;
+	}
 	if (!p) return; // none saved yet — keep defaults
 	try {
 		applySettings(p);
 		// Keep localStorage in sync with backend's authoritative copy.
-		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(p));
+		if (typeof localStorage !== "undefined") localStorage.setItem(LS_KEY, JSON.stringify(p));
 	} catch {}
 }
 
@@ -417,16 +442,16 @@ export function persistSettings(): void {
 		autoCleanup: { ...settings.autoCleanup },
 	};
 	try {
-		if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(payload));
+		if (typeof localStorage !== "undefined") localStorage.setItem(LS_KEY, JSON.stringify(payload));
 	} catch {}
-	void apiPut('/api/settings', payload);
+	void apiPut("/api/settings", payload);
 }
 
 // ── Semantic auto-linking ─────────────────────────────────────────────────────
 // Dynamic import breaks the store↔autolink cycle (autolink imports this module).
 function triggerAutolink(nodeId: string): void {
 	if (!settings.autoConnect) return;
-	void import('./autolink').then((m) => m.scheduleAutolink(nodeId)).catch(() => {});
+	void import("./autolink").then((m) => m.scheduleAutolink(nodeId)).catch(() => {});
 }
 
 // Remove every auto semantic edge across all canvases (current + stored docs).
@@ -449,19 +474,19 @@ export async function purgeSemanticEdges(): Promise<void> {
 export function addCard(
 	position: XYPosition,
 	prompt: string,
-	opts: { parentId?: string; quote?: string; workflow?: string } = {}
+	opts: { parentId?: string; quote?: string; workflow?: string } = {},
 ): string {
 	const id = nextId();
 	const block = BLOCKS[blockIdx++ % BLOCKS.length];
 	const data: CardData = {
 		title: prompt,
-		turns: [{ prompt, answer: '', events: [] }],
+		turns: [{ prompt, answer: "", events: [] }],
 		streaming: true,
 		block,
 		quote: opts.quote,
-		workflow: opts.workflow ?? settings.workflow
+		workflow: opts.workflow ?? settings.workflow,
 	};
-	flow.nodes = [...flow.nodes, { id, type: 'card', position, data, width: 400 }];
+	flow.nodes = [...flow.nodes, { id, type: "card", position, data, width: 400 }];
 	if (opts.parentId) {
 		flow.edges = [
 			...flow.edges,
@@ -469,9 +494,9 @@ export function addCard(
 				id: `e-${opts.parentId}-${id}`,
 				source: opts.parentId,
 				target: id,
-				type: 'bezier',
-				animated: true
-			}
+				type: "bezier",
+				animated: true,
+			},
 		];
 	}
 	return id;
@@ -491,7 +516,7 @@ function setTurnAnswer(id: string, answer: string, streaming: boolean): void {
 export function continueCard(id: string, prompt: string): void {
 	flow.nodes = flow.nodes.map((n) => {
 		if (n.id !== id) return n;
-		const turns = [...(n.data.turns as Turn[]), { prompt, answer: '', events: [] }];
+		const turns = [...(n.data.turns as Turn[]), { prompt, answer: "", events: [] }];
 		return { ...n, data: { ...n.data, turns, streaming: true } };
 	});
 	void runModel(id);
@@ -503,7 +528,7 @@ export function retryCard(id: string): void {
 		if (n.id !== id) return n;
 		const turns = n.data.turns as Turn[];
 		const last = turns[turns.length - 1];
-		const fresh = [...turns.slice(0, -1), { prompt: last.prompt, answer: '', events: [] }];
+		const fresh = [...turns.slice(0, -1), { prompt: last.prompt, answer: "", events: [] }];
 		return { ...n, data: { ...n.data, turns: fresh, streaming: true } };
 	});
 	void runModel(id);
@@ -517,15 +542,19 @@ interface WebData {
 	[key: string]: unknown;
 }
 
-export function addWebCard(position: XYPosition, url: string, opts: { parentId?: string } = {}): string {
+export function addWebCard(
+	position: XYPosition,
+	url: string,
+	opts: { parentId?: string } = {},
+): string {
 	const id = nextId();
 	const block = BLOCKS[blockIdx++ % BLOCKS.length];
 	const data: WebData = { url, block };
-	flow.nodes = [...flow.nodes, { id, type: 'web', position, data, width: 480, height: 560 }];
+	flow.nodes = [...flow.nodes, { id, type: "web", position, data, width: 480, height: 560 }];
 	if (opts.parentId) {
 		flow.edges = [
 			...flow.edges,
-			{ id: `e-${opts.parentId}-${id}`, source: opts.parentId, target: id, type: 'bezier' }
+			{ id: `e-${opts.parentId}-${id}`, source: opts.parentId, target: id, type: "bezier" },
 		];
 	}
 	return id;
@@ -538,17 +567,17 @@ export interface PdfHL {
 	y: number;
 	w: number;
 	h: number;
-	color: string;   // CSS color string, e.g. 'rgba(255,222,89,0.45)'
-	text?: string;   // selected text content, used for Send-to-chat
+	color: string; // CSS color string, e.g. 'rgba(255,222,89,0.45)'
+	text?: string; // selected text content, used for Send-to-chat
 }
 
 // File card on the canvas: shows a preview of a dropped file + indexing progress.
 export interface FileData {
 	filename: string;
-	status: 'indexing' | 'ready' | 'error';
+	status: "indexing" | "ready" | "error";
 	block: string;
 	mime: string;
-	kind: import('$lib/files').FileKind;
+	kind: import("$lib/files").FileKind;
 	path?: string;
 	preview?: string;
 	highlights?: PdfHL[];
@@ -558,38 +587,32 @@ export interface FileData {
 export function addFileCard(
 	position: XYPosition,
 	filename: string,
-	opts: { mime?: string; kind?: FileData['kind']; path?: string } = {}
+	opts: { mime?: string; kind?: FileData["kind"]; path?: string } = {},
 ): string {
 	const id = nextId();
 	const block = BLOCKS[blockIdx++ % BLOCKS.length];
 	const data: FileData = {
 		filename,
-		status: 'indexing',
+		status: "indexing",
 		block,
-		mime: opts.mime ?? '',
-		kind: opts.kind ?? 'other',
-		path: opts.path
+		mime: opts.mime ?? "",
+		kind: opts.kind ?? "other",
+		path: opts.path,
 	};
-	flow.nodes = [...flow.nodes, { id, type: 'file', position, data, width: 220, height: 280 }];
+	flow.nodes = [...flow.nodes, { id, type: "file", position, data, width: 220, height: 280 }];
 	return id;
 }
 
-export function setFileStatus(id: string, status: FileData['status']): void {
-	flow.nodes = flow.nodes.map((n) =>
-		n.id === id ? { ...n, data: { ...n.data, status } } : n
-	);
+export function setFileStatus(id: string, status: FileData["status"]): void {
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, status } } : n));
 }
 
 export function setFilePreview(id: string, preview: string): void {
-	flow.nodes = flow.nodes.map((n) =>
-		n.id === id ? { ...n, data: { ...n.data, preview } } : n
-	);
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, preview } } : n));
 }
 
 export function setFileHighlights(id: string, highlights: PdfHL[]): void {
-	flow.nodes = flow.nodes.map((n) =>
-		n.id === id ? { ...n, data: { ...n.data, highlights } } : n
-	);
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, highlights } } : n));
 }
 
 // ── Text card (user markdown note) ───────────────────────────────────────────
@@ -608,67 +631,67 @@ export interface TagData {
 	[key: string]: unknown;
 }
 
-export function addTextCard(position: XYPosition, text = ''): string {
+export function addTextCard(position: XYPosition, text = ""): string {
 	const id = nextId();
 	const block = BLOCKS[blockIdx++ % BLOCKS.length];
 	const data: TextData = { text, block };
-	flow.nodes = [...flow.nodes, { id, type: 'text', position, data, width: 320 }];
+	flow.nodes = [...flow.nodes, { id, type: "text", position, data, width: 320 }];
 	return id;
 }
 
 const _textIndexTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 export function setCardText(id: string, text: string): void {
-	flow.nodes = flow.nodes.map((n) =>
-		n.id === id ? { ...n, data: { ...n.data, text } } : n
-	);
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, text } } : n));
 	// Debounce KB indexing so we don't re-embed on every keystroke
 	const prev = _textIndexTimers.get(id);
 	if (prev) clearTimeout(prev);
-	_textIndexTimers.set(id, setTimeout(() => {
-		_textIndexTimers.delete(id);
-		if (text.trim()) {
-			void indexTextCard(id, text);
-		}
-	}, 2000));
+	_textIndexTimers.set(
+		id,
+		setTimeout(() => {
+			_textIndexTimers.delete(id);
+			if (text.trim()) {
+				void indexTextCard(id, text);
+			}
+		}, 2000),
+	);
 }
 
 async function indexTextCard(cardId: string, text: string): Promise<void> {
-	const { kbAdd } = await import('$lib/ai/client');
-	const canvas = currentCanvasId() || 'default';
+	const { kbAdd } = await import("$lib/ai/client");
+	const canvas = currentCanvasId() || "default";
 	const bytes = new TextEncoder().encode(text);
-	await kbAdd(canvas, `text:${cardId}`, 'text/plain', bytes.buffer as ArrayBuffer).catch(() => {});
+	await kbAdd(canvas, `text:${cardId}`, "text/plain", bytes.buffer as ArrayBuffer).catch(() => {});
 	triggerAutolink(cardId);
 }
 
 function setCardBlock(id: string, block: string): void {
-	flow.nodes = flow.nodes.map((n) =>
-		n.id === id ? { ...n, data: { ...n.data, block } } : n
-	);
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, block } } : n));
 }
 
 export function cycleCardBlock(id: string): void {
 	const n = flow.nodes.find((node) => node.id === id);
 	if (!n) return;
-	const cur = (n.data as { block?: string }).block ?? 'lime';
+	const cur = (n.data as { block?: string }).block ?? "lime";
 	const next = BLOCKS[(BLOCKS.indexOf(cur) + 1) % BLOCKS.length];
 	setCardBlock(id, next);
 }
 
 export function duplicateNode(id: string): string {
 	const src = flow.nodes.find((n) => n.id === id);
-	if (!src) return '';
+	if (!src) return "";
 	const newId = nextId();
 	const data = JSON.parse(JSON.stringify(src.data)) as Record<string, unknown>;
-	if ('streaming' in data) data.streaming = false;
-	const srcW = (src as Node & { measured?: { width?: number } }).measured?.width ?? src.width ?? 400;
+	if ("streaming" in data) data.streaming = false;
+	const srcW =
+		(src as Node & { measured?: { width?: number } }).measured?.width ?? src.width ?? 400;
 	// Place beside original — don't spread src to avoid copying SvelteFlow internals
 	const node: Node = {
 		id: newId,
-		type: src.type ?? 'card',
+		type: src.type ?? "card",
 		position: { x: src.position.x + srcW + 40, y: src.position.y },
 		data,
-		width: src.width
+		width: src.width,
 	};
 	if (src.height != null) node.height = src.height;
 	flow.nodes = [...flow.nodes, node];
@@ -681,15 +704,16 @@ export function duplicateSelected(): void {
 	const newNodes: Node[] = selected.map((src) => {
 		const newId = nextId();
 		const data = JSON.parse(JSON.stringify(src.data)) as Record<string, unknown>;
-		if ('streaming' in data) data.streaming = false;
-		const srcW = (src as Node & { measured?: { width?: number } }).measured?.width ?? src.width ?? 400;
+		if ("streaming" in data) data.streaming = false;
+		const srcW =
+			(src as Node & { measured?: { width?: number } }).measured?.width ?? src.width ?? 400;
 		const node: Node = {
 			id: newId,
-			type: src.type ?? 'card',
+			type: src.type ?? "card",
 			position: { x: src.position.x + srcW + 40, y: src.position.y },
 			data,
 			width: src.width,
-			selected: true
+			selected: true,
 		};
 		if (src.height != null) node.height = src.height;
 		return node;
@@ -700,11 +724,9 @@ export function duplicateSelected(): void {
 // Purge a removed file node's RAG chunks + stored blob. Idempotent, so it's safe to
 // call from every delete path. Dynamic import of files.ts avoids a static store↔files cycle.
 function cleanupRemovedNodes(ids: Set<string>): void {
-	const fileNodes = flow.nodes.filter(
-		(n) => ids.has(n.id) && n.type === 'file'
-	);
+	const fileNodes = flow.nodes.filter((n) => ids.has(n.id) && n.type === "file");
 	if (!fileNodes.length) return;
-	void import('$lib/files').then(({ deleteFileBlob }) => {
+	void import("$lib/files").then(({ deleteFileBlob }) => {
 		for (const n of fileNodes) {
 			const filename = (n.data as { filename?: string }).filename;
 			if (filename) void kbRemove(currentId, filename);
@@ -725,13 +747,10 @@ export function addManualEdge(
 	source: string,
 	target: string,
 	sourceHandle: string,
-	targetHandle: string
+	targetHandle: string,
 ): void {
 	const id = `e-${source}-${target}-${Date.now()}`;
-	flow.edges = [
-		...flow.edges,
-		{ id, source, target, sourceHandle, targetHandle, type: 'bezier' }
-	];
+	flow.edges = [...flow.edges, { id, source, target, sourceHandle, targetHandle, type: "bezier" }];
 }
 
 // ── Edge side-anchoring ───────────────────────────────────────────────────────
@@ -753,7 +772,7 @@ export function nodeCenter(n: {
 export function facingSide(from: { x: number; y: number }, to: { x: number; y: number }): string {
 	const dx = to.x - from.x;
 	const dy = to.y - from.y;
-	return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
+	return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? "right" : "left") : dy >= 0 ? "bottom" : "top";
 }
 
 // Re-anchor edges so each end attaches on the side facing the other card — no more
@@ -772,7 +791,11 @@ export function remapEdgeSides(touched?: Set<string>): void {
 			return edge;
 		const sc = nodeCenter(src);
 		const tc = nodeCenter(tgt);
-		return { ...edge, sourceHandle: facingSide(sc, tc) + '-s', targetHandle: facingSide(tc, sc) + '-t' };
+		return {
+			...edge,
+			sourceHandle: `${facingSide(sc, tc)}-s`,
+			targetHandle: `${facingSide(tc, sc)}-t`,
+		};
 	});
 }
 
@@ -790,11 +813,14 @@ export function deleteNodes(ids: string[]): void {
 
 // ── Group nodes ─────────────────────────────────────────────────────────────
 // ponytail: parent-node approach — SvelteFlow handles drag-together natively.
-interface GroupData { block: string; [key: string]: unknown }
+interface GroupData {
+	block: string;
+	[key: string]: unknown;
+}
 
 export function groupNodes(ids: string[]): string {
 	const selected = flow.nodes.filter((n) => ids.includes(n.id));
-	if (selected.length < 2) return '';
+	if (selected.length < 2) return "";
 
 	const PADDING = 28;
 	const GAP = 24;
@@ -814,7 +840,7 @@ export function groupNodes(ids: string[]): string {
 
 	const groupNode: Node = {
 		id: groupId,
-		type: 'group',
+		type: "group",
 		position: { x: avgX - groupW / 2, y: avgY - groupH / 2 },
 		data: { block } satisfies GroupData,
 		width: groupW,
@@ -846,26 +872,27 @@ export function groupNodes(ids: string[]): string {
 
 export function snippetOf(node: Node): string {
 	const d = node.data as Record<string, unknown>;
-	if (node.type === 'card') {
+	if (node.type === "card") {
 		const turns = d.turns as Turn[] | undefined;
-		const title = (d.title as string) ?? '';
-		const answer = turns?.length ? turns[0].answer?.slice(0, 200) : '';
+		const title = (d.title as string) ?? "";
+		const answer = turns?.length ? turns[0].answer?.slice(0, 200) : "";
 		return `${title} ${answer}`.trim();
 	}
-	if (node.type === 'text') return ((d.text as string) ?? '').slice(0, 200);
-	if (node.type === 'file') {
-		const name = (d.filename as string) ?? '';
-		const preview = (d.preview as string) ?? '';
+	if (node.type === "text") return ((d.text as string) ?? "").slice(0, 200);
+	if (node.type === "file") {
+		const name = (d.filename as string) ?? "";
+		const preview = (d.preview as string) ?? "";
 		return `${name} ${preview.slice(0, 200)}`.trim();
 	}
-	if (node.type === 'web') return (d.title as string) ?? (d.url as string) ?? '';
-	return '';
+	if (node.type === "web") return (d.title as string) ?? (d.url as string) ?? "";
+	return "";
 }
 
 // Last Clean Up layout, cached so the spacing slider can re-place cards instantly
 // (no re-embed). Keyed only implicitly by the current node set — invalidated when
 // a referenced id is gone.
-import type { ArrangeLayout } from '$lib/ai/client';
+import type { ArrangeLayout } from "$lib/ai/client";
+
 let cleanupLayout: ArrangeLayout | null = null;
 
 // place(layout, gap) → pixel positions. Mirror of the backend helper; clusters are
@@ -899,14 +926,14 @@ export async function cleanUp(ids?: string[]): Promise<void> {
 	let targets: Node[];
 	if (ids && ids.length >= 2) {
 		const idSet = new Set(ids);
-		targets = flow.nodes.filter((n) => idSet.has(n.id) && n.type !== 'group' && n.type !== 'tag');
+		targets = flow.nodes.filter((n) => idSet.has(n.id) && n.type !== "group" && n.type !== "tag");
 	} else {
-		targets = flow.nodes.filter((n) => !n.parentId && n.type !== 'group' && n.type !== 'tag');
+		targets = flow.nodes.filter((n) => !n.parentId && n.type !== "group" && n.type !== "tag");
 	}
 	if (targets.length < 2) return;
 
-	const { cleanupArrange } = await import('$lib/ai/client');
-	const canvas = currentCanvasId() || 'default';
+	const { cleanupArrange } = await import("$lib/ai/client");
+	const canvas = currentCanvasId() || "default";
 	const payload = targets.map((n) => ({
 		id: n.id,
 		text: snippetOf(n),
@@ -942,11 +969,14 @@ export async function cleanUp(ids?: string[]): Promise<void> {
 // Each is a normal 'tag' node (so it persists, undoes, pans/zooms for free) anchored
 // to its cluster's member ids; repositionTags() floats it above their bounding box.
 let cleanupClusters: string[][] = [];
-const clusterKey = (ids: string[]) => [...ids].sort().join('|');
+const clusterKey = (ids: string[]) => [...ids].sort().join("|");
 
 function clusterBox(ids: string[]): { minX: number; minY: number; maxX: number } | null {
 	const set = new Set(ids);
-	let minX = Infinity, minY = Infinity, maxX = -Infinity, found = false;
+	let minX = Infinity,
+		minY = Infinity,
+		maxX = -Infinity,
+		found = false;
 	for (const n of flow.nodes) {
 		if (!set.has(n.id)) continue;
 		found = true;
@@ -962,7 +992,9 @@ function clusterBox(ids: string[]): { minX: number; minY: number; maxX: number }
 export function addClusterTags(): void {
 	if (!cleanupClusters.length) return;
 	const tagged = new Set(
-		flow.nodes.filter((n) => n.type === 'tag').map((n) => clusterKey((n.data as TagData).anchor ?? [])),
+		flow.nodes
+			.filter((n) => n.type === "tag")
+			.map((n) => clusterKey((n.data as TagData).anchor ?? [])),
 	);
 	const created: Node[] = [];
 	for (const members of cleanupClusters) {
@@ -971,9 +1003,9 @@ export function addClusterTags(): void {
 		if (!bb) continue;
 		created.push({
 			id: nextId(),
-			type: 'tag',
+			type: "tag",
 			position: { x: Math.round((bb.minX + bb.maxX) / 2 - 60), y: Math.round(bb.minY - 46) },
-			data: { text: '', anchor: [...members] } as TagData,
+			data: { text: "", anchor: [...members] } as TagData,
 			width: 120,
 		});
 	}
@@ -991,7 +1023,7 @@ export function setTagText(id: string, text: string): void {
 export function repositionTags(): void {
 	let changed = false;
 	const next = flow.nodes.map((n) => {
-		if (n.type !== 'tag') return n;
+		if (n.type !== "tag") return n;
 		const anchor = (n.data as TagData).anchor;
 		if (!anchor?.length) return n;
 		const bb = clusterBox(anchor);
@@ -1011,7 +1043,10 @@ export function repositionTags(): void {
 export function setClusterSpacing(gap: number): void {
 	settings.clusterSpacing = gap;
 	persistSettingsDebounced();
-	if (cleanupLayout && cleanupLayout.nodes && Object.keys(cleanupLayout.nodes).every((id) => flow.nodes.some((n) => n.id === id)))
+	if (
+		cleanupLayout?.nodes &&
+		Object.keys(cleanupLayout.nodes).every((id) => flow.nodes.some((n) => n.id === id))
+	)
 		applyPositions(placeLayout(cleanupLayout, gap));
 }
 
@@ -1045,32 +1080,32 @@ export async function runModel(id: string): Promise<void> {
 	// Ancestor cards' full threads → the branch spine.
 	for (const aid of ancestry(id)) {
 		const node = flow.nodes.find((n) => n.id === aid);
-		if (node && node.type === 'card') pushTurns(messages, node.data as CardData);
+		if (node && node.type === "card") pushTurns(messages, node.data as CardData);
 	}
 
 	// This card's prior turns (everything before the active one).
 	const turns = selfData.turns;
 	for (const t of turns.slice(0, -1)) {
-		if (t.prompt) messages.push({ role: 'user', content: t.prompt });
-		if (t.answer) messages.push({ role: 'assistant', content: t.answer });
+		if (t.prompt) messages.push({ role: "user", content: t.prompt });
+		if (t.answer) messages.push({ role: "assistant", content: t.answer });
 	}
 
 	// Active turn's prompt. Quote prefix only on the very first turn (branch origin).
 	const active = turns[turns.length - 1];
 	const firstTurn = turns.length === 1;
 	const quote = firstTurn ? selfData.quote : undefined;
-	const base = quote
-		? `Regarding this excerpt:\n\n> ${quote}\n\n${active.prompt}`
-		: active.prompt;
-	messages.push({ role: 'user', content: base });
+	const base = quote ? `Regarding this excerpt:\n\n> ${quote}\n\n${active.prompt}` : active.prompt;
+	messages.push({ role: "user", content: base });
 
 	const workflow = selfData.workflow ?? settings.workflow;
 	const ancestorIds = new Set(ancestry(id));
 	const connected = connectedDigest(id, ancestorIds); // ancestors already sent as full message history
 	const digest = canvasDigest(id, new Set([...ancestorIds, ...connectedIds(id, flow.edges)]));
-	const systemPrompt = [workflowSystemPrompt(workflow), connected, digest].filter(Boolean).join('\n\n');
+	const systemPrompt = [workflowSystemPrompt(workflow), connected, digest]
+		.filter(Boolean)
+		.join("\n\n");
 
-	let answer = '';
+	let answer = "";
 	await runAgent(
 		id,
 		messages,
@@ -1082,27 +1117,27 @@ export async function runModel(id: string): Promise<void> {
 			websearch: settings.websearch.enabled,
 			websearchBackend: settings.websearch.backend,
 			canvasTools: true,
-			canvas: currentId
+			canvas: currentId,
 		},
 		(e) => {
 			switch (e.type) {
-				case 'text_delta':
-					answer += e.delta ?? '';
+				case "text_delta":
+					answer += e.delta ?? "";
 					setTurnAnswer(id, answer, true);
 					break;
-				case 'tool_start':
+				case "tool_start":
 					applyCanvasTool(e);
 					pushEvent(id, e);
 					break;
-				case 'thinking_delta':
-				case 'tool_end':
+				case "thinking_delta":
+				case "tool_end":
 					pushEvent(id, e);
 					break;
-				case 'error':
+				case "error":
 					answer += `\n\n_[error: ${e.message}]_`;
 					setTurnAnswer(id, answer, false);
 					break;
-				case 'done':
+				case "done":
 					setTurnAnswer(id, answer, false);
 					if (turns.length === 1) {
 						void generateTitle(id, active.prompt, answer);
@@ -1111,34 +1146,40 @@ export async function runModel(id: string): Promise<void> {
 					triggerAutolink(id);
 					break;
 			}
-		}
+		},
 	);
 }
 
 async function generateTitle(id: string, prompt: string, answer: string): Promise<void> {
-	const messages: ChatMessage[] = [{
-		role: 'user',
-		content: `Write a short descriptive title (5 words max, no quotes, no trailing punctuation) that captures what this Q&A is about:\n\nQ: ${prompt.slice(0, 300)}\nA: ${answer.slice(0, 500)}`
-	}];
-	let title = '';
+	const messages: ChatMessage[] = [
+		{
+			role: "user",
+			content: `Write a short descriptive title (5 words max, no quotes, no trailing punctuation) that captures what this Q&A is about:\n\nQ: ${prompt.slice(0, 300)}\nA: ${answer.slice(0, 500)}`,
+		},
+	];
+	let title = "";
 	await runAgent(
 		`__title_${id}`,
 		messages,
 		{
 			providers: activeLadder(),
-			canvas: currentId
+			canvas: currentId,
 		},
 		(e) => {
-			if (e.type === 'text_delta') title += e.delta ?? '';
-			else if (e.type === 'done' && title.trim()) {
-				const clean = title.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/[.!?]+$/, '').trim();
+			if (e.type === "text_delta") title += e.delta ?? "";
+			else if (e.type === "done" && title.trim()) {
+				const clean = title
+					.trim()
+					.replace(/^["'`]+|["'`]+$/g, "")
+					.replace(/[.!?]+$/, "")
+					.trim();
 				if (clean) {
 					flow.nodes = flow.nodes.map((n) =>
-						n.id === id ? { ...n, data: { ...n.data, title: clean } } : n
+						n.id === id ? { ...n, data: { ...n.data, title: clean } } : n,
 					);
 				}
 			}
-		}
+		},
 	);
 }
 
@@ -1147,36 +1188,37 @@ async function generateCanvasTitle(): Promise<void> {
 	if (!meta || !/^Canvas \d+$/.test(meta.name)) return;
 	const parts: string[] = [];
 	for (const n of flow.nodes) {
-		if (n.type === 'card') parts.push(((n.data as CardData).title || lastTurn(n.data as CardData)?.prompt || '').trim());
-		else if (n.type === 'file') parts.push(((n.data as { filename: string }).filename || '').trim());
+		if (n.type === "card")
+			parts.push(((n.data as CardData).title || lastTurn(n.data as CardData)?.prompt || "").trim());
+		else if (n.type === "file")
+			parts.push(((n.data as { filename: string }).filename || "").trim());
 	}
-	const content = parts.filter(Boolean).join(', ');
+	const content = parts.filter(Boolean).join(", ");
 	if (!content) return;
-	const messages: ChatMessage[] = [{
-		role: 'user',
-		content: `Write a short descriptive title (5 words max, no quotes, no trailing punctuation) for a research canvas containing: ${content}`
-	}];
-	let title = '';
-	await runAgent(
-		'__canvas_title__',
-		messages,
-		{ providers: activeLadder() },
-		(e) => {
-			if (e.type === 'text_delta') title += e.delta ?? '';
-			else if (e.type === 'done' && title.trim()) {
-				const clean = title.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/[.!?]+$/, '').trim();
-				if (clean) void renameCanvas(currentId, clean);
-			}
+	const messages: ChatMessage[] = [
+		{
+			role: "user",
+			content: `Write a short descriptive title (5 words max, no quotes, no trailing punctuation) for a research canvas containing: ${content}`,
+		},
+	];
+	let title = "";
+	await runAgent("__canvas_title__", messages, { providers: activeLadder() }, (e) => {
+		if (e.type === "text_delta") title += e.delta ?? "";
+		else if (e.type === "done" && title.trim()) {
+			const clean = title
+				.trim()
+				.replace(/^["'`]+|["'`]+$/g, "")
+				.replace(/[.!?]+$/, "")
+				.trim();
+			if (clean) void renameCanvas(currentId, clean);
 		}
-	);
+	});
 }
 
 export function renameCard(id: string, title: string): void {
 	const t = title.trim();
 	if (!t) return;
-	flow.nodes = flow.nodes.map((n) =>
-		n.id === id ? { ...n, data: { ...n.data, title: t } } : n
-	);
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, title: t } } : n));
 }
 
 // ── Hub session (canvas-wide agent chat) ────────────────────────────────────
@@ -1192,9 +1234,9 @@ function createCardFromAgent(title: string, content: string): string {
 		title,
 		turns: [{ prompt: title, answer: content, events: [] }],
 		streaming: false,
-		block
+		block,
 	};
-	flow.nodes = [...flow.nodes, { id, type: 'card', position, data, width: 400 }];
+	flow.nodes = [...flow.nodes, { id, type: "card", position, data, width: 400 }];
 	saveCanvas();
 	triggerAutolink(id);
 	return id;
@@ -1207,13 +1249,10 @@ function updateCardContent(ref: string, content: string): boolean {
 		flow.nodes.find((n) => n.id === ref) ??
 		flow.nodes.find((n) => {
 			const d = n.data as Record<string, unknown>;
-			return (
-				typeof d.title === 'string' &&
-				d.title.toLowerCase() === ref.toLowerCase()
-			);
+			return typeof d.title === "string" && d.title.toLowerCase() === ref.toLowerCase();
 		});
 	if (!node) return false;
-	if (node.type === 'text') {
+	if (node.type === "text") {
 		setCardText(node.id, content);
 	} else {
 		// Q&A card: replace last turn's answer (replace, not append — per user choice).
@@ -1232,22 +1271,22 @@ function updateCardContent(ref: string, content: string): boolean {
 // Full card content is included (capped at 6000 chars each) so the agent can reason over it.
 function canvasDigestWithIds(): string {
 	const cards = flow.nodes
-		.filter((n) => n.type === 'card' || n.type === 'text')
+		.filter((n) => n.type === "card" || n.type === "text")
 		.map((n) => {
 			const d = n.data as CardData & { text?: string };
-			const title = (d.title ?? d.text ?? '').trim();
-			const content = n.type === 'card' ? (lastTurn(d)?.answer ?? '') : (d.text ?? '');
+			const title = (d.title ?? d.text ?? "").trim();
+			const content = n.type === "card" ? (lastTurn(d)?.answer ?? "") : (d.text ?? "");
 			return { id: n.id, title, content };
 		})
 		.filter((c) => c.title);
-	if (!cards.length) return '';
+	if (!cards.length) return "";
 	const sections = cards.map((c) => {
 		const body = c.content.trim().slice(0, 6000);
 		return body
 			? `### [${c.id}] ${c.title}\n${body}`
 			: `### [${c.id}] ${c.title}\n(no content yet)`;
 	});
-	return `## Canvas cards (use ids with create_card / update_card)\n\n${sections.join('\n\n')}`;
+	return `## Canvas cards (use ids with create_card / update_card)\n\n${sections.join("\n\n")}`;
 }
 
 function setSessionAnswer(answer: string, streaming: boolean): void {
@@ -1270,50 +1309,50 @@ function pushSessionEvent(ev: AgentEvent): void {
 function applyCanvasTool(ev: AgentEvent): void {
 	const args = ev.args as Record<string, string> | undefined;
 	if (!args) return;
-	if (ev.name === 'create_card') {
-		createCardFromAgent(args.title ?? '', args.content ?? '');
-	} else if (ev.name === 'create_note') {
+	if (ev.name === "create_card") {
+		createCardFromAgent(args.title ?? "", args.content ?? "");
+	} else if (ev.name === "create_note") {
 		const maxX = flow.nodes.reduce((m, n) => Math.max(m, n.position.x + (n.width ?? 400)), 0);
 		const pos = { x: maxX > 0 ? maxX + 40 : 80, y: 80 };
-		const noteId = addTextCard(pos, args.content ?? '');
+		const noteId = addTextCard(pos, args.content ?? "");
 		saveCanvas();
 		triggerAutolink(noteId);
-	} else if (ev.name === 'update_card') {
-		updateCardContent(args.card ?? '', args.content ?? '');
+	} else if (ev.name === "update_card") {
+		updateCardContent(args.card ?? "", args.content ?? "");
 	}
 }
 
 // Run a hub session turn. Mirrors runModel but targets session state + uses canvasTools.
 export async function runSession(prompt: string): Promise<void> {
-	session.turns = [...session.turns, { prompt, answer: '', events: [] }];
+	session.turns = [...session.turns, { prompt, answer: "", events: [] }];
 	session.streaming = true;
 	saveCanvas();
 
 	const messages: ChatMessage[] = [];
 	for (const t of session.turns.slice(0, -1)) {
-		if (t.prompt) messages.push({ role: 'user', content: t.prompt });
-		if (t.answer) messages.push({ role: 'assistant', content: t.answer });
+		if (t.prompt) messages.push({ role: "user", content: t.prompt });
+		if (t.answer) messages.push({ role: "assistant", content: t.answer });
 	}
-	messages.push({ role: 'user', content: prompt });
+	messages.push({ role: "user", content: prompt });
 
 	const workflow = settings.workflow;
 	const digest = canvasDigestWithIds();
 	const toolHint =
-		'\n\n## Hub Session Rules\n' +
+		"\n\n## Hub Session Rules\n" +
 		'You are the canvas-level assistant. The full content of every canvas card is provided IN THIS SYSTEM PROMPT in the "Canvas cards" section below — read it directly to answer questions about card contents. ' +
-		'DO NOT call knowledge_base_search to find card content; KB tools only work for files the user has explicitly uploaded (PDFs, docx, images, etc.), not for canvas cards.\n\n' +
-		'**Bias toward action over clarification.** If the user\'s intent is clear enough to attempt, execute it immediately without asking questions. ' +
-		'Call create_card once per card you want to create — do not batch them into one card. ' +
-		'Ask a question only if you genuinely cannot proceed without the answer.\n\n' +
-		'## Canvas Tools\n' +
-		'- create_card(title, content): creates a new Q&A card on the canvas. Call this once per card — multiple calls = multiple cards.\n' +
-		'- create_note(title?, content): creates a standalone markdown note card — for drafted prose, summaries, emails, outlines.\n' +
-		'- update_card(card, content): replaces an existing card\'s content (use card id when available).';
-	const systemPrompt = workflowSystemPrompt(workflow) + toolHint + (digest ? '\n\n' + digest : '');
+		"DO NOT call knowledge_base_search to find card content; KB tools only work for files the user has explicitly uploaded (PDFs, docx, images, etc.), not for canvas cards.\n\n" +
+		"**Bias toward action over clarification.** If the user's intent is clear enough to attempt, execute it immediately without asking questions. " +
+		"Call create_card once per card you want to create — do not batch them into one card. " +
+		"Ask a question only if you genuinely cannot proceed without the answer.\n\n" +
+		"## Canvas Tools\n" +
+		"- create_card(title, content): creates a new Q&A card on the canvas. Call this once per card — multiple calls = multiple cards.\n" +
+		"- create_note(title?, content): creates a standalone markdown note card — for drafted prose, summaries, emails, outlines.\n" +
+		"- update_card(card, content): replaces an existing card's content (use card id when available).";
+	const systemPrompt = workflowSystemPrompt(workflow) + toolHint + (digest ? `\n\n${digest}` : "");
 
-	let answer = '';
+	let answer = "";
 	await runAgent(
-		'__session__',
+		"__session__",
 		messages,
 		{
 			providers: activeLadder(),
@@ -1323,41 +1362,41 @@ export async function runSession(prompt: string): Promise<void> {
 			websearch: settings.websearch.enabled,
 			websearchBackend: settings.websearch.backend,
 			canvasTools: true,
-			canvas: currentId
+			canvas: currentId,
 		},
 		(e) => {
 			switch (e.type) {
-				case 'text_delta':
-					answer += e.delta ?? '';
+				case "text_delta":
+					answer += e.delta ?? "";
 					setSessionAnswer(answer, true);
 					break;
-				case 'tool_start':
+				case "tool_start":
 					applyCanvasTool(e);
 					pushSessionEvent(e);
 					break;
-				case 'thinking_delta':
-				case 'tool_end':
+				case "thinking_delta":
+				case "tool_end":
 					pushSessionEvent(e);
 					break;
-				case 'error':
+				case "error":
 					answer += `\n\n_[error: ${e.message}]_`;
 					setSessionAnswer(answer, false);
 					saveCanvas();
 					break;
-				case 'done':
+				case "done":
 					setSessionAnswer(answer, false);
 					saveCanvas();
 					break;
 			}
-		}
+		},
 	);
 }
 
 // Flatten a card's turns into alternating user/assistant messages.
 function pushTurns(messages: ChatMessage[], d: CardData): void {
 	for (const t of d.turns ?? []) {
-		if (t.prompt) messages.push({ role: 'user', content: t.prompt });
-		if (t.answer) messages.push({ role: 'assistant', content: t.answer });
+		if (t.prompt) messages.push({ role: "user", content: t.prompt });
+		if (t.answer) messages.push({ role: "assistant", content: t.answer });
 	}
 }
 
@@ -1373,7 +1412,7 @@ export function connectedIds(id: string, edges: Edge[]): Set<string> {
 }
 
 export interface ConnectedItem {
-	kind: 'card' | 'text' | 'file';
+	kind: "card" | "text" | "file";
 	title: string; // card title / filename ('' for notes)
 	body: string; // pre-truncated content to show
 }
@@ -1384,16 +1423,16 @@ export function connectedDigestFrom(items: ConnectedItem[]): string {
 	const sections = items
 		.map((it) => {
 			const body = it.body.trim();
-			if (it.kind === 'card') return body ? `### "${it.title || '(untitled card)'}"\n${body}` : '';
-			if (it.kind === 'text') return body ? `### [note]\n${body}` : '';
-			return `### [file: ${it.title}]\n${body || '(not yet indexed)'}`;
+			if (it.kind === "card") return body ? `### "${it.title || "(untitled card)"}"\n${body}` : "";
+			if (it.kind === "text") return body ? `### [note]\n${body}` : "";
+			return `### [file: ${it.title}]\n${body || "(not yet indexed)"}`;
 		})
 		.filter(Boolean);
-	if (!sections.length) return '';
+	if (!sections.length) return "";
 	return (
-		'## Connected to this card\n' +
+		"## Connected to this card\n" +
 		'The user directly linked these on the canvas — prioritize them over the "Other threads" section below.\n\n' +
-		sections.join('\n\n')
+		sections.join("\n\n")
 	);
 }
 
@@ -1401,20 +1440,29 @@ function connectedDigest(id: string, skip: Set<string>): string {
 	const ids = [...connectedIds(id, flow.edges)].filter((cid) => !skip.has(cid));
 	const items: ConnectedItem[] = ids
 		.map((cid) => flow.nodes.find((n) => n.id === cid))
-		.filter((n): n is Node => !!n && (n.type === 'card' || n.type === 'text' || n.type === 'file'))
+		.filter((n): n is Node => !!n && (n.type === "card" || n.type === "text" || n.type === "file"))
 		.map((n) => {
-			if (n.type === 'card') {
+			if (n.type === "card") {
 				const d = n.data as CardData;
 				const t = lastTurn(d);
-				const body = [t?.prompt, t?.answer].filter(Boolean).join('\n').replace(/\s+/g, ' ').trim().slice(0, 800);
-				return { kind: 'card' as const, title: d.title ?? '', body };
+				const body = [t?.prompt, t?.answer]
+					.filter(Boolean)
+					.join("\n")
+					.replace(/\s+/g, " ")
+					.trim()
+					.slice(0, 800);
+				return { kind: "card" as const, title: d.title ?? "", body };
 			}
-			if (n.type === 'text') {
+			if (n.type === "text") {
 				const d = n.data as TextData;
-				return { kind: 'text' as const, title: '', body: (d.text ?? '').slice(0, 1500) };
+				return { kind: "text" as const, title: "", body: (d.text ?? "").slice(0, 1500) };
 			}
 			const d = n.data as FileData;
-			return { kind: 'file' as const, title: d.filename ?? '', body: (d.preview ?? '').slice(0, 1500) };
+			return {
+				kind: "file" as const,
+				title: d.filename ?? "",
+				body: (d.preview ?? "").slice(0, 1500),
+			};
 		});
 	return connectedDigestFrom(items);
 }
@@ -1423,39 +1471,39 @@ function canvasDigest(excludeId: string, skip: Set<string> = new Set()): string 
 	const cards = flow.nodes
 		.filter(
 			(n) =>
-				(n.type === 'card' || n.type === 'text' || n.type === 'file') &&
+				(n.type === "card" || n.type === "text" || n.type === "file") &&
 				n.id !== excludeId &&
-				!skip.has(n.id)
+				!skip.has(n.id),
 		)
 		.map((n) => {
-			if (n.type === 'text') {
+			if (n.type === "text") {
 				const d = n.data as TextData;
-				return { id: n.id, title: '[note]', lastAnswer: (d.text ?? '').slice(0, 120) };
+				return { id: n.id, title: "[note]", lastAnswer: (d.text ?? "").slice(0, 120) };
 			}
-			if (n.type === 'file') {
+			if (n.type === "file") {
 				const d = n.data as FileData;
-				return { id: n.id, title: `[file: ${d.filename}]`, lastAnswer: '' };
+				return { id: n.id, title: `[file: ${d.filename}]`, lastAnswer: "" };
 			}
 			const d = n.data as CardData;
-			return { id: n.id, title: d.title ?? '', lastAnswer: lastTurn(d)?.answer ?? '' };
+			return { id: n.id, title: d.title ?? "", lastAnswer: lastTurn(d)?.answer ?? "" };
 		});
 	return digestFrom(cards, excludeId);
 }
 
 export function digestFrom(
 	cards: { id: string; title: string; lastAnswer: string }[],
-	excludeId: string
+	excludeId: string,
 ): string {
 	const lines: string[] = [];
 	for (const c of cards) {
 		if (c.id === excludeId) continue;
 		const title = c.title.trim();
 		if (!title) continue;
-		const snippet = c.lastAnswer.replace(/\s+/g, ' ').trim().slice(0, 120);
+		const snippet = c.lastAnswer.replace(/\s+/g, " ").trim().slice(0, 120);
 		lines.push(snippet ? `- "${title}": ${snippet}` : `- "${title}"`);
 	}
-	if (!lines.length) return '';
-	return `## Other threads on this canvas\nThe user may reference these. Use them as context when relevant.\n${lines.join('\n')}`;
+	if (!lines.length) return "";
+	return `## Other threads on this canvas\nThe user may reference these. Use them as context when relevant.\n${lines.join("\n")}`;
 }
 
 function ancestry(id: string): string[] {

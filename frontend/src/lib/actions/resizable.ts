@@ -15,21 +15,25 @@ export function resizable(node: HTMLElement, opts: ResizableOptions) {
 		opts.onstart?.();
 		const startX = e.clientX;
 		const startW = opts.getWidth();
-		const maxW = typeof opts.max === 'function' ? opts.max() : opts.max;
+		const maxW = typeof opts.max === "function" ? opts.max() : opts.max;
 		const move = (ev: PointerEvent) => {
 			opts.onwidth(Math.max(opts.min, Math.min(maxW, startW + startX - ev.clientX)));
 		};
 		const up = () => {
 			opts.onend?.();
-			window.removeEventListener('pointermove', move);
-			window.removeEventListener('pointerup', up);
+			window.removeEventListener("pointermove", move);
+			window.removeEventListener("pointerup", up);
 		};
-		window.addEventListener('pointermove', move);
-		window.addEventListener('pointerup', up);
+		window.addEventListener("pointermove", move);
+		window.addEventListener("pointerup", up);
 	}
-	node.addEventListener('pointerdown', pointerdown);
+	node.addEventListener("pointerdown", pointerdown);
 	return {
-		update(newOpts: ResizableOptions) { opts = newOpts; },
-		destroy() { node.removeEventListener('pointerdown', pointerdown); }
+		update(newOpts: ResizableOptions) {
+			opts = newOpts;
+		},
+		destroy() {
+			node.removeEventListener("pointerdown", pointerdown);
+		},
 	};
 }

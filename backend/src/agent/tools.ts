@@ -1,7 +1,8 @@
 // Agent tools: web search (Tavily/DDG), scholar search (OpenAlex+arXiv),
 // research plan, and canvas knowledge base search (in-process via kb/index.ts).
-import { Type } from "typebox";
+
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import { Type } from "typebox";
 import type { GradedSearch } from "../kb/index.ts";
 
 export type WebBackend = "tavily" | "duckduckgo";
@@ -14,10 +15,14 @@ interface Hit {
 
 const searchSchema = Type.Object({
 	query: Type.String({ description: "The web search query." }),
-	max_results: Type.Optional(Type.Number({ description: "Max results (default 5)." }))
+	max_results: Type.Optional(Type.Number({ description: "Max results (default 5)." })),
 });
 
-async function tavily(query: string, max: number, apiKey: string): Promise<{ hits: Hit[]; answer?: string }> {
+async function tavily(
+	query: string,
+	max: number,
+	apiKey: string,
+): Promise<{ hits: Hit[]; answer?: string }> {
 	const res = await fetch("https://api.tavily.com/search", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -26,29 +31,37 @@ async function tavily(query: string, max: number, apiKey: string): Promise<{ hit
 			query,
 			max_results: max,
 			search_depth: "advanced",
-			include_answer: true
-		})
+			include_answer: true,
+		}),
 	});
 	if (!res.ok) throw new Error(`Tavily ${res.status}: ${(await res.text()).slice(0, 200)}`);
 	const data = (await res.json()) as {
 		answer?: string;
 		results?: { title: string; url: string; content: string }[];
 	};
-	const hits = (data.results ?? []).map((r) => ({ title: r.title, url: r.url, snippet: r.content }));
+	const hits = (data.results ?? []).map((r) => ({
+		title: r.title,
+		url: r.url,
+		snippet: r.content,
+	}));
 	return { hits, answer: data.answer };
 }
 
 // ponytail: regex scrape of DDG's HTML, not an API. Try lite as fallback. Throw on 0 results.
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
-const strip = (s: string) => s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").trim();
+const strip = (s: string) =>
+	s
+		.replace(/<[^>]+>/g, "")
+		.replace(/&amp;/g, "&")
+		.trim();
 const unwrap = (url: string) => {
 	const ud = url.match(/uddg=([^&]+)/);
 	return ud ? decodeURIComponent(ud[1]) : url;
 };
 
 async function ddgHtml(query: string, max: number): Promise<Hit[]> {
-	const res = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query), {
-		headers: { "user-agent": UA }
+	const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+		headers: { "user-agent": UA },
 	});
 	if (!res.ok) throw new Error(`DuckDuckGo ${res.status}`);
 	const html = await res.text();
@@ -62,8 +75,8 @@ async function ddgHtml(query: string, max: number): Promise<Hit[]> {
 }
 
 async function ddgLite(query: string, max: number): Promise<Hit[]> {
-	const res = await fetch("https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(query), {
-		headers: { "user-agent": UA }
+	const res = await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, {
+		headers: { "user-agent": UA },
 	});
 	if (!res.ok) throw new Error(`DuckDuckGo lite ${res.status}`);
 	const html = await res.text();
@@ -82,7 +95,7 @@ async function duckduckgo(query: string, max: number): Promise<{ hits: Hit[]; an
 	if (hits.length === 0)
 		throw new Error(
 			"DuckDuckGo returned no results (it often rate-limits automated requests). " +
-				"Enable Tavily in Settings → Web Search for reliable results."
+				"Enable Tavily in Settings → Web Search for reliable results.",
 		);
 	return { hits };
 }
@@ -111,7 +124,7 @@ export interface Paper {
 
 const scholarSchema = Type.Object({
 	query: Type.String({ description: "Search query — keywords or a research question." }),
-	max_results: Type.Optional(Type.Number({ description: "Max papers (default 6)." }))
+	max_results: Type.Optional(Type.Number({ description: "Max papers (default 6)." })),
 });
 
 export function reconstructAbstract(inv?: Record<string, number[]>): string | undefined {
@@ -134,13 +147,16 @@ async function openAlex(query: string, max: number): Promise<Paper[]> {
 	const data = (await res.json()) as { results?: any[] };
 	return (data.results ?? []).map((w) => ({
 		title: w.title ?? w.display_name ?? "(untitled)",
-		authors: (w.authorships ?? []).map((a: any) => a.author?.display_name).filter(Boolean).slice(0, 6),
+		authors: (w.authorships ?? [])
+			.map((a: any) => a.author?.display_name)
+			.filter(Boolean)
+			.slice(0, 6),
 		year: w.publication_year,
 		venue: w.primary_location?.source?.display_name,
 		citations: w.cited_by_count,
 		abstract: reconstructAbstract(w.abstract_inverted_index),
 		url: w.doi ? `https://doi.org/${String(w.doi).replace(/^https?:\/\/doi\.org\//, "")}` : w.id,
-		pdf: w.open_access?.oa_url ?? w.best_oa_location?.pdf_url ?? undefined
+		pdf: w.open_access?.oa_url ?? w.best_oa_location?.pdf_url ?? undefined,
 	}));
 }
 
@@ -161,7 +177,9 @@ async function arxiv(query: string, max: number): Promise<Paper[]> {
 	return entries.slice(0, max).map((e) => {
 		const abs = xmlTag(e, "id") ?? "";
 		const pdf = (e.match(/href="([^"]*\/pdf\/[^"]*)"/) || [])[1] ?? abs.replace("/abs/", "/pdf/");
-		const authors = [...e.matchAll(/<name>([\s\S]*?)<\/name>/g)].map((m) => strip(m[1])).slice(0, 6);
+		const authors = [...e.matchAll(/<name>([\s\S]*?)<\/name>/g)]
+			.map((m) => strip(m[1]))
+			.slice(0, 6);
 		const published = xmlTag(e, "published");
 		return {
 			title: (xmlTag(e, "title") ?? "(untitled)").replace(/\s+/g, " "),
@@ -170,7 +188,7 @@ async function arxiv(query: string, max: number): Promise<Paper[]> {
 			venue: "arXiv",
 			abstract: xmlTag(e, "summary")?.replace(/\s+/g, " "),
 			url: abs,
-			pdf
+			pdf,
 		};
 	});
 }
@@ -193,8 +211,12 @@ export function formatPapers(query: string, papers: Paper[]): string {
 		.map((p, i) => {
 			const meta = [p.authors.join(", "), p.venue, p.year].filter(Boolean).join(" · ");
 			const cited = p.citations != null ? ` · cited ${p.citations}` : "";
-			const abs = p.abstract ? `\n${p.abstract.slice(0, 400)}${p.abstract.length > 400 ? "…" : ""}` : "";
-			const links = [p.url, p.pdf && p.pdf !== p.url ? `PDF: ${p.pdf}` : ""].filter(Boolean).join("  ");
+			const abs = p.abstract
+				? `\n${p.abstract.slice(0, 400)}${p.abstract.length > 400 ? "…" : ""}`
+				: "";
+			const links = [p.url, p.pdf && p.pdf !== p.url ? `PDF: ${p.pdf}` : ""]
+				.filter(Boolean)
+				.join("  ");
 			return `[${i + 1}] ${p.title}\n${meta}${cited}${abs}\n${links}`;
 		})
 		.join("\n\n");
@@ -212,17 +234,22 @@ export function scholarSearchTool(): AgentTool<typeof scholarSchema> {
 			const per = Math.ceil(max / 2) + 2;
 			const [oa, ax] = await Promise.all([
 				openAlex(params.query, per).catch(() => [] as Paper[]),
-				arxiv(params.query, per).catch(() => [] as Paper[])
+				arxiv(params.query, per).catch(() => [] as Paper[]),
 			]);
 			const papers = mergePapers(oa, ax, max);
-			return { content: [{ type: "text", text: formatPapers(params.query, papers) }], details: { papers } };
-		}
+			return {
+				content: [{ type: "text", text: formatPapers(params.query, papers) }],
+				details: { papers },
+			};
+		},
 	};
 }
 
 const planSchema = Type.Object({
-	topics: Type.Array(Type.String(), { description: "3–6 concrete sub-topics / search angles to investigate." }),
-	rationale: Type.Optional(Type.String({ description: "One line on the overall strategy." }))
+	topics: Type.Array(Type.String(), {
+		description: "3–6 concrete sub-topics / search angles to investigate.",
+	}),
+	rationale: Type.Optional(Type.String({ description: "One line on the overall strategy." })),
 });
 
 export function researchPlanTool(): AgentTool<typeof planSchema> {
@@ -233,19 +260,22 @@ export function researchPlanTool(): AgentTool<typeof planSchema> {
 			"Record your research plan BEFORE searching. Pass the sub-topics you will investigate. Call this first in deep research so the plan is shown to the user.",
 		parameters: planSchema,
 		async execute(_id, params): Promise<AgentToolResult<{ topics: string[] }>> {
-			const text = "Plan:\n" + params.topics.map((t, i) => `${i + 1}. ${t}`).join("\n");
+			const text = `Plan:\n${params.topics.map((t, i) => `${i + 1}. ${t}`).join("\n")}`;
 			return { content: [{ type: "text", text }], details: { topics: params.topics } };
-		}
+		},
 	};
 }
 
 // ── Canvas knowledge base: search / overview / read-source ──────────────────
 const kbSchema = Type.Object({
-	query: Type.String({ description: "Content-topic search terms (e.g. 'TCP handshake', 'mitochondria'), NOT meta like 'pdf' or 'file'." })
+	query: Type.String({
+		description:
+			"Content-topic search terms (e.g. 'TCP handshake', 'mitochondria'), NOT meta like 'pdf' or 'file'.",
+	}),
 });
 
 export function knowledgeBaseSearchTool(
-	search: (query: string) => Promise<GradedSearch>
+	search: (query: string) => Promise<GradedSearch>,
 ): AgentTool<typeof kbSchema> {
 	return {
 		name: "knowledge_base_search",
@@ -258,31 +288,37 @@ export function knowledgeBaseSearchTool(
 			const texts = chunks.map((c) => c.text);
 			if (chunks.length === 0 || verdict === "none") {
 				return {
-					content: [{
-						type: "text",
-						text: `Relevance verdict: none — the KB has no strong match for "${params.query}". Rewrite with broader subject terms and retry, or fall back to web_search. Do not answer from unrelated chunks.`
-					}],
-					details: { chunks: texts, verdict: "none" }
+					content: [
+						{
+							type: "text",
+							text: `Relevance verdict: none — the KB has no strong match for "${params.query}". Rewrite with broader subject terms and retry, or fall back to web_search. Do not answer from unrelated chunks.`,
+						},
+					],
+					details: { chunks: texts, verdict: "none" },
 				};
 			}
 			const body = chunks
-				.map((c, i) => `[${i + 1}]${c.score >= 0 ? ` (relevance ${c.score.toFixed(2)})` : ""}\n${c.text}`)
+				.map(
+					(c, i) =>
+						`[${i + 1}]${c.score >= 0 ? ` (relevance ${c.score.toFixed(2)})` : ""}\n${c.text}`,
+				)
 				.join("\n\n---\n\n");
-			const hint = verdict === "weak"
-				? "\n\n(Verdict: weak — these may be partial or off-target. Rewrite the query once and retry; if still weak, use web_search and separate KB claims from web claims.)"
-				: "";
+			const hint =
+				verdict === "weak"
+					? "\n\n(Verdict: weak — these may be partial or off-target. Rewrite the query once and retry; if still weak, use web_search and separate KB claims from web claims.)"
+					: "";
 			return {
 				content: [{ type: "text", text: `Relevance verdict: ${verdict}\n\n${body}${hint}` }],
-				details: { chunks: texts, verdict }
+				details: { chunks: texts, verdict },
 			};
-		}
+		},
 	};
 }
 
 const kbOverviewSchema = Type.Object({});
 
 export function knowledgeBaseOverviewTool(
-	overview: () => Promise<{ sources: string[]; chunks: number }>
+	overview: () => Promise<{ sources: string[]; chunks: number }>,
 ): AgentTool<typeof kbOverviewSchema> {
 	return {
 		name: "knowledge_base_overview",
@@ -295,21 +331,23 @@ export function knowledgeBaseOverviewTool(
 			if (!sources.length) {
 				return {
 					content: [{ type: "text", text: "KB is empty — no files, chats, or notes indexed yet." }],
-					details: { sources: [], chunks: 0 }
+					details: { sources: [], chunks: 0 },
 				};
 			}
-			const text = `## Indexed sources (${chunks} chunks total)\n` + sources.map((s) => `- ${s}`).join("\n");
+			const text = `## Indexed sources (${chunks} chunks total)\n${sources.map((s) => `- ${s}`).join("\n")}`;
 			return { content: [{ type: "text", text }], details: { sources, chunks } };
-		}
+		},
 	};
 }
 
 const kbReadSourceSchema = Type.Object({
-	source: Type.String({ description: "Exact source name from knowledge_base_overview (e.g. 'lecture.pdf', 'chat:n5')." })
+	source: Type.String({
+		description: "Exact source name from knowledge_base_overview (e.g. 'lecture.pdf', 'chat:n5').",
+	}),
 });
 
 export function knowledgeBaseReadSourceTool(
-	readSource: (source: string) => Promise<string[]>
+	readSource: (source: string) => Promise<string[]>,
 ): AgentTool<typeof kbReadSourceSchema> {
 	return {
 		name: "knowledge_base_read_source",
@@ -321,15 +359,20 @@ export function knowledgeBaseReadSourceTool(
 			const chunks = await readSource(params.source);
 			if (!chunks.length) {
 				return {
-					content: [{ type: "text", text: `Source "${params.source}" not found. Call knowledge_base_overview to get exact names.` }],
-					details: { chunks: [] }
+					content: [
+						{
+							type: "text",
+							text: `Source "${params.source}" not found. Call knowledge_base_overview to get exact names.`,
+						},
+					],
+					details: { chunks: [] },
 				};
 			}
 			return {
 				content: [{ type: "text", text: chunks.join("\n\n---\n\n") }],
-				details: { chunks }
+				details: { chunks },
 			};
-		}
+		},
 	};
 }
 
@@ -339,7 +382,7 @@ export function knowledgeBaseReadSourceTool(
 
 const createNoteSchema = Type.Object({
 	title: Type.Optional(Type.String({ description: "Short title for the note." })),
-	content: Type.String({ description: "The COMPLETE markdown content to save in the note." })
+	content: Type.String({ description: "The COMPLETE markdown content to save in the note." }),
 });
 
 export function createNoteTool(): AgentTool<typeof createNoteSchema> {
@@ -351,16 +394,20 @@ export function createNoteTool(): AgentTool<typeof createNoteSchema> {
 		parameters: createNoteSchema,
 		async execute(_id, params): Promise<AgentToolResult<{ title?: string; content: string }>> {
 			return {
-				content: [{ type: "text", text: `Note "${params.title ?? "Untitled"}" created on the canvas.` }],
-				details: { title: params.title, content: params.content }
+				content: [
+					{ type: "text", text: `Note "${params.title ?? "Untitled"}" created on the canvas.` },
+				],
+				details: { title: params.title, content: params.content },
 			};
-		}
+		},
 	};
 }
 
 const createCardSchema = Type.Object({
 	title: Type.String({ description: "Short title — the question or topic this card captures." }),
-	content: Type.String({ description: "The COMPLETE answer in markdown to save into the new card body." })
+	content: Type.String({
+		description: "The COMPLETE answer in markdown to save into the new card body.",
+	}),
 });
 
 export function createCardTool(): AgentTool<typeof createCardSchema> {
@@ -373,15 +420,20 @@ export function createCardTool(): AgentTool<typeof createCardSchema> {
 		async execute(_id, params): Promise<AgentToolResult<{ title: string; content: string }>> {
 			return {
 				content: [{ type: "text", text: `Card "${params.title}" created on the canvas.` }],
-				details: { title: params.title, content: params.content }
+				details: { title: params.title, content: params.content },
 			};
-		}
+		},
 	};
 }
 
 const updateCardSchema = Type.Object({
-	card: Type.String({ description: "The card id (e.g. n3) from the canvas threads list, or the card's title. Prefer id when available." }),
-	content: Type.String({ description: "New markdown content — fully replaces the card's current body." })
+	card: Type.String({
+		description:
+			"The card id (e.g. n3) from the canvas threads list, or the card's title. Prefer id when available.",
+	}),
+	content: Type.String({
+		description: "New markdown content — fully replaces the card's current body.",
+	}),
 });
 
 export function updateCardTool(): AgentTool<typeof updateCardSchema> {
@@ -394,13 +446,16 @@ export function updateCardTool(): AgentTool<typeof updateCardSchema> {
 		async execute(_id, params): Promise<AgentToolResult<{ card: string; content: string }>> {
 			return {
 				content: [{ type: "text", text: `Card "${params.card}" updated.` }],
-				details: { card: params.card, content: params.content }
+				details: { card: params.card, content: params.content },
 			};
-		}
+		},
 	};
 }
 
-export function webSearchTool(backend: WebBackend, tavilyKey?: string): AgentTool<typeof searchSchema> {
+export function webSearchTool(
+	backend: WebBackend,
+	tavilyKey?: string,
+): AgentTool<typeof searchSchema> {
 	return {
 		name: "web_search",
 		label: "web_search",
@@ -416,15 +471,15 @@ export function webSearchTool(backend: WebBackend, tavilyKey?: string): AgentToo
 					: await duckduckgo(params.query, max);
 				return {
 					content: [{ type: "text", text: format(params.query, hits, answer) }],
-					details: { hits }
+					details: { hits },
 				};
 			} catch (err) {
 				const msg = (err as Error)?.message ?? String(err);
 				return {
 					content: [{ type: "text", text: `Web search failed: ${msg}` }],
-					details: { hits: [] }
+					details: { hits: [] },
 				};
 			}
-		}
+		},
 	};
 }

@@ -1,7 +1,7 @@
 // Agent SSE endpoint. POST /api/agent/prompt streams AgentEvent objects as
 // server-sent events until `done` or `error`. Cancel via POST /api/agent/:cardId/cancel.
 import { Hono } from "hono";
-import { handlePrompt, runs, type PromptRequest } from "../agent/run.ts";
+import { handlePrompt, type PromptRequest, runs } from "../agent/run.ts";
 
 export const agentRoutes = new Hono();
 
@@ -24,8 +24,8 @@ agentRoutes.post("/prompt", async (c) => {
 		headers: {
 			"Content-Type": "text/event-stream",
 			"Cache-Control": "no-cache",
-			Connection: "keep-alive"
-		}
+			Connection: "keep-alive",
+		},
 	});
 });
 

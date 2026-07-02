@@ -13,14 +13,23 @@ async function ocrAnthropic(png: Uint8Array, apiKey: string): Promise<string> {
 	const b64 = Buffer.from(png).toString("base64");
 	const res = await fetch("https://api.anthropic.com/v1/messages", {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+		headers: {
+			"content-type": "application/json",
+			"x-api-key": apiKey,
+			"anthropic-version": "2023-06-01",
+		},
 		body: JSON.stringify({
 			model: "claude-haiku-4-5-20251001",
 			max_tokens: 4096,
-			messages: [{ role: "user", content: [
-				{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } },
-				{ type: "text", text: OCR_PROMPT },
-			] }],
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } },
+						{ type: "text", text: OCR_PROMPT },
+					],
+				},
+			],
 		}),
 	});
 	if (!res.ok) throw new Error(`Anthropic OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -36,10 +45,15 @@ async function ocrOpenAI(png: Uint8Array, apiKey: string): Promise<string> {
 		body: JSON.stringify({
 			model: "gpt-4o",
 			max_tokens: 4096,
-			messages: [{ role: "user", content: [
-				{ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
-				{ type: "text", text: OCR_PROMPT },
-			] }],
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
+						{ type: "text", text: OCR_PROMPT },
+					],
+				},
+			],
 		}),
 	});
 	if (!res.ok) throw new Error(`OpenAI OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -54,10 +68,11 @@ async function ocrGoogle(png: Uint8Array, apiKey: string): Promise<string> {
 		{
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ contents: [{ parts: [
-				{ inline_data: { mime_type: "image/png", data: b64 } },
-				{ text: OCR_PROMPT },
-			] }] }),
+			body: JSON.stringify({
+				contents: [
+					{ parts: [{ inline_data: { mime_type: "image/png", data: b64 } }, { text: OCR_PROMPT }] },
+				],
+			}),
 		},
 	);
 	if (!res.ok) throw new Error(`Google OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -73,10 +88,15 @@ async function ocrOpenRouter(png: Uint8Array, apiKey: string): Promise<string> {
 		body: JSON.stringify({
 			model: "meta-llama/llama-3.2-11b-vision-instruct",
 			max_tokens: 4096,
-			messages: [{ role: "user", content: [
-				{ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
-				{ type: "text", text: OCR_PROMPT },
-			] }],
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
+						{ type: "text", text: OCR_PROMPT },
+					],
+				},
+			],
 		}),
 	});
 	if (!res.ok) throw new Error(`OpenRouter OCR ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -86,7 +106,10 @@ async function ocrOpenRouter(png: Uint8Array, apiKey: string): Promise<string> {
 
 export async function cloudOcrImage(png: Uint8Array): Promise<string> {
 	const [anthropic, openai, google, openrouter] = await Promise.all([
-		getKey("anthropic"), getKey("openai"), getKey("google"), getKey("openrouter"),
+		getKey("anthropic"),
+		getKey("openai"),
+		getKey("google"),
+		getKey("openrouter"),
 	]);
 	if (anthropic) return ocrAnthropic(png, anthropic);
 	if (openai) return ocrOpenAI(png, openai);

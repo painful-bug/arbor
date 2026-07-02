@@ -1,6 +1,6 @@
 import { Hono } from "hono";
+import { type ArrangeEdge, arrange } from "../cleanup/arrange.ts";
 import { embed } from "../kb/embeddings.ts";
-import { arrange, type ArrangeEdge } from "../cleanup/arrange.ts";
 
 export const cleanupRoutes = new Hono();
 
@@ -31,7 +31,9 @@ cleanupRoutes.post("/:canvas/arrange", async (c) => {
 		const nonEmpty = nodes.filter((n) => n.text.trim());
 		const vectors = nonEmpty.length ? await embed(nonEmpty.map((n) => n.text.slice(0, 512))) : [];
 		const vecById = new Map<string, number[]>();
-		nonEmpty.forEach((n, i) => vecById.set(n.id, vectors[i]));
+		nonEmpty.forEach((n, i) => {
+			vecById.set(n.id, vectors[i]);
+		});
 
 		const layout = arrange(
 			nodes.map((n) => ({

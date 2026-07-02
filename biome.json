@@ -1,0 +1,48 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.2/schema.json",
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 100
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"suspicious": {
+				"noExplicitAny": "off",
+				"noAssignInExpressions": "off"
+			},
+			"style": {
+				"noNonNullAssertion": "off"
+			},
+			"complexity": {
+				"noImportantStyles": "off"
+			}
+		}
+	},
+	"files": {
+		"includes": [
+			"**",
+			"!**/node_modules",
+			"!**/.claude",
+			"!**/build",
+			"!**/dist",
+			"!**/.svelte-kit",
+			"!**/src-tauri/target",
+			"!**/src-tauri/resources",
+			"!**/src-tauri/gen",
+			"!**/graphify-out",
+			"!**/*.svelte",
+			"!**/*.svg",
+			"!**/static",
+			"!**/package-lock.json",
+			"!**/bun.lock"
+		]
+	}
+}

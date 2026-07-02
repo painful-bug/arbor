@@ -1,7 +1,7 @@
 // Structure-aware chunking via LangChain splitters. Markdown content (OCR output,
 // .md files) splits on headings/lists so a section stays whole; everything else uses
 // the recursive splitter that prefers paragraph/sentence boundaries over mid-word cuts.
-import { RecursiveCharacterTextSplitter, MarkdownTextSplitter } from "@langchain/textsplitters";
+import { MarkdownTextSplitter, RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 
 const SIZE = 800;
 const OVERLAP = 120;

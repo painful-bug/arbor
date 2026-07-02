@@ -3,20 +3,20 @@
 // to stdout so the Tauri shell learns the {port, token} to reach it. The token
 // gates /api/* so other local processes can't drive the backend.
 import { randomBytes } from "node:crypto";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { canvasRoutes } from "./routes/canvases.ts";
-import { settingsRoutes } from "./routes/settings.ts";
-import { blobRoutes } from "./routes/blobs.ts";
-import { keyRoutes } from "./routes/keys.ts";
-import { kbRoutes } from "./routes/kb.ts";
-import { agentRoutes } from "./routes/agent.ts";
-import { fileRoutes } from "./routes/files.ts";
-import { ollamaRoutes } from "./routes/ollama.ts";
-import { cleanupRoutes } from "./routes/cleanup.ts";
-import { importLegacyIfNeeded } from "./store/import-legacy.ts";
 import { ARBOR_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
+import { agentRoutes } from "./routes/agent.ts";
+import { blobRoutes } from "./routes/blobs.ts";
+import { canvasRoutes } from "./routes/canvases.ts";
+import { cleanupRoutes } from "./routes/cleanup.ts";
+import { fileRoutes } from "./routes/files.ts";
+import { kbRoutes } from "./routes/kb.ts";
+import { keyRoutes } from "./routes/keys.ts";
+import { ollamaRoutes } from "./routes/ollama.ts";
+import { settingsRoutes } from "./routes/settings.ts";
+import { importLegacyIfNeeded } from "./store/import-legacy.ts";
 
 const HOST = "127.0.0.1";
 const FIRST_PORT = 8765;
