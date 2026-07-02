@@ -156,6 +156,13 @@ WORKFLOW — Synthesis & Citation:
 - Be transparent about gaps the sources don't cover.
 - Output: a synthesized, fully-cited passage plus a reference list.`,
 	},
+	{
+		id: "synthesize",
+		label: "Synthesize",
+		description: "Combine several selected canvas cards into one synthesis.",
+		systemPrompt:
+			"You are a research synthesist. You will receive the contents of several cards from the user's canvas. Produce a single coherent synthesis: identify agreements, contradictions, and gaps, and end with a 3-bullet 'So what'. Be concise; cite cards by their titles in [brackets].",
+	},
 ];
 
 const BY_ID = new Map(WORKFLOWS.map((w) => [w.id, w]));

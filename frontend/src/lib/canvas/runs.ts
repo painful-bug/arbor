@@ -2,7 +2,15 @@
 // and auto-titling. Mutates store state; context building lives in context.ts.
 import { type AgentEvent, type ChatMessage, runAgent } from "$lib/ai/client";
 import { workflowSystemPrompt } from "$lib/ai/workflows";
-import { buildCardNode, type CardData, lastTurn, nextBlock, type Turn } from "./cards";
+import {
+	buildCardNode,
+	type CardData,
+	cardPlainText,
+	cardTitle,
+	lastTurn,
+	nextBlock,
+	type Turn,
+} from "./cards";
 import {
 	ancestry,
 	canvasDigest,
@@ -13,6 +21,7 @@ import {
 } from "./context";
 import {
 	activeLadder,
+	addCard,
 	addTextCard,
 	currentCanvasId,
 	flow,
@@ -369,4 +378,27 @@ export async function runSession(prompt: string): Promise<void> {
 			}
 		},
 	);
+}
+
+/**
+ * Synthesize ≥2 selected cards into a new chat card: gathers their plain text
+ * (prefixed `[Card: <title>]`), creates the card below the selection's bounding
+ * box, and runs it under the `synthesize` workflow.
+ */
+export function synthesizeSelection(ids: string[]): string {
+	const selected = flow.nodes.filter((n) => ids.includes(n.id));
+	if (selected.length < 2) return "";
+
+	const prompt = selected
+		.map((n) => `[Card: ${cardTitle(n)}]\n${cardPlainText(n)}`)
+		.join("\n\n---\n\n");
+
+	const minX = Math.min(...selected.map((n) => n.position.x));
+	const maxX = Math.max(...selected.map((n) => n.position.x + (n.width ?? 400)));
+	const maxY = Math.max(...selected.map((n) => n.position.y + (n.height ?? 280)));
+	const position = { x: (minX + maxX) / 2 - 200, y: maxY + 80 };
+
+	const id = addCard(position, prompt, { workflow: "synthesize" });
+	void runModel(id);
+	return id;
 }

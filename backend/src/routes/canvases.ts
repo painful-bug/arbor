@@ -3,9 +3,18 @@
 
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { type CanvasDoc, toMarkdown, toObsidianCanvas } from "../canvases/export.ts";
+import { badRequest, notFound } from "../errors.ts";
 import { clearCanvas } from "../kb/index.ts";
 import { db, metaGet, metaSet } from "../store/db.ts";
 import { canvases } from "../store/schema.ts";
+
+// title → filesystem-safe slug for export filenames.
+const slugify = (name: string) =>
+	name
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-|-$/g, "");
 
 // Set the current-canvas pointer and the canvas ordering. Shared with the importer.
 export function setCurrentAndOrder(current: string, order: string[]): void {
@@ -100,6 +109,31 @@ canvasRoutes.put("/:id", async (c) => {
 		})
 		.run();
 	return c.json({ ok: true });
+});
+
+// Export a canvas as Markdown or Obsidian Canvas JSON for interop.
+canvasRoutes.get("/:id/export", (c) => {
+	const format = c.req.query("format");
+	if (format !== "md" && format !== "canvas") throw badRequest("format must be md or canvas");
+
+	const row = db
+		.select()
+		.from(canvases)
+		.where(eq(canvases.id, c.req.param("id")))
+		.get();
+	if (!row) throw notFound("canvas not found");
+	const doc = JSON.parse(row.doc) as { nodes: CanvasDoc["nodes"]; edges: CanvasDoc["edges"] };
+	const canvas: CanvasDoc = { id: row.id, name: row.name, nodes: doc.nodes, edges: doc.edges };
+	const slug = slugify(row.name) || "canvas";
+
+	if (format === "md") {
+		c.header("Content-Type", "text/markdown");
+		c.header("Content-Disposition", `attachment; filename="${slug}.md"`);
+		return c.body(toMarkdown(canvas));
+	}
+	c.header("Content-Type", "application/json");
+	c.header("Content-Disposition", `attachment; filename="${slug}.canvas"`);
+	return c.body(toObsidianCanvas(canvas));
 });
 
 canvasRoutes.delete("/:id", (c) => {

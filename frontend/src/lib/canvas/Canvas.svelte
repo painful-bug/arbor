@@ -56,10 +56,12 @@
 		remapEdgeSides,
 		repositionTags,
 		settings,
-		init
+		init,
+		synthesizeSelection
 	} from './store.svelte';
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
+	import { apiFetch } from '$lib/api';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs, getFileBlob, type FileKind } from '$lib/files';
 	import { kbAdd, kbRemove } from '$lib/ai/client';
@@ -158,12 +160,41 @@
 		{ id: 'kb', group: 'Knowledge', icon: '⬡', label: 'Search knowledge base', run: openKB },
 		{ id: 'undo', group: 'Edit', icon: '↩', label: 'Undo', hint: 'U', run: doUndo },
 		{ id: 'redo', group: 'Edit', icon: '↪', label: 'Redo', hint: 'R', run: doRedo },
+		{ id: 'synthesize', group: 'Edit', icon: '⨳', label: 'Synthesize selected cards', run: doSynthesize },
+		{ id: 'export-md', group: 'Export', icon: '⇩', label: 'Export as Markdown (.md)', run: () => exportCanvas('md') },
+		{ id: 'export-canvas', group: 'Export', icon: '⇩', label: 'Export as Obsidian Canvas (.canvas)', run: () => exportCanvas('canvas') },
 		{ id: 'theme', group: 'App', icon: '◐', label: 'Toggle theme', run: () => {
 			settings.theme = settings.theme === 'dark' ? 'light' : 'dark';
 			persistSettings();
 		} },
 		{ id: 'settings', group: 'App', icon: '⚙', label: 'Open settings', hint: '⌘,', run: () => goto('/settings') }
 	];
+
+	// Synthesize the currently selected cards (≥2) into a new synthesis card.
+	function doSynthesize() {
+		const ids = flow.nodes.filter((n) => n.selected).map((n) => n.id);
+		if (ids.length < 2) return;
+		const id = synthesizeSelection(ids);
+		if (id) flow.selected = id;
+	}
+
+	// Fetch the canvas export and trigger a browser download (WKWebView saves to
+	// ~/Downloads like any other anchor-download). No new Tauri command needed.
+	async function exportCanvas(format: 'md' | 'canvas') {
+		const id = currentCanvasId();
+		if (!id) return;
+		const res = await apiFetch(`/api/canvases/${id}/export?format=${format}`);
+		if (!res.ok) return;
+		const blob = await res.blob();
+		const disposition = res.headers.get('Content-Disposition') ?? '';
+		const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `canvas.${format}`;
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 
 	function startDeepResearch() {
 		const x = window.innerWidth / 2;
@@ -702,13 +733,16 @@
 						<div class="selection-bar">
 							<span class="sel-count">{selectedNodes.length} selected</span>
 							<button class="sel-btn" onclick={duplicateSelected} title="Duplicate (D)">⧉ Duplicate</button>
+							{#if selectedNodes.length >= 2}
+								<button class="sel-btn" onclick={doSynthesize} title="Synthesize selected cards">⨳ Synthesize</button>
+							{/if}
 							<button class="sel-btn sel-btn--danger" onclick={deleteSelected} title="Delete (⌫)">⌫ Delete</button>
 						</div>
 					{/if}
 
 					<div class="topbar">
 						<span class="topbar-spacer"></span>
-						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} />
+						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} onExport={exportCanvas} />
 						<div class="canvas-actions">
 							<div class="theme-slot" class:hidden={chatOpen}>
 								<ThemeToggle />

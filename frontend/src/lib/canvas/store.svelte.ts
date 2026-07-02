@@ -38,7 +38,7 @@ export { lastTurn } from "./cards";
 export type { ConnectedItem } from "./context";
 export { connectedDigestFrom, connectedIds, digestFrom, snippetOf } from "./context";
 export { getCachedDoc } from "./persistence";
-export { continueCard, retryCard, runModel, runSession } from "./runs";
+export { continueCard, retryCard, runModel, runSession, synthesizeSelection } from "./runs";
 
 // ── Tool state (shared by toolbar + canvas) ──────────────────────────────────
 export type Tool = "hand" | "select" | "text" | "duplicate" | "connect" | "color";

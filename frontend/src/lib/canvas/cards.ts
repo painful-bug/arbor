@@ -123,3 +123,27 @@ export function childEdge(source: string, target: string, animated = false): Edg
 	if (animated) edge.animated = true;
 	return edge;
 }
+
+/** Human-readable title for a node, used by Synthesize's `[Card: title]` prefix. */
+export function cardTitle(node: Node): string {
+	const d = node.data as Record<string, unknown>;
+	if (node.type === "card")
+		return (d.title as string) || lastTurn(d as CardData)?.prompt || "Untitled";
+	if (node.type === "text") return ((d.text as string) ?? "").slice(0, 60) || "Note";
+	if (node.type === "file") return (d.filename as string) ?? "File";
+	if (node.type === "web") return (d.title as string) ?? (d.url as string) ?? "Link";
+	return node.type ?? "";
+}
+
+/** Plain-text content of a node, for the Synthesize action and export. */
+export function cardPlainText(node: Node): string {
+	const d = node.data as Record<string, unknown>;
+	if (node.type === "card") {
+		const turns = (d.turns as Turn[]) ?? [];
+		return turns.map((t) => `**You:** ${t.prompt}\n\n**AI:** ${t.answer}`).join("\n\n");
+	}
+	if (node.type === "text") return (d.text as string) ?? "";
+	if (node.type === "file") return (d.preview as string) ?? "";
+	if (node.type === "web") return (d.title as string) ?? (d.url as string) ?? "";
+	return "";
+}

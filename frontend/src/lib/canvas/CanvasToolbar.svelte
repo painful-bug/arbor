@@ -2,6 +2,7 @@
 	import { tool, settings, setClusterSpacing, addClusterTags, type Tool } from './store.svelte';
 
 	let showSpacing = $state(false);
+	let showExport = $state(false);
 
 	let {
 		onDeepResearch,
@@ -9,7 +10,8 @@
 		onUndo,
 		onRedo,
 		onKB,
-		onCleanUp
+		onCleanUp,
+		onExport
 	}: {
 		onDeepResearch: () => void;
 		onFit: () => void;
@@ -17,7 +19,13 @@
 		onRedo: () => void;
 		onKB: () => void;
 		onCleanUp: () => void;
+		onExport: (format: 'md' | 'canvas') => void;
 	} = $props();
+
+	function pickExport(format: 'md' | 'canvas') {
+		showExport = false;
+		onExport(format);
+	}
 
 	const tools: { id: Tool; label: string; icon: string; key: string; title: string }[] = [
 		{ id: 'hand',      label: 'Hand',      icon: '✋', key: 'H', title: 'Hand tool -- pan canvas (H)' },
@@ -117,6 +125,24 @@
 			<span class="icon">⬡</span>
 			<span class="label">KB</span>
 		</button>
+		<div class="spacing-wrap">
+			<button
+				class="action secondary spacing-btn"
+				class:active={showExport}
+				onclick={() => (showExport = !showExport)}
+				title="Export this canvas"
+				aria-pressed={showExport}
+			>
+				<span class="icon">⇩</span>
+				<span class="label">Export</span>
+			</button>
+			{#if showExport}
+				<div class="spacing-pop export-pop">
+					<button class="export-item" onclick={() => pickExport('md')}>Markdown (.md)</button>
+					<button class="export-item" onclick={() => pickExport('canvas')}>Obsidian Canvas (.canvas)</button>
+				</div>
+			{/if}
+		</div>
 	</div>
 </div>
 
@@ -203,6 +229,27 @@
 		opacity: 0.6;
 		min-width: 16px;
 		text-align: right;
+	}
+	.export-pop {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 2px;
+		padding: 4px;
+	}
+	.export-item {
+		border: none;
+		background: transparent;
+		border-radius: var(--r-md, 8px);
+		padding: 7px 12px;
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--c-ink);
+		cursor: pointer;
+		text-align: left;
+		white-space: nowrap;
+	}
+	.export-item:hover {
+		background: rgba(var(--ink-rgb), 0.06);
 	}
 	.key {
 		font-size: 10px;
