@@ -40,17 +40,28 @@ export function deleteFileBlob(id: string): void {
 	void apiFetch(blobUrl(id), { method: "DELETE" }).catch(() => {});
 }
 
+// Negative cache: keys we already tried to hydrate. Without it, a 404'd blob stays
+// "missing" forever and the Canvas hydrate effect re-fetches it on every flow.nodes
+// reassignment — i.e. every drag frame and stream tick.
+const hydrateTried = new Set<string>();
+
 // Load bytes from the backend for known file node IDs so re-drops aren't needed after restart.
 export async function hydrateFileBlobs(ids: string[]): Promise<void> {
 	await Promise.all(
 		ids.map(async (id) => {
-			if (blobs.has(key(id))) return;
-			const res = await apiFetch(blobUrl(id));
-			if (!res.ok) return; // 404 (never stored) or backend unreachable
-			const bytes = await res.arrayBuffer();
-			const mime = res.headers.get("Content-Type") ?? "";
-			const name = decodeURIComponent(res.headers.get("X-Filename") ?? id);
-			blobs.set(key(id), { bytes, mime, name });
+			const k = key(id);
+			if (blobs.has(k) || hydrateTried.has(k)) return;
+			hydrateTried.add(k);
+			try {
+				const res = await apiFetch(blobUrl(id));
+				if (!res.ok) return; // 404 (never stored) — stays negative-cached
+				const bytes = await res.arrayBuffer();
+				const mime = res.headers.get("Content-Type") ?? "";
+				const name = decodeURIComponent(res.headers.get("X-Filename") ?? id);
+				blobs.set(k, { bytes, mime, name });
+			} catch {
+				hydrateTried.delete(k); // backend unreachable — allow a later retry
+			}
 		}),
 	);
 }

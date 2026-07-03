@@ -149,7 +149,8 @@ export async function runAgent(
 			const parts = buf.split("\n\n");
 			buf = parts.pop()!;
 			for (const part of parts) {
-				const line = part.replace(/^data: /, "").trim();
+				if (!part.startsWith("data: ")) continue; // SSE comments (e.g. heartbeat ": ping")
+				const line = part.slice("data: ".length).trim();
 				if (!line) continue;
 				const ev = JSON.parse(line) as AgentEvent;
 				onEvent(ev);

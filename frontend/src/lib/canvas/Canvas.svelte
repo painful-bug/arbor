@@ -685,6 +685,7 @@
 						{edgeTypes}
 						colorMode={settings.theme}
 						minZoom={0.05}
+						onlyRenderVisibleElements
 						zoomOnDoubleClick={false}
 						selectionOnDrag={tool.active === 'select'}
 						panOnDrag={tool.active === 'select' ? [1, 2] : true}
@@ -942,17 +943,17 @@
 	/* An edge whose source/target node is selected (not the edge itself clicked) —
 	   colorful breathing glow, cycling between the two accent colors already used
 	   for selection elsewhere (magenta / violet), matching the node glow ring. */
+	/* No drop-shadow filter here: animating an SVG filter forces a full repaint of
+	   the edge layer every frame in WKWebView — measurable GPU/battery cost. */
 	@keyframes edge-breathe {
 		0%,
 		100% {
 			stroke: var(--c-edge-selected);
 			stroke-width: 2.5px;
-			filter: drop-shadow(0 0 3px var(--c-edge-selected));
 		}
 		50% {
 			stroke: var(--c-edge-semantic);
 			stroke-width: 4px;
-			filter: drop-shadow(0 0 8px var(--c-edge-semantic));
 		}
 	}
 	/* ConnectedEdge.svelte applies .connected directly to the path (BaseEdge's

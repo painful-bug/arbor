@@ -113,9 +113,18 @@ export function scheduleAutolink(nodeId: string): void {
 
 // Re-link every eligible node — used on canvas load and when the toggle is enabled,
 // so pre-existing cards/notes/files get connected, not just newly created ones.
+// ponytail: skips nodes that already have a semantic edge — re-embedding every node
+// on every load pegs the CPU for minutes; edited nodes still relink via scheduleAutolink.
 export function autolinkAll(): void {
 	if (!settings.autoConnect) return;
-	for (const n of flow.nodes) if (eligible(n)) scheduleAutolink(n.id);
+	const linked = new Set<string>();
+	for (const e of flow.edges) {
+		if (isSemanticEdge(e)) {
+			linked.add(e.source);
+			linked.add(e.target);
+		}
+	}
+	for (const n of flow.nodes) if (!linked.has(n.id) && eligible(n)) scheduleAutolink(n.id);
 }
 
 async function runAutolink(nodeId: string): Promise<void> {

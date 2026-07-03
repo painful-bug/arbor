@@ -9,17 +9,18 @@
  * snapshot that undo/redo just applied).
  */
 export function createHistory<T>(limit: number) {
-	const stack: T[] = [];
+	// Snapshots stored as JSON strings: one stringify per push (was three — clone +
+	// dedup-compare), cheap string dedup, and parse-on-read still hands out fresh clones.
+	const stack: string[] = [];
 	let ptr = -1;
 	let locked = false;
-	const clone = (v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 	return {
 		/** Record a snapshot. No-op while locked or if equal to the current entry. */
 		push(snap: T): void {
 			if (locked) return;
-			const copy = clone(snap);
-			if (ptr >= 0 && JSON.stringify(stack[ptr]) === JSON.stringify(copy)) return;
+			const copy = JSON.stringify(snap);
+			if (ptr >= 0 && stack[ptr] === copy) return;
 			stack.splice(ptr + 1); // drop redo tail
 			stack.push(copy);
 			if (stack.length > limit) stack.shift();
@@ -29,13 +30,13 @@ export function createHistory<T>(limit: number) {
 		undo(): T | null {
 			if (ptr <= 0) return null;
 			ptr--;
-			return clone(stack[ptr]);
+			return JSON.parse(stack[ptr]) as T;
 		},
 		/** Step forward; null when at the newest snapshot. */
 		redo(): T | null {
 			if (ptr >= stack.length - 1) return null;
 			ptr++;
-			return clone(stack[ptr]);
+			return JSON.parse(stack[ptr]) as T;
 		},
 		/** True while pushes are suppressed. */
 		locked: (): boolean => locked,

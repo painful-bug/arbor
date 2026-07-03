@@ -45,13 +45,48 @@ function setTurnAnswer(id: string, answer: string, streaming: boolean): void {
 	});
 }
 
+// Throttle streamed answer paints: each paint re-renders the card's markdown, which
+// is O(answer length) — per-token paints go quadratic on long answers. ~12fps is
+// indistinguishable for text; the final (streaming=false) paint always lands now.
+function makePainter(set: (answer: string, streaming: boolean) => void) {
+	let pending: { answer: string; streaming: boolean } | null = null;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	const flush = () => {
+		timer = null;
+		if (pending) {
+			set(pending.answer, pending.streaming);
+			pending = null;
+		}
+	};
+	return (answer: string, streaming: boolean) => {
+		pending = { answer, streaming };
+		if (!streaming) {
+			if (timer) clearTimeout(timer);
+			flush();
+		} else if (!timer) {
+			timer = setTimeout(flush, 80);
+		}
+	};
+}
+
+// Coalesce streaming reasoning: one thinking_delta event per token would balloon the
+// events array (and thus the saved doc + undo snapshots) into megabytes over a run.
+// Merge consecutive deltas into one running event — AgentTimeline folds them anyway.
+function appendEvent(events: AgentEvent[], ev: AgentEvent): AgentEvent[] {
+	const prev = events[events.length - 1];
+	if (ev.type === "thinking_delta" && prev?.type === "thinking_delta") {
+		return [...events.slice(0, -1), { ...prev, delta: (prev.delta ?? "") + (ev.delta ?? "") }];
+	}
+	return [...events, ev];
+}
+
 // Append a streamed agent event (tool call / reasoning) to the active turn's timeline.
 function pushEvent(id: string, ev: AgentEvent): void {
 	flow.nodes = flow.nodes.map((n) => {
 		if (n.id !== id) return n;
 		const turns = [...(n.data.turns as Turn[])];
 		const last = turns[turns.length - 1];
-		turns[turns.length - 1] = { ...last, events: [...last.events, ev] };
+		turns[turns.length - 1] = { ...last, events: appendEvent(last.events, ev) };
 		return { ...n, data: { ...n.data, turns } };
 	});
 }
@@ -124,6 +159,7 @@ export async function runModel(id: string): Promise<void> {
 		.join("\n\n");
 
 	let answer = "";
+	const paint = makePainter((a, streaming) => setTurnAnswer(id, a, streaming));
 	await runAgent(
 		id,
 		messages,
@@ -141,7 +177,7 @@ export async function runModel(id: string): Promise<void> {
 			switch (e.type) {
 				case "text_delta":
 					answer += e.delta ?? "";
-					setTurnAnswer(id, answer, true);
+					paint(answer, true);
 					break;
 				case "tool_start":
 					applyCanvasTool(e);
@@ -153,10 +189,10 @@ export async function runModel(id: string): Promise<void> {
 					break;
 				case "error":
 					answer += `\n\n_[error: ${e.message}]_`;
-					setTurnAnswer(id, answer, false);
+					paint(answer, false);
 					break;
 				case "done":
-					setTurnAnswer(id, answer, false);
+					paint(answer, false);
 					if (turns.length === 1) {
 						void generateTitle(id, active.prompt, answer);
 						void generateCanvasTitle();
@@ -289,7 +325,7 @@ function pushSessionEvent(ev: AgentEvent): void {
 	const turns = [...session.turns];
 	if (!turns.length) return;
 	const last = turns[turns.length - 1];
-	turns[turns.length - 1] = { ...last, events: [...last.events, ev] };
+	turns[turns.length - 1] = { ...last, events: appendEvent(last.events, ev) };
 	session.turns = turns;
 }
 
@@ -339,6 +375,7 @@ export async function runSession(prompt: string): Promise<void> {
 	const systemPrompt = workflowSystemPrompt(workflow) + toolHint + (digest ? `\n\n${digest}` : "");
 
 	let answer = "";
+	const paint = makePainter(setSessionAnswer);
 	await runAgent(
 		"__session__",
 		messages,
@@ -356,7 +393,7 @@ export async function runSession(prompt: string): Promise<void> {
 			switch (e.type) {
 				case "text_delta":
 					answer += e.delta ?? "";
-					setSessionAnswer(answer, true);
+					paint(answer, true);
 					break;
 				case "tool_start":
 					applyCanvasTool(e);
@@ -368,11 +405,11 @@ export async function runSession(prompt: string): Promise<void> {
 					break;
 				case "error":
 					answer += `\n\n_[error: ${e.message}]_`;
-					setSessionAnswer(answer, false);
+					paint(answer, false);
 					saveCanvas();
 					break;
 				case "done":
-					setSessionAnswer(answer, false);
+					paint(answer, false);
 					saveCanvas();
 					break;
 			}
