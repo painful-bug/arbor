@@ -41,9 +41,28 @@ function renderLatex(src: string): string {
 	return src;
 }
 
+// Memo cache: the same source string always renders to the same HTML, so a card
+// that re-mounts (viewport culling, undo, canvas switch) or re-renders shouldn't
+// re-run marked + DOMPurify (+ KaTeX). Bounded, oldest-evicted. This makes node
+// mounting cheap, which is what keeps pan/zoom smooth on large canvases.
+const CACHE_MAX = 400;
+const cache = new Map<string, string>();
+
 export function renderMarkdown(src: string): string {
-	const withLatex = renderLatex(src ?? "");
+	const raw = src ?? "";
+	const hit = cache.get(raw);
+	if (hit !== undefined) {
+		// Refresh recency: re-insert so it's the newest (Map preserves insertion order).
+		cache.delete(raw);
+		cache.set(raw, hit);
+		return hit;
+	}
+	// Fast path: no $ or \ anywhere → skip the four LaTeX regex passes.
+	const withLatex = /[$\\]/.test(raw) ? renderLatex(raw) : raw;
 	const html = marked.parse(withLatex, { async: false }) as string;
 	// ADD_ATTR: style needed for KaTeX's sizing spans
-	return DOMPurify.sanitize(html, { ADD_ATTR: ["style"] });
+	const clean = DOMPurify.sanitize(html, { ADD_ATTR: ["style"] });
+	cache.set(raw, clean);
+	if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
+	return clean;
 }

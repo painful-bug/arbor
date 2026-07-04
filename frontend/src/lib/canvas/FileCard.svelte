@@ -7,15 +7,23 @@ import CardHandles from './CardHandles.svelte';
 	import type { FileData } from './store.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { renderMarkdown } from '$lib/markdown';
-	import { getFileBlob } from '$lib/files';
+	import { getThumb, hydrateThumb } from '$lib/files';
 	import { searchHighlight } from './globalSearch.svelte';
 	import { markHTML } from './highlights';
+	import { animatedOnce } from './cards';
 	import { isDocxFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
 
 	let { id, data, selected }: NodeProps = $props();
 	const isSelected = $derived(flow.selected === id || selected);
 	const file = $derived(data as FileData);
-	const blob = $derived(getFileBlob(id));
+	// Card face paints a small cached thumbnail — never raw file bytes (see files.ts).
+	const thumb = $derived(getThumb(id));
+	// Entrance animation once per node per session: with viewport-culled rendering,
+	// cards re-mount on every pan back into view — no re-bounce.
+	// svelte-ignore state_referenced_locally -- mount-time check by design
+	const animate = !reducedMotion() && !animatedOnce.has(id);
+	// svelte-ignore state_referenced_locally
+	animatedOnce.add(id);
 	const label = $derived(
 		file.status === 'indexing' ? 'Indexing…' : file.status === 'ready' ? 'Indexed' : 'Failed'
 	);
@@ -56,36 +64,9 @@ import CardHandles from './CardHandles.svelte';
 				: ''
 	);
 
-	// One object URL per blob, revoked on change/teardown (was leaking one per
-	// $derived recompute — harmless until blobs became reactive, see files.ts).
-	let imgSrc = $state<string | null>(null);
+	// Ensure a thumbnail exists (memory → backend cache → one-time generation).
 	$effect(() => {
-		if (!isImageFile(file) || !blob) { imgSrc = null; return; }
-		const url = URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }));
-		imgSrc = url;
-		return () => URL.revokeObjectURL(url);
-	});
-
-	let pdfThumbCanvas = $state<HTMLCanvasElement | null>(null);
-
-	$effect(() => {
-		if (!isPdfFile(file) || !blob || !pdfThumbCanvas) return;
-		const canvas = pdfThumbCanvas;
-		const bytes = blob.bytes;
-		(async () => {
-			try {
-				const pdfjs = await import('pdfjs-dist');
-				pdfjs.GlobalWorkerOptions.workerSrc = (
-					await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-				).default;
-				const doc = await pdfjs.getDocument({ data: (bytes as ArrayBuffer).slice(0) }).promise;
-				const page = await doc.getPage(1);
-				const viewport = page.getViewport({ scale: 0.4 });
-				canvas.width = viewport.width;
-				canvas.height = viewport.height;
-				await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-			} catch { /* silent — no bytes yet */ }
-		})();
+		if (isPdfFile(file) || isImageFile(file)) void hydrateThumb(id, file.kind);
 	});
 
 	function select() {
@@ -105,16 +86,16 @@ import CardHandles from './CardHandles.svelte';
 	style="background: var(--block-{file.block})"
 	onclick={select}
 	ondblclick={open}
-	in:scale={reducedMotion() ? { duration: 0 } : { duration: 480, start: 0.6, opacity: 0, easing: backOut }}
+	in:scale={animate ? { duration: 480, start: 0.6, opacity: 0, easing: backOut } : { duration: 0 }}
 >
 	<!-- preview fills entire card -->
 	<div class="preview">
-		{#if imgSrc}
-			<img src={imgSrc} alt={file.filename} class="fill" />
-		{:else if isImageFile(file)}
+		{#if thumb && isImageFile(file)}
+			<img src={thumb} alt={file.filename} class="fill" />
+		{:else if thumb && isPdfFile(file)}
+			<img src={thumb} alt={file.filename} class="pdf-fill" />
+		{:else if isImageFile(file) || isPdfFile(file)}
 			<div class="center-icon">{icon}</div>
-		{:else if isPdfFile(file) && blob}
-			<canvas bind:this={pdfThumbCanvas} class="pdf-fill"></canvas>
 		{:else if previewHtml}
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<div class="doc">{@html previewHtml}</div>

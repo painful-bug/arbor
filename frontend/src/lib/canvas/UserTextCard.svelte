@@ -9,10 +9,16 @@ import CardHandles from './CardHandles.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { searchHighlight } from './globalSearch.svelte';
 	import { markHTML } from './highlights';
+	import { animatedOnce } from './cards';
 
 	let { id, data, selected: nativeSelected }: NodeProps = $props();
 	const card = $derived(data as TextData);
 	const selected = $derived(flow.selected === id || !!nativeSelected);
+	// Entrance animation once per node per session (re-mounts on pan re-entry).
+	// svelte-ignore state_referenced_locally -- mount-time check by design
+	const animate = !reducedMotion() && !animatedOnce.has(id);
+	// svelte-ignore state_referenced_locally
+	animatedOnce.add(id);
 	const html = $derived(
 		searchHighlight.nodeId === id
 			? markHTML(renderMarkdown(card.text ?? ''), searchHighlight.terms, {
@@ -61,7 +67,7 @@ import CardHandles from './CardHandles.svelte';
 	class:node-glow-selected={selected}
 	data-card-id={id}
 	style="background: var(--block-{card.block})"
-	in:scale={reducedMotion() ? { duration: 0 } : { duration: 480, start: 0.6, opacity: 0, easing: backOut }}
+	in:scale={animate ? { duration: 480, start: 0.6, opacity: 0, easing: backOut } : { duration: 0 }}
 	onclick={onClick}
 	ondblclick={onDblClick}
 	role="button"

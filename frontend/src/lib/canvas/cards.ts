@@ -3,6 +3,11 @@
 import type { Edge, Node, XYPosition } from "@xyflow/svelte";
 import type { AgentEvent } from "$lib/ai/client";
 
+// Nodes that already played their entrance animation this session. With
+// viewport-culled rendering (onlyRenderVisibleElements) cards re-mount every time
+// they pan back into view — the 480ms bounce should play once per node, not per pan.
+export const animatedOnce = new Set<string>();
+
 // One exchange in a card's conversation: user prompt → agent answer + its timeline.
 export interface Turn {
 	prompt: string;

@@ -6,7 +6,7 @@
 	// Markdown/text edits save back to disk on desktop; docx is in-app only.
 	import { slide } from 'svelte/transition';
 	import { flow, setFilePreview, setCardText, type FileData, type TextData } from './store.svelte';
-	import { getFileBlob, canUseFs, readFile, writeFile, openPath } from '$lib/files';
+	import { getFileBlob, hydrateFileBlobs, canUseFs, readFile, writeFile, openPath } from '$lib/files';
 	import { renderMarkdown } from '$lib/markdown';
 	import { loadHL, saveHL } from './highlights';
 	import MarkdownBody from './MarkdownBody.svelte';
@@ -23,6 +23,13 @@
 	const textData = $derived(isText ? (node?.data as TextData) : undefined);
 	const file = $derived(isText ? undefined : (node?.data as FileData | undefined));
 	const blob = $derived(isText ? undefined : getFileBlob(fileId));
+	// Bytes are fetched on open, not held for every card (see files.ts LRU).
+	let blobLoading = $state(false);
+	$effect(() => {
+		if (isText || blob) return;
+		blobLoading = true;
+		void hydrateFileBlobs([fileId]).finally(() => (blobLoading = false));
+	});
 	const panelTitle = $derived(
 		isText
 			? (textData?.text?.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'Note')
@@ -171,7 +178,9 @@
 			{/if}
 		{/if}
 	{:else if !blob && !isMarkdownFile(file)}
-		<div class="empty">File bytes not loaded — re-drop "{file?.filename}" to view. (Bytes aren't persisted across reloads.)</div>
+		<div class="empty">
+			{#if blobLoading}Loading "{file?.filename}"…{:else}File data not found — re-drop "{file?.filename}" to restore it.{/if}
+		</div>
 	{:else if isPdfFile(file)}
 		<PdfViewer fileId={fileId} blob={blob} {initialQuery} {initialPage} />
 	{:else if editable}

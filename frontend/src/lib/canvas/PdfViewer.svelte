@@ -75,47 +75,74 @@
 		return ((containerW - 32) / base.w) * zoomFactor;
 	}
 
-	// ── PDF load + render ────────────────────────────────────────────────────────
+	// ── PDF load + render (virtualized) ─────────────────────────────────────────
+	// Only pages near the viewport are rendered; pages scrolled far away are freed.
+	// Rendering every page eagerly at DPR resolution (~13MB of canvas per page at
+	// 2x) made large PDFs unopenable — 100 pages ≈ >1GB of bitmaps.
 	let pdfDoc: import('pdfjs-dist').PDFDocumentProxy | null = null;
-	let rendering = false;
+	let docReady = $state(false);
+	const visiblePages = new Set<number>();
+	const renderedScale = new Map<number, string>(); // page → scale key it was drawn at
 
-	async function loadAndRender() {
-		if (!blob || !pagesEl || rendering) return;
-		rendering = true;
+	async function getPdfjs() {
+		const pdfjs = await import('pdfjs-dist');
+		pdfjs.GlobalWorkerOptions.workerSrc = (
+			await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+		).default;
+		return pdfjs;
+	}
+
+	async function loadDoc() {
+		if (!blob || !pagesEl || pdfDoc) return;
+		const pdfjs = await getPdfjs();
+		pdfDoc = await pdfjs.getDocument({ data: blob.bytes.slice(0) }).promise;
+		totalPages = pdfDoc.numPages;
+		pages = Array.from({ length: pdfDoc.numPages }, (_, i) => i);
+		// ponytail: assume page-1 size for all placeholders (probing every page costs
+		// one worker round-trip each — seconds on big docs). Mixed-size pages correct
+		// themselves when rendered (renderPage updates baseSizes[i]).
+		const p1 = await pdfDoc.getPage(1);
+		const vp = p1.getViewport({ scale: 1 });
+		baseSizes = pages.map(() => ({ w: vp.width, h: vp.height }));
+		await tick();
+		docReady = true;
+	}
+
+	// Placeholder CSS size for page i — reactive via baseSizes/containerW/zoom.
+	function pageCss(i: number): { w: number; h: number } {
+		const base = baseSizes[i] ?? { w: 612, h: 792 };
+		const s = effectiveScale(i) || 1;
+		return { w: Math.round(base.w * s), h: Math.round(base.h * s) };
+	}
+
+	async function ensureRendered(i: number) {
+		if (!pdfDoc) return;
+		const scale = effectiveScale(i);
+		if (scale <= 0) return;
+		const key = scale.toFixed(4);
+		if (renderedScale.get(i) === key) return;
+		renderedScale.set(i, key); // set before await — guards concurrent re-entry
 		try {
-			const pdfjs = await import('pdfjs-dist');
-			pdfjs.GlobalWorkerOptions.workerSrc = (
-				await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-			).default;
-			if (pdfDoc) {
-				// Re-use existing doc; just re-render with new scale
-				await renderAll(pdfjs, pdfDoc);
-			} else {
-				pdfDoc = await pdfjs.getDocument({ data: blob.bytes.slice(0) }).promise;
-				totalPages = pdfDoc.numPages;
-				pages = Array.from({ length: pdfDoc.numPages }, (_, i) => i);
-				// Capture base (scale-1) sizes for all pages
-				const sizes: { w: number; h: number }[] = [];
-				for (let i = 0; i < pdfDoc.numPages; i++) {
-					const p = await pdfDoc.getPage(i + 1);
-					const vp = p.getViewport({ scale: 1 });
-					sizes.push({ w: vp.width, h: vp.height });
-				}
-				baseSizes = sizes;
-				await tick();
-				await renderAll(pdfjs, pdfDoc);
-				await buildSearchIndex(pdfDoc);
-			}
-		} finally {
-			rendering = false;
+			await renderPage(await getPdfjs(), pdfDoc, i);
+		} catch {
+			renderedScale.delete(i);
 		}
 	}
 
-	async function renderAll(pdfjs: typeof import('pdfjs-dist'), doc: import('pdfjs-dist').PDFDocumentProxy) {
-		if (!pagesEl) return;
-		for (let i = 0; i < doc.numPages; i++) {
-			await renderPage(pdfjs, doc, i);
+	// Free an offscreen page's bitmap + text layer (placeholder div keeps the layout).
+	function freePage(i: number) {
+		renderedScale.delete(i);
+		const wrap = pagesEl?.querySelector(`[data-page="${i}"]`) as HTMLElement | null;
+		if (!wrap) return;
+		const canvas = wrap.querySelector('canvas') as HTMLCanvasElement | null;
+		if (canvas) {
+			canvas.width = 0;
+			canvas.height = 0;
+			canvas.style.width = '';
+			canvas.style.height = '';
 		}
+		const tl = wrap.querySelector('.textlayer') as HTMLElement | null;
+		if (tl) tl.innerHTML = '';
 	}
 
 	async function renderPage(pdfjs: typeof import('pdfjs-dist'), doc: import('pdfjs-dist').PDFDocumentProxy, i: number) {
@@ -124,6 +151,12 @@
 		if (logicalScale <= 0) return; // containerW not ready yet
 
 		const page = await doc.getPage(i + 1);
+		// Correct the placeholder if this page's real size differs from page 1's.
+		const vp1 = page.getViewport({ scale: 1 });
+		const base = baseSizes[i];
+		if (base && (Math.abs(base.w - vp1.width) > 1 || Math.abs(base.h - vp1.height) > 1)) {
+			baseSizes[i] = { w: vp1.width, h: vp1.height };
+		}
 		const dpr = window.devicePixelRatio || 1;
 		// Logical viewport drives CSS dimensions and TextLayer span positions
 		const viewport = page.getViewport({ scale: logicalScale });
@@ -136,9 +169,6 @@
 		wrap.style.setProperty('--total-scale-factor', String(logicalScale));
 		wrap.style.setProperty('--scale-round-x', '1px');
 		wrap.style.setProperty('--scale-round-y', '1px');
-
-		wrap.style.width  = `${viewport.width}px`;
-		wrap.style.height = `${viewport.height}px`;
 
 		// Canvas: render at DPR resolution for crisp output, using a transform
 		const canvas = wrap.querySelector('canvas') as HTMLCanvasElement;
@@ -157,6 +187,13 @@
 	}
 
 	// ── Search index ────────────────────────────────────────────────────────────
+	// Built lazily on first search — a full text extraction of a big PDF at open
+	// time blocks for seconds and is wasted if the user never searches.
+	let indexBuilt: Promise<void> | null = null;
+	function ensureSearchIndex(): Promise<void> {
+		return (indexBuilt ??= buildSearchIndex(pdfDoc!));
+	}
+
 	async function buildSearchIndex(doc: import('pdfjs-dist').PDFDocumentProxy) {
 		const index: typeof searchIndex = [];
 		for (let i = 0; i < doc.numPages; i++) {
@@ -179,10 +216,11 @@
 	}
 
 	const kbFallbackDebounced = debounce((q: string) => void kbFallback(q), 200);
-	function runSearch() {
+	async function runSearch() {
 		kbFallbackDebounced.cancel();
 		pageHits = [];
 		if (!query.trim()) { searchHits = []; return; }
+		if (pdfDoc) await ensureSearchIndex();
 		const q = query.toLowerCase();
 		const hits: typeof searchHits = [];
 		for (let pi = 0; pi < searchIndex.length; pi++) {
@@ -237,29 +275,27 @@
 		searchCursor = (searchCursor + 1) % searchHits.length; scrollToHit(searchCursor);
 	}
 
-	// Deep-link from global search. Once the index is built: run the query, and if the
+	// Deep-link from global search. Once the doc is ready: run the query, and if the
 	// embedded text layer yields nothing (scanned/OCR PDF) fall back to the KB-provided
 	// page. `data-page` is 0-based; initialPage is the 1-based source page.
 	let appliedInitial = '';
 	$effect(() => {
-		if (!searchIndex.length || (!initialQuery && !initialPage)) return;
+		if (!docReady || (!initialQuery && !initialPage)) return;
 		const key = `${initialQuery}|${initialPage}`;
 		if (key === appliedInitial) return;
 		appliedInitial = key;
-		if (initialQuery) { query = initialQuery; runSearch(); }
-		if (!searchHits.length && initialPage) {
-			pagesEl?.querySelector(`[data-page="${initialPage - 1}"]`)
-				?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		}
+		void (async () => {
+			if (initialQuery) { query = initialQuery; await runSearch(); }
+			if (!searchHits.length && initialPage) scrollToPage(initialPage);
+		})();
 	});
 
 	// ── Fit/zoom effects ────────────────────────────────────────────────────────
-	const renderDebounced = debounce(async () => {
-		const pdfjs = await import('pdfjs-dist');
-		pdfjs.GlobalWorkerOptions.workerSrc = (
-			await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-		).default;
-		await renderAll(pdfjs, pdfDoc!);
+	// Scale changed → everything drawn is stale; redraw only what's on screen.
+	// Offscreen pages re-render when the observer brings them back in.
+	const renderDebounced = debounce(() => {
+		renderedScale.clear();
+		for (const i of visiblePages) void ensureRendered(i);
 	}, 60);
 	$effect(() => {
 		// Re-render when fit/zoom changes (containerW/H tracked via ResizeObserver)
@@ -270,7 +306,28 @@
 
 	// Initial load
 	$effect(() => {
-		if (blob && pagesEl) loadAndRender();
+		if (blob && pagesEl) void loadDoc();
+	});
+
+	// Render observer: pages within one viewport-height of the scroll window get
+	// drawn; pages leaving that band are freed. Separate from the counter observer
+	// (whose ratios must reflect true on-screen visibility, not the inflated margin).
+	$effect(() => {
+		if (!pagesEl || !pages.length) return;
+		const io = new IntersectionObserver((entries) => {
+			for (const e of entries) {
+				const i = Number((e.target as HTMLElement).dataset.page ?? 0);
+				if (e.isIntersecting) {
+					visiblePages.add(i);
+					void ensureRendered(i);
+				} else {
+					visiblePages.delete(i);
+					freePage(i);
+				}
+			}
+		}, { root: pagesEl, rootMargin: '100% 0px' });
+		for (const el of pagesEl.querySelectorAll('[data-page]')) io.observe(el);
+		return () => { io.disconnect(); visiblePages.clear(); };
 	});
 
 	// ResizeObserver on the container
@@ -510,7 +567,7 @@
 		onmouseup={onPdfMouseUp}
 	>
 		{#each pages as p (p)}
-			<div class="page" data-page={p}>
+			<div class="page" data-page={p} style="width:{pageCss(p).w}px;height:{pageCss(p).h}px">
 				<canvas></canvas>
 				<div class="textlayer"></div>
 				<!-- Persistent highlights -->

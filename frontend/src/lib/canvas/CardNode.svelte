@@ -5,6 +5,7 @@ import CardHandles from './CardHandles.svelte';
 	import { backOut } from 'svelte/easing';
 	import { flow, lastTurn, renameCard } from './store.svelte';
 	import type { CardData } from './store.svelte';
+	import { animatedOnce } from './cards';
 	import { renderMarkdown } from '$lib/markdown';
 	import { openExternal } from '$lib/web';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
@@ -15,6 +16,11 @@ import CardHandles from './CardHandles.svelte';
 	let { id, data, selected: nativeSelected }: NodeProps = $props();
 	const card = $derived(data as CardData);
 	const selected = $derived(flow.selected === id || !!nativeSelected);
+	// Entrance animation once per node per session (re-mounts on pan re-entry).
+	// svelte-ignore state_referenced_locally -- mount-time check by design
+	const animate = !reducedMotion() && !animatedOnce.has(id);
+	// svelte-ignore state_referenced_locally
+	animatedOnce.add(id);
 	const turn = $derived(lastTurn(card)); // card face shows the latest exchange
 	// Highlight title + answer body when this is the active global-search match. Thread
 	// one running occurrence count title→answer (segmentsOf uses the same order) so the
@@ -123,7 +129,7 @@ import CardHandles from './CardHandles.svelte';
 	class:node-glow-selected={selected}
 	data-card-id={id}
 	style="background: var(--block-{card.block})"
-	in:scale={reducedMotion() ? { duration: 0 } : { duration: 480, start: 0.6, opacity: 0, easing: backOut }}
+	in:scale={animate ? { duration: 480, start: 0.6, opacity: 0, easing: backOut } : { duration: 0 }}
 	onclick={onClick}
 	ondblclick={onDblClick}
 	oncontextmenu={onContextMenu}

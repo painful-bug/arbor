@@ -63,7 +63,7 @@
 	import FilePanel from './FilePanel.svelte';
 	import { apiFetch } from '$lib/api';
 	import { asUrl } from '$lib/url';
-	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs, getFileBlob, type FileKind } from '$lib/files';
+	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, type FileKind } from '$lib/files';
 	import { kbAdd, kbRemove } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
 	import { currentCanvasId } from './store.svelte';
@@ -104,6 +104,36 @@
 		deep?: boolean;
 	} | null>(null);
 
+	// Viewport culling (onlyRenderVisibleElements below) is great for steady-state
+	// pan/zoom but fights any *animated* viewport jump: fitView/setCenter interpolate
+	// the transform over ~300-450ms, so nodes that start off-screen only enter the
+	// visible rect partway through — each one mounting for the first time (markdown
+	// render, thumbnail decode, entrance transition) on a frame that's also mid-tween.
+	// That main-thread work competing with the tween's own rAF loop is the choppiness.
+	// Suspending culling for the duration of these animations keeps them buttery;
+	// normal user-driven pan/zoom (incremental, not a sudden full-canvas jump) still
+	// gets the full benefit.
+	let viewportAnimating = $state(false);
+	async function animateViewport(run: () => Promise<unknown>): Promise<void> {
+		viewportAnimating = true;
+		try {
+			await run();
+		} finally {
+			viewportAnimating = false;
+		}
+	}
+
+	// Viewport culling is the ONLY thing that makes pan/zoom touch Svelte's reactive
+	// graph: with it on, every viewport delta recomputes which nodes intersect the
+	// screen and mounts/unmounts them at the edges — each mount rebuilding a card's
+	// DOM (markdown, timeline, handles). Without it, pan/zoom is a pure GPU transform
+	// with zero JS per frame. So we only cull on genuinely large canvases, where
+	// rendering every node would cost more memory/DOM than the churn; below that the
+	// whole graph stays mounted and pan/zoom/drag are buttery. Suspended during
+	// programmatic viewport animations (fitView/search swoop) either way.
+	const CULL_THRESHOLD = 150;
+	const cullNodes = $derived(flow.nodes.length > CULL_THRESHOLD && !viewportAnimating);
+
 	// Generous padding so every card, note, and file is fully visible, not clipped
 	// under the floating toolbar/sidebar chrome. Needs the <SvelteFlow minZoom={0.05}>
 	// prop below: d3-zoom's scaleExtent is fixed at pan-zoom init from that global
@@ -112,7 +142,7 @@
 	// to fit everything no matter the padding.
 	function doFitView() {
 		requestAnimationFrame(() => {
-			void fitView({ duration: 300, padding: 0.18 });
+			void animateViewport(() => fitView({ duration: 300, padding: 0.18 }));
 		});
 	}
 
@@ -135,7 +165,7 @@
 		// Keep the current zoom if already readable; only zoom in when far out.
 		const cur = getZoom();
 		const zoom = cur < 0.7 ? 1 : cur;
-		void setCenter(x, y, { zoom, duration: reducedMotion() ? 0 : 450 });
+		void animateViewport(() => setCenter(x, y, { zoom, duration: reducedMotion() ? 0 : 450 }));
 	});
 
 	let paletteOpen = $state(false);
@@ -253,12 +283,10 @@
 	function doUndo() { void animateHistory(undo); }
 	function doRedo() { void animateHistory(redo); }
 
-	// Re-hydrate file bytes whenever a file node has none in memory (canvas switch,
-	// or a node restored by undo) — not just once on mount.
-	$effect(() => {
-		const missing = flow.nodes.filter((n) => n.type === 'file' && !getFileBlob(n.id)).map((n) => n.id);
-		if (missing.length) void hydrateFileBlobs(missing);
-	});
+	// No eager blob hydration: card faces render from small cached thumbnails
+	// (FileCard → hydrateThumb) and the file panel fetches bytes on open. Keeping
+	// every dropped file's raw bytes in the webview (~60MB+ on file-heavy
+	// canvases) was the main memory/lag driver.
 
 	function onDblClick(e: MouseEvent) {
 		// Only spawn prompt bubble in hand mode.
@@ -481,11 +509,8 @@
 	}
 
 	onMount(() => {
-		// Async init: load canvas from ~/.arbor, then hydrate file bytes.
-		void init().then(() => {
-			const fileIds = flow.nodes.filter((n) => n.type === 'file').map((n) => n.id);
-			if (fileIds.length) void hydrateFileBlobs(fileIds);
-		});
+		// Async init: load canvas from ~/.arbor (file bytes stay backend-side; see above).
+		void init();
 
 		window.addEventListener('arbor:branch', onBranchEvent);
 		window.addEventListener('arbor:continue', onContinueEvent);
@@ -685,7 +710,7 @@
 						{edgeTypes}
 						colorMode={settings.theme}
 						minZoom={0.05}
-						onlyRenderVisibleElements
+						onlyRenderVisibleElements={cullNodes}
 						zoomOnDoubleClick={false}
 						selectionOnDrag={tool.active === 'select'}
 						panOnDrag={tool.active === 'select' ? [1, 2] : true}

@@ -16,8 +16,21 @@ const blobs = new SvelteMap<string, { bytes: ArrayBuffer; mime: string; name: st
 const key = (id: string) => `${currentCanvasId()}:${id}`;
 const blobUrl = (id: string) => `/api/blobs/${encodeURIComponent(key(id))}`;
 
+// Cap on raw byte buffers held in the webview. Bytes are only needed by the open
+// file panel (and once, transiently, for thumbnail generation) — everything else
+// renders from small cached thumbnails. Evicted entries re-fetch from the backend.
+const MAX_BLOBS = 3;
+function evictBlobs(): void {
+	for (const k of blobs.keys()) {
+		if (blobs.size <= MAX_BLOBS) break;
+		blobs.delete(k);
+		hydrateTried.delete(k); // allow re-fetch later
+	}
+}
+
 export function putFileBlob(id: string, bytes: ArrayBuffer, mime: string, name: string): void {
 	blobs.set(key(id), { bytes, mime, name });
+	evictBlobs();
 	void apiFetch(blobUrl(id), {
 		method: "PUT",
 		headers: {
@@ -34,10 +47,15 @@ export function getFileBlob(
 	return blobs.get(key(id));
 }
 
-// Drop a file's bytes from memory and the backend when its node is deleted.
+// Drop a file's bytes + thumbnail from memory and the backend when its node is deleted.
 export function deleteFileBlob(id: string): void {
-	blobs.delete(key(id));
+	const k = key(id);
+	blobs.delete(k);
+	thumbs.delete(k);
+	hydrateTried.delete(k);
+	thumbTried.delete(k);
 	void apiFetch(blobUrl(id), { method: "DELETE" }).catch(() => {});
+	void apiFetch(thumbApiUrl(id), { method: "DELETE" }).catch(() => {});
 }
 
 // Negative cache: keys we already tried to hydrate. Without it, a 404'd blob stays
@@ -59,11 +77,99 @@ export async function hydrateFileBlobs(ids: string[]): Promise<void> {
 				const mime = res.headers.get("Content-Type") ?? "";
 				const name = decodeURIComponent(res.headers.get("X-Filename") ?? id);
 				blobs.set(k, { bytes, mime, name });
+				evictBlobs();
 			} catch {
 				hydrateTried.delete(k); // backend unreachable — allow a later retry
 			}
 		}),
 	);
+}
+
+// ── Thumbnails ────────────────────────────────────────────────────────────────
+// Card faces paint a small cached thumbnail instead of holding raw file bytes:
+// generated once (from in-memory bytes right after a drop, or one transient
+// fetch), persisted to the backend blob store under `<key>:thumb`, and cached
+// in memory as a data URL. A 19-PDF canvas costs ~19 small images, not ~60MB
+// of ArrayBuffers plus 19 full pdf.js parses per session.
+const thumbs = new SvelteMap<string, string>();
+const thumbTried = new Set<string>();
+const THUMB_W = 480;
+const thumbApiUrl = (id: string) => `/api/blobs/${encodeURIComponent(`${key(id)}:thumb`)}`;
+
+export function getThumb(id: string): string | undefined {
+	return thumbs.get(key(id));
+}
+
+async function makePdfThumb(bytes: ArrayBuffer): Promise<string> {
+	const pdfjs = await import("pdfjs-dist");
+	pdfjs.GlobalWorkerOptions.workerSrc = (
+		await import("pdfjs-dist/build/pdf.worker.min.mjs?url")
+	).default;
+	// slice(0): pdf.js transfers the buffer to its worker, which would detach ours.
+	const task = pdfjs.getDocument({ data: bytes.slice(0) });
+	const doc = await task.promise;
+	try {
+		const page = await doc.getPage(1);
+		const vp1 = page.getViewport({ scale: 1 });
+		const viewport = page.getViewport({ scale: THUMB_W / vp1.width });
+		const canvas = document.createElement("canvas");
+		canvas.width = Math.round(viewport.width);
+		canvas.height = Math.round(viewport.height);
+		await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport }).promise;
+		return canvas.toDataURL("image/jpeg", 0.8);
+	} finally {
+		void task.destroy(); // frees the parsed doc + worker memory
+	}
+}
+
+async function makeImageThumb(bytes: ArrayBuffer, mime: string): Promise<string> {
+	const bmp = await createImageBitmap(new Blob([bytes], { type: mime }));
+	const scale = Math.min(1, THUMB_W / bmp.width);
+	const canvas = document.createElement("canvas");
+	canvas.width = Math.max(1, Math.round(bmp.width * scale));
+	canvas.height = Math.max(1, Math.round(bmp.height * scale));
+	canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+	bmp.close();
+	// PNG keeps alpha for logos/diagrams; JPEG sources compress as JPEG.
+	return mime === "image/jpeg"
+		? canvas.toDataURL("image/jpeg", 0.8)
+		: canvas.toDataURL("image/png");
+}
+
+/** Ensure a thumbnail exists for a pdf/image file node (memory → backend → generate). */
+export async function hydrateThumb(id: string, kind: FileKind): Promise<void> {
+	if (kind !== "pdf" && kind !== "image") return;
+	const k = key(id);
+	if (thumbs.has(k) || thumbTried.has(k)) return;
+	thumbTried.add(k);
+	try {
+		const cached = await apiFetch(thumbApiUrl(id));
+		if (cached.ok) {
+			thumbs.set(k, await cached.text());
+			return;
+		}
+		let entry = blobs.get(k);
+		if (!entry) {
+			const res = await apiFetch(blobUrl(id));
+			if (!res.ok) return; // never stored — stays negative-cached
+			entry = {
+				bytes: await res.arrayBuffer(),
+				mime: res.headers.get("Content-Type") ?? "",
+				name: "",
+			};
+			// Transient: bytes used for the thumbnail then dropped, not put in `blobs`.
+		}
+		const url =
+			kind === "pdf" ? await makePdfThumb(entry.bytes) : await makeImageThumb(entry.bytes, entry.mime);
+		thumbs.set(k, url);
+		void apiFetch(thumbApiUrl(id), {
+			method: "PUT",
+			headers: { "Content-Type": "text/plain", "X-Filename": "thumb" },
+			body: url,
+		}).catch(() => {});
+	} catch {
+		thumbTried.delete(k); // transient failure — retry on next mount
+	}
 }
 
 export type FileKind = "pdf" | "markdown" | "text" | "docx" | "image" | "other";
