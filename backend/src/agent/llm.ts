@@ -15,6 +15,9 @@ export interface CompleteReq {
 	system?: string;
 	prompt: string;
 	maxTokens?: number;
+	/** Constrain output to valid JSON via the provider's structured-output mode.
+	 *  Small models otherwise emit malformed JSON; guided decoding prevents it. */
+	json?: boolean;
 }
 
 /**
@@ -58,6 +61,7 @@ export async function completeText(req: CompleteReq): Promise<string> {
 			body: JSON.stringify({
 				...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
 				contents: [{ parts: [{ text: req.prompt }] }],
+				...(req.json ? { generationConfig: { responseMimeType: "application/json" } } : {}),
 			}),
 		}, LLM_TIMEOUT_MS);
 		return data.candidates[0]?.content?.parts?.find((p) => p.text)?.text ?? "";
@@ -79,6 +83,7 @@ export async function completeText(req: CompleteReq): Promise<string> {
 					...(req.system ? [{ role: "system", content: req.system }] : []),
 					{ role: "user", content: req.prompt },
 				],
+				...(req.json ? { response_format: { type: "json_object" } } : {}),
 			}),
 		},
 		LLM_TIMEOUT_MS,

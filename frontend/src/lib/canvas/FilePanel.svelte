@@ -5,7 +5,8 @@
 	//  - text node → MarkdownBody view with highlights + textarea edit toggle
 	// Markdown/text edits save back to disk on desktop; docx is in-app only.
 	import { slide } from 'svelte/transition';
-	import { flow, setFilePreview, setCardText, currentCanvasId, type FileData, type TextData } from './store.svelte';
+	import { flow, setFilePreview, setCardText, type FileData, type TextData } from './store.svelte';
+	import { isJobRunning, runMindmap, runStudy } from './studio-jobs.svelte';
 	import { getFileBlob, hydrateFileBlobs, canUseFs, readFile, writeFile, openPath } from '$lib/files';
 	import { renderMarkdown } from '$lib/markdown';
 	import { loadHL, saveHL } from './highlights';
@@ -18,41 +19,18 @@
 	let { fileId, onclose, onSplit, initialQuery = '', initialPage = 0 }:
 		{ fileId: string; onclose: () => void; onSplit?: (fileId: string) => void; initialQuery?: string; initialPage?: number } = $props();
 
-	// Mind map: distill this file's indexed content into a tree of linked cards.
-	let mapState = $state<'idle' | 'mapping'>('idle');
-	let mapError = $state('');
-	async function makeMindmap() {
-		if (mapState === 'mapping' || !file) return;
-		mapState = 'mapping';
-		mapError = '';
-		try {
-			const { studioMindmap } = await import('$lib/ai/client');
-			const nodes = await studioMindmap(currentCanvasId() || 'default', file.filename);
-			window.dispatchEvent(new CustomEvent('arbor:mindmap', { detail: { parentId: fileId, nodes } }));
-		} catch (err) {
-			mapError = err instanceof Error ? err.message : 'Mind map failed';
-		} finally {
-			mapState = 'idle';
-		}
+	// Mind map / study: delegate to the module-level runner so the job survives this
+	// panel closing — it runs to success (dispatches to canvas) or failure (toast),
+	// never cancelled by unmount. Buttons read the shared running state.
+	const mapping = $derived(isJobRunning('mindmap', fileId));
+	const studying = $derived(isJobRunning('study', fileId));
+	function makeMindmap() {
+		if (mapping || !file) return;
+		runMindmap(fileId, file.filename);
 	}
-
-	// Study: generate flashcards + quizzes from this file's indexed content, then
-	// open the review deck (StudyOverlay listens for arbor:study).
-	let studyState = $state<'idle' | 'generating'>('idle');
-	let studyError = $state('');
-	async function makeStudy() {
-		if (studyState === 'generating' || !file) return;
-		studyState = 'generating';
-		studyError = '';
-		try {
-			const { studioGenerate } = await import('$lib/ai/client');
-			const items = await studioGenerate(currentCanvasId() || 'default', file.filename);
-			window.dispatchEvent(new CustomEvent('arbor:study', { detail: { items } }));
-		} catch (err) {
-			studyError = err instanceof Error ? err.message : 'Study generation failed';
-		} finally {
-			studyState = 'idle';
-		}
+	function makeStudy() {
+		if (studying || !file) return;
+		runStudy(fileId, file.filename);
 	}
 
 	// Split-view picker: other openable nodes (files + text notes) to show beside this one.
@@ -211,22 +189,16 @@
 				</div>
 			{/if}
 			{#if !isText && file?.status === 'ready'}
-				<button onclick={makeMindmap} disabled={mapState === 'mapping'} title="Generate a mind map from this document">
-					{mapState === 'mapping' ? 'Mapping…' : '🧠 Map'}
+				<button onclick={makeMindmap} disabled={mapping} title="Generate a mind map from this document">
+					{mapping ? 'Mapping…' : '🧠 Map'}
 				</button>
-				<button onclick={makeStudy} disabled={studyState === 'generating'} title="Generate flashcards + quizzes from this document">
-					{studyState === 'generating' ? 'Studying…' : '🎴 Study'}
+				<button onclick={makeStudy} disabled={studying} title="Generate flashcards + quizzes from this document">
+					{studying ? 'Studying…' : '🎴 Study'}
 				</button>
 			{/if}
 			<button onclick={onclose} aria-label="Close">✕</button>
 		</div>
 	</header>
-	{#if mapError}
-		<div class="map-error" role="alert">{mapError} <button class="dismiss" onclick={() => (mapError = '')} aria-label="Dismiss">✕</button></div>
-	{/if}
-	{#if studyError}
-		<div class="map-error" role="alert">{studyError} <button class="dismiss" onclick={() => (studyError = '')} aria-label="Dismiss">✕</button></div>
-	{/if}
 
 	{#if !isPdfFile(file)}
 		<!-- ponytail: PDF has its own positional find (PdfViewer); FindBar for the rest.
@@ -343,24 +315,6 @@
 	.actions button:disabled {
 		opacity: 0.4;
 		cursor: default;
-	}
-	.map-error {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-		padding: 6px var(--s-md);
-		font-size: 12px;
-		color: #b91c1c;
-		background: rgba(220, 38, 38, 0.08);
-		border-bottom: 1px solid var(--c-hairline);
-	}
-	.map-error .dismiss {
-		border: none;
-		background: transparent;
-		color: inherit;
-		cursor: pointer;
-		padding: 0 4px;
 	}
 	.split-wrap {
 		position: relative;

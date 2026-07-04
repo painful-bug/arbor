@@ -69,6 +69,7 @@
 	import { kbAdd, kbRemove } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
 	import { currentCanvasId, currentCanvasName } from './store.svelte';
+	import { studioToasts, dismissToast } from './studio-jobs.svelte';
 	import { exportCanvasImage } from './export-image';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
@@ -461,7 +462,7 @@
 	}
 
 	// Studio mind map: backend returned a topic tree for a source file → bloom it
-	// into linked cards beside that file, select the root, and pan to fit.
+	// into linked cards in open space, select the root, and swoop to frame the map.
 	function onMindmapEvent(e: Event) {
 		const { parentId, nodes } = (e as CustomEvent).detail as {
 			parentId: string;
@@ -471,7 +472,24 @@
 		pushHistory();
 		const rootId = addMindmap(parentId, nodes);
 		if (rootId) flow.selected = rootId;
-		void doFitView();
+		requestAnimationFrame(() => focusMindmap(parentId));
+	}
+
+	// Frame a file's mind map — reuses the global-search swoop (animateViewport keeps
+	// culling suspended for a buttery tween). Fits just the map's tagged cards.
+	function focusMindmap(fileId: string) {
+		const ids = flow.nodes
+			.filter((n) => (n.data as Record<string, unknown>)?.mindmapOf === fileId)
+			.map((n) => ({ id: n.id }));
+		if (!ids.length) return;
+		void animateViewport(() =>
+			fitView({ nodes: ids, duration: reducedMotion() ? 0 : 500, padding: 0.22 }),
+		);
+	}
+
+	function onFocusMindmapEvent(e: Event) {
+		const { fileId } = (e as CustomEvent).detail as { fileId: string };
+		focusMindmap(fileId);
 	}
 
 	function onPaste(e: ClipboardEvent) {
@@ -571,6 +589,7 @@
 		window.addEventListener('arbor:weburl', onWebUrlEvent);
 		window.addEventListener('arbor:clipped', onClippedEvent);
 		window.addEventListener('arbor:mindmap', onMindmapEvent);
+		window.addEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 		window.addEventListener('arbor:openfile', onOpenFileEvent);
 		window.addEventListener('keydown', onKeydown);
 		document.addEventListener('mouseup', onDocSelect);
@@ -618,6 +637,7 @@
 			window.removeEventListener('arbor:weburl', onWebUrlEvent);
 			window.removeEventListener('arbor:clipped', onClippedEvent);
 			window.removeEventListener('arbor:mindmap', onMindmapEvent);
+			window.removeEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 			window.removeEventListener('arbor:openfile', onOpenFileEvent);
 			window.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('mouseup', onDocSelect);
@@ -888,6 +908,18 @@
 			<CommandPalette open={paletteOpen} {commands} onclose={() => (paletteOpen = false)} />
 			<KbOverlay bind:this={kbOverlayRef} bind:open={kbOpen} />
 			<StudyOverlay bind:open={studyOpen} />
+
+			<!-- Global studio-job errors — survive the file panel closing. -->
+			{#if studioToasts.length}
+				<div class="studio-toasts">
+					{#each studioToasts as toast (toast.id)}
+						<div class="studio-toast" role="alert" transition:scale={reducedMotion() ? { duration: 0 } : { duration: 180, start: 0.94, easing: backOut, opacity: 0 }}>
+							<span>{toast.message}</span>
+							<button class="studio-toast-x" onclick={() => dismissToast(toast.id)} aria-label="Dismiss">✕</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -967,6 +999,39 @@
 		font-size: 12px;
 		color: var(--c-ink);
 		pointer-events: none;
+	}
+	/* Bottom-centre error stack for studio jobs (mind map / study). */
+	.studio-toasts {
+		position: absolute;
+		bottom: 24px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 120;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		align-items: center;
+	}
+	.studio-toast {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		max-width: 420px;
+		padding: 9px 14px;
+		border-radius: var(--r-pill, 999px);
+		background: var(--c-canvas, #fff);
+		border: 1px solid rgba(220, 38, 38, 0.4);
+		box-shadow: var(--elev-2, 0 6px 24px rgba(0, 0, 0, 0.12));
+		font-size: 12px;
+		color: #b91c1c;
+	}
+	.studio-toast-x {
+		border: none;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+		padding: 0 2px;
+		font-size: 12px;
 	}
 	.spinner {
 		width: 12px;

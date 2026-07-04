@@ -22,6 +22,7 @@ import {
 import { snippetOf } from "./context";
 import { createHistory } from "./history";
 import { cleanupFileNodes, createKbSync } from "./kb-sync";
+import { bboxOf, bloomLocalLayout, findFreeOffset } from "./mindmap-layout";
 import {
 	type CanvasDoc,
 	type CanvasMeta,
@@ -484,8 +485,10 @@ export function addSourceNote(fileId: string, page: number, text: string): strin
 }
 
 // Mind map (Studio 4a): lay out an LLM topic tree as linked text cards in a radial
-// bloom to the right of the source file, and draw parent→child edges. Returns the
-// root card id. `nodes` is the flattened tree (parent=null for the root).
+// bloom, placed in open space near the source file (spiral scan avoids overlapping
+// existing nodes), and draw parent→child edges. Tags every card with `mindmapOf` and
+// records the root on the file node (`mindmapRootId`) so the file can offer a jump.
+// Returns the root card id. `nodes` is the flattened tree (parent=null for the root).
 // ponytail: 2-level radial bloom; deeper levels reuse their parent's angle. Fine for
 // the 3-6 branch × 2-5 child maps the generator produces; revisit if trees get deep.
 export function addMindmap(
@@ -494,36 +497,45 @@ export function addMindmap(
 ): string | null {
 	const root = nodes.find((n) => n.parent === null);
 	if (!root) return null;
+	const measuredW = (n?: Node) =>
+		(n as (Node & { measured?: { width?: number } }) | undefined)?.measured?.width ?? n?.width;
+	const measuredH = (n?: Node) =>
+		(n as (Node & { measured?: { height?: number } }) | undefined)?.measured?.height ?? n?.height;
+
+	// 1. Lay the bloom out in LOCAL coords (root at origin) + its padded bounding box.
+	const CARD_W = 320;
+	const CARD_H = 150;
+	const local = bloomLocalLayout(nodes);
+	const box = bboxOf(local.values(), CARD_W, CARD_H);
+
+	// 2. Pick a translation so the bloom lands in open space. Preferred spot: just
+	//    right of the source file, vertically centred on it; spiral out if it overlaps.
 	const src = flow.nodes.find((n) => n.id === fileId);
 	const base = src?.position ?? { x: 400, y: 300 };
-	const cx = base.x + (src?.width ?? 220) + 360;
-	const cy = base.y;
-	const R1 = 360; // root → main-branch radius
-	const R2 = 700; // root → leaf radius
-	const TAU = Math.PI * 2;
-	const childrenOf = (pid: string) => nodes.filter((n) => n.parent === pid);
-
-	const pos = new Map<string, XYPosition>();
-	pos.set(root.id, { x: cx, y: cy });
-	const mains = childrenOf(root.id);
-	mains.forEach((m, i) => {
-		const ang = (i / Math.max(mains.length, 1)) * TAU - Math.PI / 2;
-		pos.set(m.id, { x: cx + R1 * Math.cos(ang), y: cy + R1 * Math.sin(ang) });
-		const subs = childrenOf(m.id);
-		subs.forEach((s, j) => {
-			const sa = ang + (j - (subs.length - 1) / 2) * 0.4;
-			pos.set(s.id, { x: cx + R2 * Math.cos(sa), y: cy + R2 * Math.sin(sa) });
+	const fileW = measuredW(src) ?? 220;
+	const fileH = measuredH(src) ?? 280;
+	const GAP = 220;
+	const prefX = base.x + fileW + GAP - box.minX;
+	const prefY = base.y + fileH / 2 - (box.minY + box.maxY) / 2;
+	const occupied = flow.nodes
+		.filter((n) => n.type !== "group")
+		.map((n) => {
+			const w = measuredW(n) ?? 320;
+			const h = measuredH(n) ?? 200;
+			return { x1: n.position.x, y1: n.position.y, x2: n.position.x + w, y2: n.position.y + h };
 		});
-	});
+	const t = findFreeOffset(box, occupied, prefX, prefY);
 
+	// 3. Build the cards (tagged with mindmapOf) + parent→child edges.
 	const idMap = new Map<string, string>();
 	const newNodes: Node[] = [];
 	for (const n of nodes) {
 		const id = nextNodeId();
 		idMap.set(n.id, id);
+		const lp = local.get(n.id) ?? { x: 0, y: 0 };
 		const text = n.summary ? `**${n.title}**\n\n${n.summary}` : `**${n.title}**`;
-		const data: TextData = { text, block: nextBlock() };
-		newNodes.push(buildCardNode({ kind: "text", id, position: pos.get(n.id) ?? { x: cx, y: cy }, data }));
+		const data: TextData = { text, block: nextBlock(), mindmapOf: fileId };
+		newNodes.push(buildCardNode({ kind: "text", id, position: { x: lp.x + t.x, y: lp.y + t.y }, data }));
 	}
 	const newEdges: Edge[] = [];
 	for (const n of nodes) {
@@ -531,9 +543,16 @@ export function addMindmap(
 			newEdges.push(childEdge(idMap.get(n.parent)!, idMap.get(n.id)!));
 		}
 	}
-	flow.nodes = [...flow.nodes, ...newNodes];
+	const rootRealId = idMap.get(root.id) ?? null;
+	// Record the map's root on the file node so it can offer an "Open mindmap" jump.
+	flow.nodes = [
+		...flow.nodes.map((n) =>
+			n.id === fileId ? { ...n, data: { ...n.data, mindmapRootId: rootRealId } } : n,
+		),
+		...newNodes,
+	];
 	flow.edges = [...flow.edges, ...newEdges];
-	return idMap.get(root.id) ?? null;
+	return rootRealId;
 }
 
 export function setFileStatus(id: string, status: FileData["status"]): void {

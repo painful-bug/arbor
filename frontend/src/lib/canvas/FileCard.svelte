@@ -76,10 +76,53 @@ import CardHandles from './CardHandles.svelte';
 	function open() {
 		window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
 	}
+
+	// "Open mindmap" hover affordance — only when this file has a generated map.
+	const hasMindmap = $derived(!!file.mindmapRootId);
+	let hovered = $state(false);
+	// ponytail: 90ms leave-intent delay so crossing the gap to the popup doesn't drop it.
+	let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+	function enter() {
+		clearTimeout(leaveTimer);
+		hovered = true;
+	}
+	function leave() {
+		leaveTimer = setTimeout(() => (hovered = false), 90);
+	}
+
+	function openMindmap() {
+		window.dispatchEvent(new CustomEvent('arbor:focus-mindmap', { detail: { fileId: id } }));
+	}
+
+	// While the popup is up, Return jumps to the map (ignore when typing in a field).
+	function onHoverKey(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		const t = e.target as HTMLElement | null;
+		if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.isContentEditable) return;
+		e.preventDefault();
+		openMindmap();
+	}
+	$effect(() => {
+		if (!(hovered && hasMindmap)) return;
+		window.addEventListener('keydown', onHoverKey);
+		return () => window.removeEventListener('keydown', onHoverKey);
+	});
 </script>
 
 <NodeResizer minWidth={180} minHeight={160} isVisible={isSelected} />
 <CardHandles />
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="file-wrap" onmouseenter={enter} onmouseleave={leave}>
+{#if hovered && hasMindmap}
+	<button
+		class="mm-pop glass"
+		onclick={(e) => { e.stopPropagation(); openMindmap(); }}
+		onpointerdown={(e) => e.stopPropagation()}
+		onmouseenter={enter}
+		onmouseleave={leave}
+		in:scale={reducedMotion() ? { duration: 0 } : { duration: 420, start: 0.5, opacity: 0, easing: backOut }}
+	>Open mindmap ↵</button>
+{/if}
 <div
 	class="file"
 	class:node-glow-selected={isSelected}
@@ -122,8 +165,39 @@ import CardHandles from './CardHandles.svelte';
 		</span>
 	</div>
 </div>
+</div>
 
 <style>
+	.file-wrap {
+		position: relative;
+		width: 100%;
+		height: 100%;
+	}
+	/* "Open mindmap" pill — floats above the card, same entrance as the Follow Up button. */
+	.mm-pop {
+		position: absolute;
+		left: 50%;
+		bottom: 100%;
+		transform: translateX(-50%);
+		margin-bottom: 8px;
+		padding: 7px 14px;
+		border-radius: var(--r-pill);
+		border: none;
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--c-ink);
+		white-space: nowrap;
+		cursor: pointer;
+		z-index: 30;
+		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
+	}
+	.mm-pop:hover {
+		transform: translateX(-50%) translateY(-1px);
+	}
+	.mm-pop:active {
+		transform: translateX(-50%) scale(0.93);
+	}
 	.file {
 		width: 100%;
 		min-height: 160px;

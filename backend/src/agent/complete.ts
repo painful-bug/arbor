@@ -39,16 +39,17 @@ function buildReq(
 	prompt: string,
 	maxTokens: number,
 	system?: string,
+	json?: boolean,
 ): CompleteReq | null {
 	if (provider === "anthropic") {
-		return { provider: "anthropic", model: model || "claude-haiku-4-5-20251001", apiKey, prompt, system, maxTokens };
+		return { provider: "anthropic", model: model || "claude-haiku-4-5-20251001", apiKey, prompt, system, maxTokens, json };
 	}
 	if (provider === "google") {
-		return { provider: "google", model: model || "gemini-2.0-flash", apiKey, prompt, system, maxTokens };
+		return { provider: "google", model: model || "gemini-2.0-flash", apiKey, prompt, system, maxTokens, json };
 	}
 	const baseUrl = OPENAI_COMPAT_BASES[provider];
 	if (!baseUrl) return null;
-	return { provider: "openai-compat", baseUrl, model: model || "gpt-4o-mini", apiKey, prompt, system, maxTokens };
+	return { provider: "openai-compat", baseUrl, model: model || "gpt-4o-mini", apiKey, prompt, system, maxTokens, json };
 }
 
 /**
@@ -60,6 +61,7 @@ export async function resolveCompletion(
 	prompt: string,
 	maxTokens = 1024,
 	system?: string,
+	json?: boolean,
 ): Promise<CompleteReq | null> {
 	const s = getSettings();
 	if (!s) {
@@ -79,7 +81,7 @@ export async function resolveCompletion(
 			continue; // no key → try next rung
 		}
 		const model = s.models?.[provider] ?? "";
-		const req = buildReq(provider, model, apiKey ?? "", prompt, maxTokens, system);
+		const req = buildReq(provider, model, apiKey ?? "", prompt, maxTokens, system, json);
 		if (req) {
 			log.info("llm", "resolveCompletion: using", { provider, model: req.model });
 			return req;
@@ -90,13 +92,15 @@ export async function resolveCompletion(
 	return null;
 }
 
-/** Resolve + run a completion in one step; "" when no provider or on empty output. */
+/** Resolve + run a completion in one step; "" when no provider or on empty output.
+ *  Pass `json: true` to constrain the model to valid JSON (structured output). */
 export async function chatComplete(
 	prompt: string,
 	maxTokens = 1024,
 	system?: string,
+	opts: { json?: boolean } = {},
 ): Promise<string> {
-	const req = await resolveCompletion(prompt, maxTokens, system);
+	const req = await resolveCompletion(prompt, maxTokens, system, opts.json);
 	if (!req) return "";
 	return completeText(req);
 }

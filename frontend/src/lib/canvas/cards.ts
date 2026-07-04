@@ -55,6 +55,9 @@ export interface FileData {
 	path?: string;
 	preview?: string;
 	highlights?: PdfHL[];
+	/** Set once a Studio mind map has been generated for this file — id of the map's
+	 *  root card, so the file node can offer an "Open mindmap" jump. */
+	mindmapRootId?: string;
 	[key: string]: unknown;
 }
 

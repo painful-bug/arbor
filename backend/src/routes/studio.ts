@@ -101,7 +101,7 @@ studioRoutes.post("/:canvas/mindmap", async (c) => {
 	const text = chunks.join("\n\n").slice(0, 12_000);
 	log.info("studio", `mindmap start [${source}]`, { canvas, chunks: chunks.length, chars: text.length });
 
-	const raw = await chatComplete(MINDMAP_PROMPT(source, text), 2000, MINDMAP_SYSTEM);
+	const raw = await chatComplete(MINDMAP_PROMPT(source, text), 2000, MINDMAP_SYSTEM, { json: true });
 	if (!raw.trim()) {
 		// No provider/key configured, or the model returned nothing.
 		log.warn("studio", `mindmap no output [${source}]`, { canvas });
@@ -195,7 +195,7 @@ studioRoutes.post("/:canvas/generate", async (c) => {
 	const text = chunks.join("\n\n").slice(0, 12_000);
 	log.info("studio", `study start [${source}]`, { canvas, chunks: chunks.length, chars: text.length });
 
-	const raw = await chatComplete(STUDY_PROMPT(source, text), 2500, STUDY_SYSTEM);
+	const raw = await chatComplete(STUDY_PROMPT(source, text), 2500, STUDY_SYSTEM, { json: true });
 	if (!raw.trim()) {
 		log.warn("studio", `study no output [${source}]`, { canvas });
 		return c.json({ error: "no_provider", items: [] }, 422);
