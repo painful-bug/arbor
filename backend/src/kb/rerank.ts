@@ -16,7 +16,9 @@ async function load() {
 	}
 	if (!_tok || !_model) {
 		_tok = await _mod.AutoTokenizer.from_pretrained("Xenova/bge-reranker-base");
-		_model = await _mod.AutoModelForSequenceClassification.from_pretrained("Xenova/bge-reranker-base");
+		_model = await _mod.AutoModelForSequenceClassification.from_pretrained(
+			"Xenova/bge-reranker-base",
+		);
 	}
 	return { tok: _tok, model: _model };
 }

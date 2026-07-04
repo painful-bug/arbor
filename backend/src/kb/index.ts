@@ -1,12 +1,23 @@
-import { extract, toMarkdownPages } from "@arbor/mosaic";
-import { cloudOcrImage } from "./cloud-ocr.ts";
-import { MODELS_DIR } from "../paths.ts";
-import { embed } from "./embeddings.ts";
-import { upsert, hybridSearch, clear, removeSource, relate, sources as storeSources, sourceContent } from "./store.ts";
-import { contextualize } from "./contextualize.ts";
-import { rerank } from "./rerank.ts";
-import { chunkPages } from "./chunk.ts";
 import { randomBytes } from "node:crypto";
+import { extract, toMarkdownPages } from "@arbor/mosaic";
+import { RERANK_STRONG as STRONG, RERANK_WEAK as WEAK } from "../config.ts";
+import { fetchText } from "../http.ts";
+import { log } from "../log.ts";
+import { MODELS_DIR } from "../paths.ts";
+import { chunkPages } from "./chunk.ts";
+import { cloudOcrImage } from "./cloud-ocr.ts";
+import { contextualize } from "./contextualize.ts";
+import { embed } from "./embeddings.ts";
+import { rerank } from "./rerank.ts";
+import {
+	clear,
+	hybridSearch,
+	relate,
+	removeSource,
+	sourceContent,
+	sources as storeSources,
+	upsert,
+} from "./store.ts";
 
 export type Verdict = "strong" | "weak" | "none";
 export interface GradedSearch {
@@ -14,11 +25,8 @@ export interface GradedSearch {
 	verdict: Verdict;
 }
 
-// Cross-encoder sigmoid score bands (calibrated on bge-reranker-base):
-// relevant pairs land ~0.9+, irrelevant ~0.0. A best hit below WEAK means the KB
-// almost certainly lacks the answer — the agent should fall back to web/tools.
-const STRONG = 0.5;
-const WEAK = 0.05;
+// Cross-encoder sigmoid score bands for STRONG/WEAK (calibrated on
+// bge-reranker-base) live in config.ts as RERANK_STRONG/RERANK_WEAK.
 
 export async function addFile(
 	canvas: string,
@@ -26,15 +34,26 @@ export async function addFile(
 	mime: string,
 	bytes: Uint8Array,
 ): Promise<number> {
-	if (!canvas) { console.warn("[KB] addFile called with empty canvas id — skipping"); return 0; }
+	if (!canvas) {
+		log.warn("kb", "addFile called with empty canvas id — skipping");
+		return 0;
+	}
 	// @arbor/mosaic: bytes → typed AST → Markdown (text layer + OCR + layout). Cloud
 	// VLM OCR is injected so keys stay in the backend (Bun.secrets), never the package.
-	const doc = await extract(bytes, { filename, mime, modelDir: MODELS_DIR, ocr: { cloudOcrImage } });
+	const doc = await extract(bytes, {
+		filename,
+		mime,
+		modelDir: MODELS_DIR,
+		ocr: { cloudOcrImage },
+	});
 	const pages = toMarkdownPages(doc);
 	if (pages.length === 0) return 0;
 
 	const totalChars = pages.reduce((n, p) => n + p.text.length, 0);
-	console.log(`[KB] addFile ${filename} (${canvas}): ${totalChars} chars across ${pages.length} pages extracted`);
+	log.info(
+		"kb",
+		`addFile ${filename} (${canvas}): ${totalChars} chars across ${pages.length} pages extracted`,
+	);
 	const chunks = await chunkPages(pages, filename); // { text, page }[]
 	if (chunks.length === 0) return 0;
 
@@ -44,9 +63,7 @@ export async function addFile(
 		new Array<string>(texts.length).fill(""),
 	);
 
-	const embedTexts = texts.map((text, i) =>
-		headers[i] ? `${headers[i]}\n\n${text}` : text,
-	);
+	const embedTexts = texts.map((text, i) => (headers[i] ? `${headers[i]}\n\n${text}` : text));
 
 	const vectors = await embed(embedTexts);
 
@@ -68,16 +85,21 @@ export async function addChat(
 	prompt: string,
 	answer: string,
 ): Promise<void> {
-	if (!canvas) { console.warn("[KB] addChat called with empty canvas id — skipping"); return; }
+	if (!canvas) {
+		log.warn("kb", "addChat called with empty canvas id — skipping");
+		return;
+	}
 	const body = `User: ${prompt}\n\nAssistant: ${answer}`;
 	const source = `chat:${cardId}`;
 	const vectors = await embed([body]);
-	await upsert(canvas, source, [{
-		id: randomBytes(8).toString("hex"),
-		source,
-		text: body,
-		vector: vectors[0],
-	}]);
+	await upsert(canvas, source, [
+		{
+			id: randomBytes(8).toString("hex"),
+			source,
+			text: body,
+			vector: vectors[0],
+		},
+	]);
 }
 
 // Retrieve → rerank → grade. Over-fetch with hybrid search, rerank with the
@@ -91,16 +113,23 @@ export async function searchGraded(canvas: string, query: string, k = 6): Promis
 
 	// rerank works on chunk text; re-attach source + page by text after ranking.
 	const metaOf = new Map(candidates.map((c) => [c.text, { source: c.source, page: c.page }]));
-	const ranked = await rerank(query, candidates.map((c) => c.text)).catch(() => null);
+	const ranked = await rerank(
+		query,
+		candidates.map((c) => c.text),
+	).catch(() => null);
 	if (!ranked) {
 		// Reranker unavailable — return hybrid order, score -1 signals "unscored".
 		return {
-			chunks: candidates.slice(0, k).map((c) => ({ text: c.text, score: -1, source: c.source, page: c.page })),
+			chunks: candidates
+				.slice(0, k)
+				.map((c) => ({ text: c.text, score: -1, source: c.source, page: c.page })),
 			verdict: "weak",
 		};
 	}
 
-	const top = ranked.slice(0, k).map((r) => ({ ...r, ...(metaOf.get(r.text) ?? { source: "", page: undefined }) }));
+	const top = ranked
+		.slice(0, k)
+		.map((r) => ({ ...r, ...(metaOf.get(r.text) ?? { source: "", page: undefined }) }));
 	const best = top[0]?.score ?? 0;
 	const verdict: Verdict = best >= STRONG ? "strong" : best >= WEAK ? "weak" : "none";
 	return { chunks: top, verdict };
@@ -144,6 +173,37 @@ export async function removeFile(canvas: string, filename: string): Promise<void
 
 export async function clearCanvas(canvas: string): Promise<void> {
 	await clear(canvas);
+}
+
+// Web clipper: fetch a page, extract readable text via mosaic, index it into the
+// canvas KB. Returns the title + extracted markdown (for an offline card the
+// frontend drops on the canvas) + chunk count. The page is now offline + searchable.
+export async function clipUrl(
+	canvas: string,
+	url: string,
+): Promise<{ title: string; text: string; chunks: number }> {
+	const raw = await fetchText(url);
+	const title = (
+		/<title[^>]*>([^<]*)<\/title>/i.exec(raw)?.[1] ?? new URL(url).hostname
+	).trim();
+	// Drop script/style blocks so their contents don't pollute the indexed text.
+	const html = raw
+		.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+		.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
+	const doc = await extract(new TextEncoder().encode(html), {
+		filename: `${title}.html`,
+		mime: "text/html",
+		modelDir: MODELS_DIR,
+		ocr: { cloudOcrImage },
+	});
+	const text = toMarkdownPages(doc)
+		.map((p) => p.text)
+		.join("\n\n")
+		.trim();
+	// Index the readable text as the source (cheap plain re-extract; keeps the card
+	// content and the KB content identical). Source key = the page title.
+	const chunks = await addFile(canvas, title, "text/plain", new TextEncoder().encode(text));
+	return { title, text, chunks };
 }
 
 export async function readSource(canvas: string, source: string): Promise<string[]> {

@@ -2,7 +2,7 @@
 // (macOS) → tesseract → injected cloud VLM. First engine that returns text wins.
 // Returns normalized-bbox lines; the cloud fallback has no geometry so it yields
 // a single full-page line.
-import { ocrVision, ocrTesseract, type OcrLine } from "./native.ts";
+import { type OcrLine, ocrTesseract, ocrVision } from "./native.ts";
 import { ocrPaddle } from "./ppocr.ts";
 
 export type { OcrLine } from "./native.ts";

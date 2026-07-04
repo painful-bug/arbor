@@ -3,11 +3,11 @@
 // Return a normalized http(s) URL if `text` is a bare URL, else null.
 // Used to decide whether a paste/drop should become a web embed card.
 export function asUrl(text: string): string | null {
-	const t = (text ?? '').trim();
+	const t = (text ?? "").trim();
 	if (!t || /\s/.test(t)) return null; // a URL has no internal whitespace
 	try {
 		const u = new URL(t);
-		return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
+		return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
 	} catch {
 		return null;
 	}
@@ -19,7 +19,7 @@ export function faviconFor(url: string): string {
 		const host = new URL(url).hostname;
 		return `https://www.google.com/s2/favicons?domain=${host}&sz=32`;
 	} catch {
-		return '';
+		return "";
 	}
 }
 
@@ -27,13 +27,15 @@ export function faviconFor(url: string): string {
 export function youtubeId(url: string): string | null {
 	try {
 		const u = new URL(url);
-		if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+		if (u.hostname === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
 		if (/^(www\.)?(youtube\.com|youtube-nocookie\.com)$/.test(u.hostname)) {
-			if (u.pathname.startsWith('/embed/')) return u.pathname.split('/')[2] || null;
-			if (u.pathname.startsWith('/shorts/')) return u.pathname.split('/')[2] || null;
-			return u.searchParams.get('v');
+			if (u.pathname.startsWith("/embed/")) return u.pathname.split("/")[2] || null;
+			if (u.pathname.startsWith("/shorts/")) return u.pathname.split("/")[2] || null;
+			return u.searchParams.get("v");
 		}
-	} catch { /* not a youtube url */ }
+	} catch {
+		/* not a youtube url */
+	}
 	return null;
 }
 
@@ -42,7 +44,9 @@ export function youtubeId(url: string): string | null {
 export function isMediaEmbed(url: string): boolean {
 	try {
 		const h = new URL(url).hostname;
-		return /(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|player\.vimeo\.com)$/.test(h);
+		return /(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|player\.vimeo\.com)$/.test(
+			h,
+		);
 	} catch {
 		return false;
 	}
@@ -62,17 +66,19 @@ export function toEmbedUrl(url: string, autoplay = false): string {
 	try {
 		const id = youtubeId(url);
 		if (id) {
-			const ap = autoplay ? '&autoplay=1' : '';
+			const ap = autoplay ? "&autoplay=1" : "";
 			return `https://www.youtube-nocookie.com/embed/${id}?enablejsapi=1${ap}`;
 		}
 		const u = new URL(url);
 		if (/^(www\.)?vimeo\.com$/.test(u.hostname)) {
-			const vid = u.pathname.split('/').filter(Boolean)[0];
+			const vid = u.pathname.split("/").filter(Boolean)[0];
 			if (vid && /^\d+$/.test(vid)) {
-				return `https://player.vimeo.com/video/${vid}${autoplay ? '?autoplay=1' : ''}`;
+				return `https://player.vimeo.com/video/${vid}${autoplay ? "?autoplay=1" : ""}`;
 			}
 		}
-	} catch { /* return original */ }
+	} catch {
+		/* return original */
+	}
 	return url;
 }
 
@@ -80,9 +86,9 @@ export function toEmbedUrl(url: string, autoplay = false): string {
 export function labelFor(url: string): string {
 	try {
 		const u = new URL(url);
-		const path = u.pathname === '/' ? '' : u.pathname;
-		const s = u.hostname.replace(/^www\./, '') + path;
-		return s.length > 48 ? s.slice(0, 47) + '…' : s;
+		const path = u.pathname === "/" ? "" : u.pathname;
+		const s = u.hostname.replace(/^www\./, "") + path;
+		return s.length > 48 ? `${s.slice(0, 47)}…` : s;
 	} catch {
 		return url;
 	}

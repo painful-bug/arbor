@@ -44,27 +44,45 @@ Runtime: **Bun**. Framework: **Hono**.
 
 ```
 src/
-  server.ts              — app factory, port scan, handshake, spawn entry
+  server.ts              — app factory, port scan, handshake, central app.onError, spawn entry
   paths.ts               — ARBOR_DIR, BACKEND_HANDSHAKE_FILE
+  config.ts              — all cross-module constants (ports, chunk sizes, thresholds)
+  errors.ts              — AppError (+ badRequest/notFound factories)
+  log.ts                 — leveled logger: log.info|warn|error(scope, msg, data?)
+  http.ts                — fetchJson()/fetchText() with timeout → AppError on failure
   routes/
     agent.ts             — POST /api/agent/prompt (SSE), POST /api/agent/:id/cancel
-    rag.ts               — POST /api/rag/:canvas/files, GET /api/rag/:canvas/search
+    kb.ts                — POST /api/kb/:canvas/files, GET /api/kb/:canvas/search, /relate, /contents
     keys.ts              — PUT/GET /api/keys/:provider, POST /api/providers/:provider/test
     canvases.ts          — GET/PUT /api/canvases, CRUD /api/canvases/:id
     settings.ts          — GET/PUT /api/settings
     blobs.ts             — PUT/GET /api/blobs/:id
     files.ts             — GET /api/files/read, GET /api/files/read-bytes, POST /api/files/write
+    ollama.ts            — GET /api/ollama/models, POST /api/ollama/pull (SSE)
+    cleanup.ts           — POST /api/cleanup/:canvas/arrange
   agent/
     run.ts               — handlePrompt(), runs map (cancel), Bun.secrets for keys
     providers.ts         — pi-ai provider catalog
-    tools.ts             — web search, scholar search, rag_search, research plan tools
-  rag/
-    index.ts             — addFile(), search() — LanceDB + transformers.js BGE-small
-    loaders.ts           — MIME→LangChain loader registry
+    llm.ts               — completeText(): one-shot non-streaming provider completion
+    tools/               — one module per tool domain, re-exported via tools/index.ts
+      web-search.ts      — Tavily + DuckDuckGo web search
+      scholar.ts         — OpenAlex + arXiv scholarly search
+      research.ts        — research plan tool
+      kb.ts              — knowledge base search/overview/read-source tools
+      cards.ts           — create_note / create_card / update_card canvas tools
+  kb/
+    index.ts             — addFile(), search() orchestration (extract → chunk → embed → store)
+    store.ts             — LanceDB table per canvas, hybrid search
+    chunk.ts             — structure-aware splitting (LangChain splitters)
+    embeddings.ts        — transformers.js BGE-small-en-v1.5
+    rerank.ts            — cross-encoder rerank (bge-reranker-base)
+    contextualize.ts     — LLM chunk-context headers (optional, needs a key)
+    cloud-ocr.ts         — scanned-image OCR fallback
+  cleanup/
+    arrange.ts           — semantic force-clustering layout math
   store/
     db.ts                — Drizzle schema + DB singleton
     import-legacy.ts     — one-time legacy JSON → SQLite import
-  secrets/               — (keytar wrapper if extracted from routes/keys.ts)
 ```
 
 ### Key libraries
@@ -86,11 +104,11 @@ All `/api/*` routes require `Authorization: Bearer <token>`. `GET /health` is un
 2. Wire in `server.ts`: `import { fooRoutes } from "./routes/foo.ts"` + `app.route("/api/foo", fooRoutes)`.
 3. Add a test in `backend/src/routes/foo.test.ts`.
 
-### Adding a file loader
-In `backend/src/rag/loaders.ts` — add a MIME key to the loader registry. Loaders must return `Document[]` with `pageContent: string`.
+### Adding a file type
+Text extraction lives in `@arbor/mosaic` (`packages/mosaic`); `backend/src/kb/index.ts` wires extraction → chunking → embedding. Add new MIME handling there.
 
 ### Adding an agent tool
-In `backend/src/agent/tools.ts` — define a TypeBox schema + return an `AgentTool` object. Wire into the tools array in `backend/src/agent/run.ts`.
+Add it to the matching `backend/src/agent/tools/<domain>.ts` (or a new domain file) — define a TypeBox schema + return an `AgentTool` object. Re-export it from `backend/src/agent/tools/index.ts`, then wire it into the tools array in `backend/src/agent/run.ts`.
 
 ### Tests
 ```bash
@@ -111,12 +129,25 @@ src/lib/
     client.ts            — runAgent() SSE reader, cancelAgent(), testConnection(), ragAdd()
     workflows.ts         — system prompt templates per workflow
   canvas/
-    Canvas.svelte        — main canvas, drag-drop → /api/files/read-bytes → ragAdd
-    store.svelte.ts      — canvas state, persisted via /api/canvases
+    Canvas.svelte        — main canvas, drag-drop → /api/files/read-bytes → kbAdd
+    store.svelte.ts      — canvas state + thin actions; re-exports the satellites below
+    cards.ts             — buildCardNode() factory, per-kind frame defaults, card/file/text/tag types
+    persistence.ts        — canvas index + doc load/save over /api/canvases (fire-and-forget)
+    history.ts            — createHistory(): bounded undo/redo stack of deep-cloned snapshots
+    kb-sync.ts             — debounced text-card KB indexing, file-node KB/blob cleanup
+    context.ts             — digest builders (connected/canvas/ancestry) fed into agent system prompts
+    runs.ts                — runModel/runSession/continueCard/retryCard — agent run orchestration
+    shortcuts.ts            — handleCanvasShortcut(): pure keydown → action dispatch
+    kinds.ts                — file-kind type guards (isPdfFile, isImageFile, …)
+    KbOverlay.svelte        — knowledge-base search/contents modal
     AgentTimeline.svelte — tool event display
   files.ts               — readFile/writeFile → /api/files/*, openPath → Tauri invoke
   settings/
     store.svelte.ts      — settings state, persisted via /api/settings
+routes/settings/
+  +page.svelte           — composes ProviderCard list + OllamaPanel + general settings
+  ProviderCard.svelte    — one provider's key save/test/model fields
+  OllamaPanel.svelte     — local model list + pull-with-progress
 ```
 
 ### Tauri IPC (the only two remaining commands)

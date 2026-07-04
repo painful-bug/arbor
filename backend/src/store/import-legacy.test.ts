@@ -2,7 +2,7 @@
 // case runs in a fresh subprocess with its own temp ARBOR_DIR holding a legacy
 // ~/.arbor fixture. Asserts: data lands in SQLite, originals stay, second run no-ops.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,16 +13,25 @@ function fixture(): string {
 	mkdirSync(join(dir, "blobs"), { recursive: true });
 	writeFileSync(
 		join(dir, "canvases", "index.json"),
-		JSON.stringify({ current: "c2", list: [
-			{ id: "c1", name: "First", createdAt: 10, updatedAt: 11 },
-			{ id: "c2", name: "Second", createdAt: 20, updatedAt: 21 },
-		] }),
+		JSON.stringify({
+			current: "c2",
+			list: [
+				{ id: "c1", name: "First", createdAt: 10, updatedAt: 11 },
+				{ id: "c2", name: "Second", createdAt: 20, updatedAt: 21 },
+			],
+		}),
 	);
-	writeFileSync(join(dir, "canvases", "c1.json"), JSON.stringify({ nodes: [{ id: "n1" }], edges: [] }));
+	writeFileSync(
+		join(dir, "canvases", "c1.json"),
+		JSON.stringify({ nodes: [{ id: "n1" }], edges: [] }),
+	);
 	writeFileSync(join(dir, "canvases", "c2.json"), JSON.stringify({ nodes: [], edges: [] }));
 	writeFileSync(join(dir, "settings.json"), JSON.stringify({ provider: "anthropic" }));
 	writeFileSync(join(dir, "blobs", "b1"), "rawbytes");
-	writeFileSync(join(dir, "blobs", "b1.meta.json"), JSON.stringify({ mime: "image/png", name: "p.png" }));
+	writeFileSync(
+		join(dir, "blobs", "b1.meta.json"),
+		JSON.stringify({ mime: "image/png", name: "p.png" }),
+	);
 	return dir;
 }
 
@@ -35,7 +44,8 @@ function run(dir: string, snippet: string): string {
 	return p.stdout.toString().trim();
 }
 
-const doImport = "import('./src/store/import-legacy.ts').then(m => console.log(JSON.stringify(m.importLegacyIfNeeded())))";
+const doImport =
+	"import('./src/store/import-legacy.ts').then(m => console.log(JSON.stringify(m.importLegacyIfNeeded())))";
 const countCanvases =
 	"Promise.all([import('./src/store/db.ts'), import('./src/store/schema.ts')]).then(([d, s]) => console.log(JSON.stringify(d.db.select().from(s.canvases).all().map(r => r.id))))";
 

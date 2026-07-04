@@ -2,9 +2,10 @@
 // Canvas.svelte owns the swoop (it has the useSvelteFlow() hook) and reacts to
 // `searchState.cursor`/`searchState.matches`; node components read
 // `searchHighlight` to <mark> the matched word on their face.
-import type { Node } from '@xyflow/svelte';
-import { flow, currentCanvasId } from './store.svelte';
-import { kbSearchHits } from '$lib/ai/client';
+import type { Node } from "@xyflow/svelte";
+import { kbSearchHits } from "$lib/ai/client";
+import { debounce } from "$lib/debounce";
+import { currentCanvasId, flow } from "./store.svelte";
 
 // One Match per occurrence (local) or per file node (deep RAG hit). `ordInNode` is the
 // occurrence's index within its node, counted over the node's visible segments in render
@@ -13,7 +14,7 @@ import { kbSearchHits } from '$lib/ai/client';
 export interface Match {
 	nodeId: string;
 	ordInNode: number;
-	kind: 'local' | 'rag';
+	kind: "local" | "rag";
 	page?: number; // rag hits: source page, for deep-linking into the preview
 	terms?: string[]; // fuzzy local hits: query words to highlight (no single occurrence to focus, ordInNode is -1)
 }
@@ -24,17 +25,19 @@ export const searchState = $state<{
 	matches: Match[];
 	cursor: number;
 	ragLoading: boolean;
-}>({ open: false, query: '', matches: [], cursor: 0, ragLoading: false });
+}>({ open: false, query: "", matches: [], cursor: 0, ragLoading: false });
 
-export const searchHighlight = $state<{ nodeId: string | null; terms: string[]; activeOrd: number }>(
-	{ nodeId: null, terms: [], activeOrd: -1 }
-);
+export const searchHighlight = $state<{
+	nodeId: string | null;
+	terms: string[];
+	activeOrd: number;
+}>({ nodeId: null, terms: [], activeOrd: -1 });
 
 // Set when the active match is deep file content (rag) with a known page: Canvas
 // reacts by opening that file's preview and PdfViewer scrolls to the page. `seq`
 // bumps on every request so re-focusing the same hit re-triggers the effect.
 export const deepLink = $state<{ nodeId: string | null; page: number; query: string; seq: number }>(
-	{ nodeId: null, page: 0, query: '', seq: 0 }
+	{ nodeId: null, page: 0, query: "", seq: 0 },
 );
 
 // Visible segments per node type, in the SAME order the card renders them — so an
@@ -42,14 +45,14 @@ export const deepLink = $state<{ nodeId: string | null; page: number; query: str
 // text (cards: title + latest answer) so the "N of M" counter matches what's highlighted.
 function segmentsOf(n: Node): string[] {
 	const d = n.data as Record<string, unknown>;
-	if (n.type === 'card') {
+	if (n.type === "card") {
 		const turns = (d.turns as { answer?: string }[] | undefined) ?? [];
-		const lastAnswer = turns.length ? (turns[turns.length - 1].answer ?? '') : '';
-		return [(d.title as string) ?? '', lastAnswer];
+		const lastAnswer = turns.length ? (turns[turns.length - 1].answer ?? "") : "";
+		return [(d.title as string) ?? "", lastAnswer];
 	}
-	if (n.type === 'text') return [(d.text as string) ?? ''];
-	if (n.type === 'file') return [(d.filename as string) ?? '', (d.preview as string) ?? ''];
-	if (n.type === 'web') return [(d.title as string) ?? '', (d.url as string) ?? ''];
+	if (n.type === "text") return [(d.text as string) ?? ""];
+	if (n.type === "file") return [(d.filename as string) ?? "", (d.preview as string) ?? ""];
+	if (n.type === "web") return [(d.title as string) ?? "", (d.url as string) ?? ""];
 	return [];
 }
 
@@ -87,7 +90,7 @@ export function focus(idx: number): void {
 	searchHighlight.activeOrd = m[i].ordInNode;
 
 	// Deep file-content hit with a page → ask Canvas to open the preview at that page.
-	if (m[i].kind === 'rag' && m[i].page) {
+	if (m[i].kind === "rag" && m[i].page) {
 		deepLink.nodeId = id;
 		deepLink.page = m[i].page!;
 		deepLink.query = searchState.query.trim();
@@ -110,12 +113,12 @@ function runLocal(q: string): void {
 	const titleMatches: Match[] = [];
 	const bodyMatches: Match[] = [];
 	for (const n of flow.nodes) {
-		if (n.type === 'group') continue;
+		if (n.type === "group") continue;
 		let ord = 0;
 		segmentsOf(n).forEach((seg, segIdx) => {
 			const c = countOcc(seg, q);
 			for (let i = 0; i < c; i++) {
-				const m: Match = { nodeId: n.id, ordInNode: ord++, kind: 'local' };
+				const m: Match = { nodeId: n.id, ordInNode: ord++, kind: "local" };
 				(segIdx === 0 ? titleMatches : bodyMatches).push(m);
 			}
 		});
@@ -131,12 +134,12 @@ function runLocal(q: string): void {
 			const titleFuzzy: Match[] = [];
 			const bodyFuzzy: Match[] = [];
 			for (const n of flow.nodes) {
-				if (n.type === 'group') continue;
+				if (n.type === "group") continue;
 				const segs = segmentsOf(n);
-				const hay = segs.join(' ').toLowerCase();
+				const hay = segs.join(" ").toLowerCase();
 				if (!tokens.every((t) => hay.includes(t))) continue;
-				const m: Match = { nodeId: n.id, ordInNode: -1, kind: 'local', terms: tokens };
-				const titleHay = (segs[0] ?? '').toLowerCase();
+				const m: Match = { nodeId: n.id, ordInNode: -1, kind: "local", terms: tokens };
+				const titleHay = (segs[0] ?? "").toLowerCase();
 				(tokens.every((t) => titleHay.includes(t)) ? titleFuzzy : bodyFuzzy).push(m);
 			}
 			matches = [...titleFuzzy, ...bodyFuzzy];
@@ -151,7 +154,7 @@ function runLocal(q: string): void {
 async function runRag(q: string): Promise<void> {
 	if (searchState.query.trim() !== q) return;
 	searchState.ragLoading = true;
-	const hits = await kbSearchHits(currentCanvasId() || 'default', q, 8);
+	const hits = await kbSearchHits(currentCanvasId() || "default", q, 8);
 	searchState.ragLoading = false;
 	if (searchState.query.trim() !== q) return;
 
@@ -160,11 +163,11 @@ async function runRag(q: string): Promise<void> {
 	const extra: Match[] = [];
 	for (const h of hits) {
 		const node = flow.nodes.find(
-			(n) => n.type === 'file' && (n.data as Record<string, unknown>).filename === h.source
+			(n) => n.type === "file" && (n.data as Record<string, unknown>).filename === h.source,
 		);
 		if (!node || already.has(node.id)) continue;
 		already.add(node.id);
-		extra.push({ nodeId: node.id, ordInNode: -1, kind: 'rag', page: h.page });
+		extra.push({ nodeId: node.id, ordInNode: -1, kind: "rag", page: h.page });
 	}
 	if (!extra.length) return;
 	const hadNone = searchState.matches.length === 0;
@@ -172,22 +175,41 @@ async function runRag(q: string): Promise<void> {
 	if (hadNone) focus(0);
 }
 
-let localTimer: ReturnType<typeof setTimeout>;
-let ragTimer: ReturnType<typeof setTimeout>;
+const localDebounced = debounce((q: string) => runLocal(q), 120);
+const ragDebounced = debounce((q: string) => void runRag(q), 260);
 
 export function rebuild(query: string): void {
 	searchState.query = query;
-	clearTimeout(localTimer);
-	clearTimeout(ragTimer);
 	const q = query.trim();
 	if (!q) {
+		localDebounced.cancel();
+		ragDebounced.cancel();
 		searchState.matches = [];
 		searchState.cursor = 0;
 		clearHighlight();
 		return;
 	}
-	localTimer = setTimeout(() => runLocal(q), 120);
-	ragTimer = setTimeout(() => void runRag(q), 260);
+	localDebounced(q);
+	ragDebounced(q);
+}
+
+// Open a file node's preview at a page (0 = top), reusing the deep-link plumbing that
+// PdfViewer already honors via initialPage/initialQuery. Shared by citation chips
+// (agent KB hits) and highlight-note backlinks.
+export function openSourceNode(nodeId: string, page = 0, query = ""): void {
+	deepLink.nodeId = nodeId;
+	deepLink.page = page;
+	deepLink.query = query;
+	deepLink.seq++;
+}
+
+// Same, but resolve a file node by its indexed source name (filename). No-op if the
+// source isn't on the current canvas as a file node.
+export function openSource(source: string, page = 0, query = ""): void {
+	const node = flow.nodes.find(
+		(n) => n.type === "file" && (n.data as Record<string, unknown>).filename === source,
+	);
+	if (node) openSourceNode(node.id, page, query);
 }
 
 export function openSearch(): void {
@@ -195,10 +217,10 @@ export function openSearch(): void {
 }
 
 export function closeSearch(): void {
-	clearTimeout(localTimer);
-	clearTimeout(ragTimer);
+	localDebounced.cancel();
+	ragDebounced.cancel();
 	searchState.open = false;
-	searchState.query = '';
+	searchState.query = "";
 	searchState.matches = [];
 	searchState.cursor = 0;
 	searchState.ragLoading = false;

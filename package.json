@@ -2,7 +2,9 @@
 	"name": "arbor",
 	"private": true,
 	"description": "Arbor — spatial research canvas. frontend/ = UI + thin Tauri shell, backend/ = all processing behind a local HTTP/SSE API.",
-	"workspaces": ["packages/*"],
+	"workspaces": [
+		"packages/*"
+	],
 	"scripts": {
 		"dev": "cd frontend && npx tauri dev",
 		"dev:web": "cd frontend && npm run dev",
@@ -12,9 +14,15 @@
 		"build:macos": "bash scripts/build-macos.sh",
 		"test": "cd backend && bun test && cd ../frontend && npm test",
 		"test:backend": "cd backend && bun test",
-		"test:frontend": "cd frontend && npm test"
+		"test:frontend": "cd frontend && npm test",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"typecheck": "cd backend && bun x tsc --noEmit && cd ../frontend && npm run check"
 	},
 	"dependencies": {
 		"fallow": "^2.102.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.2"
 	}
 }

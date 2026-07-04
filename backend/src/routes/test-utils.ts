@@ -6,8 +6,8 @@ export function makeTestApp(token: string) {
 		app.fetch(
 			new Request(`http://localhost${path}`, {
 				...init,
-				headers: { Authorization: `Bearer ${token}`, ...(init?.headers ?? {}) }
-			})
+				headers: { Authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
+			}),
 		);
 	return { app, api };
 }

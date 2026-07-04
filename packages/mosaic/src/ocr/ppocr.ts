@@ -2,10 +2,11 @@
 // @gutenye/ocr-node (PaddleOCR det + cls + rec ONNX models, onnxruntime-node), so
 // detection + CTC decode are battle-tested rather than hand-rolled. Returns lines
 // with normalized bboxes for reading order.
-import { writeFile, unlink } from "node:fs/promises";
+
+import { randomBytes } from "node:crypto";
+import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import type { OcrLine } from "./native.ts";
 
 type GutenLine = { text: string; mean: number; box?: number[][] };
@@ -15,7 +16,9 @@ let instance: Promise<GutenOcr> | undefined;
 
 function load(): Promise<GutenOcr> {
 	if (!instance) {
-		instance = import("@gutenye/ocr-node").then((m) => (m.default as { create(): Promise<GutenOcr> }).create());
+		instance = import("@gutenye/ocr-node").then((m) =>
+			(m.default as { create(): Promise<GutenOcr> }).create(),
+		);
 	}
 	return instance;
 }

@@ -2,13 +2,13 @@
 // → tesseract (cross-platform, TSV gives bbox + confidence). Both shell out via
 // node:child_process (no Bun APIs). bbox is normalized 0..1, top-left origin.
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { writeFile, unlink, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
@@ -69,7 +69,14 @@ async function ocrVision(png: Uint8Array, modelDir?: string): Promise<OcrLine[]>
 			const s = row.trim();
 			if (!s) continue;
 			try {
-				const o = JSON.parse(s) as { t: string; x: number; y: number; w: number; h: number; c: number };
+				const o = JSON.parse(s) as {
+					t: string;
+					x: number;
+					y: number;
+					w: number;
+					h: number;
+					c: number;
+				};
 				// Vision origin is bottom-left → flip y to top-left.
 				lines.push({
 					text: o.t,
@@ -103,7 +110,10 @@ async function findTesseract(): Promise<string | null> {
 
 // TSV columns: level page block par line word left top width height conf text
 function parseTsv(tsv: string, imgW: number, imgH: number): OcrLine[] {
-	const byLine = new Map<string, { words: string[]; l: number; t: number; r: number; b: number; conf: number[] }>();
+	const byLine = new Map<
+		string,
+		{ words: string[]; l: number; t: number; r: number; b: number; conf: number[] }
+	>();
 	for (const row of tsv.split("\n").slice(1)) {
 		const c = row.split("\t");
 		if (c.length < 12 || c[0] !== "5") continue; // level 5 = word
@@ -138,4 +148,4 @@ async function ocrTesseract(png: Uint8Array, imgW: number, imgH: number): Promis
 	});
 }
 
-export { ocrVision, ocrTesseract };
+export { ocrTesseract, ocrVision };
