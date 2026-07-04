@@ -6,22 +6,22 @@
 // pane and the sidebar gear badge. It naturally clears after a successful update:
 // the next `check()` returns null, so `status` goes back to 'idle'.
 
-import type { Update } from '@tauri-apps/plugin-updater';
+import type { Update } from "@tauri-apps/plugin-updater";
 
 export const updateState = $state<{
-	status: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+	status: "idle" | "checking" | "available" | "downloading" | "ready" | "error";
 	version: string | null;
 	notes: string | null;
 	progress: number; // 0..1
 	error: string | null;
-}>({ status: 'idle', version: null, notes: null, progress: 0, error: null });
+}>({ status: "idle", version: null, notes: null, progress: 0, error: null });
 
 // The pending update handle from the last successful check(), kept so the pane's
 // Update button (and the macOS notification action) can install without re-checking.
 let pending: Update | null = null;
 
 function isTauri(): boolean {
-	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 // DEV/TESTING ONLY — remove before public release. Forces checkForUpdates() to
@@ -36,40 +36,40 @@ export async function setForceUpdateCheck(enabled: boolean): Promise<void> {
 	forceUpdateCheck.enabled = enabled;
 	if (!isTauri()) return;
 	try {
-		const { invoke } = await import('@tauri-apps/api/core');
-		await invoke('set_force_update_check', { enabled });
+		const { invoke } = await import("@tauri-apps/api/core");
+		await invoke("set_force_update_check", { enabled });
 	} catch (e) {
-		console.warn('[updates] set_force_update_check failed:', e);
+		console.warn("[updates] set_force_update_check failed:", e);
 	}
 }
 
 /** True when an update is in-flight or waiting — drives the gear badge. */
 export function hasUpdate(): boolean {
 	return (
-		updateState.status === 'available' ||
-		updateState.status === 'downloading' ||
-		updateState.status === 'ready'
+		updateState.status === "available" ||
+		updateState.status === "downloading" ||
+		updateState.status === "ready"
 	);
 }
 
 export async function checkForUpdates(notify = false): Promise<void> {
 	if (!isTauri()) return; // browser dev: no updater
-	if (updateState.status === 'downloading' || updateState.status === 'ready') return;
+	if (updateState.status === "downloading" || updateState.status === "ready") return;
 
-	updateState.status = 'checking';
+	updateState.status = "checking";
 	updateState.error = null;
 	try {
-		const { check } = await import('@tauri-apps/plugin-updater');
+		const { check } = await import("@tauri-apps/plugin-updater");
 		const update = await check();
 		if (update) {
 			pending = update;
-			updateState.status = 'available';
+			updateState.status = "available";
 			updateState.version = update.version;
 			updateState.notes = update.body ?? null;
 			if (notify) await fireUpdateNotification(update.version);
 		} else {
 			pending = null;
-			updateState.status = 'idle';
+			updateState.status = "idle";
 			updateState.version = null;
 			updateState.notes = null;
 		}
@@ -80,10 +80,10 @@ export async function checkForUpdates(notify = false): Promise<void> {
 		// when nothing the user did is actually broken. Only an explicit,
 		// user-clicked "Check for updates" (notify=false) shows the failure.
 		if (notify) {
-			console.warn('[updates] background check failed:', e);
-			updateState.status = 'idle';
+			console.warn("[updates] background check failed:", e);
+			updateState.status = "idle";
 		} else {
-			updateState.status = 'error';
+			updateState.status = "error";
 			updateState.error = e instanceof Error ? e.message : String(e);
 		}
 	}
@@ -95,7 +95,7 @@ export async function installUpdate(): Promise<void> {
 		await checkForUpdates(false);
 		if (!pending) return;
 	}
-	updateState.status = 'downloading';
+	updateState.status = "downloading";
 	updateState.progress = 0;
 	updateState.error = null;
 	try {
@@ -103,24 +103,24 @@ export async function installUpdate(): Promise<void> {
 		let total = 0;
 		await pending.downloadAndInstall((e) => {
 			switch (e.event) {
-				case 'Started':
+				case "Started":
 					total = e.data.contentLength ?? 0;
 					break;
-				case 'Progress':
+				case "Progress":
 					downloaded += e.data.chunkLength;
 					updateState.progress = total > 0 ? downloaded / total : 0;
 					break;
-				case 'Finished':
+				case "Finished":
 					updateState.progress = 1;
-					updateState.status = 'ready';
+					updateState.status = "ready";
 					break;
 			}
 		});
 		// On Windows the installer auto-quits the app before install; relaunch covers macOS.
-		const { relaunch } = await import('@tauri-apps/plugin-process');
+		const { relaunch } = await import("@tauri-apps/plugin-process");
 		await relaunch();
 	} catch (e) {
-		updateState.status = 'error';
+		updateState.status = "error";
 		updateState.error = e instanceof Error ? e.message : String(e);
 	}
 }
@@ -135,26 +135,26 @@ let actionsRegistered = false;
 async function fireUpdateNotification(version: string): Promise<void> {
 	if (!isTauri()) return;
 	try {
-		const notif = await import('@tauri-apps/plugin-notification');
+		const notif = await import("@tauri-apps/plugin-notification");
 		if (!(await notif.isPermissionGranted())) {
-			if ((await notif.requestPermission()) !== 'granted') return;
+			if ((await notif.requestPermission()) !== "granted") return;
 		}
 
-		const { platform } = await import('@tauri-apps/plugin-os');
-		if (platform() === 'macos') {
+		const { platform } = await import("@tauri-apps/plugin-os");
+		if (platform() === "macos") {
 			if (!actionsRegistered) {
 				await notif.registerActionTypes([
-					{ id: 'arbor-update', actions: [{ id: 'update', title: 'Update' }] }
+					{ id: "arbor-update", actions: [{ id: "update", title: "Update" }] },
 				]);
 				actionsRegistered = true;
 			}
 			await notif.sendNotification({
-				title: 'Update available',
+				title: "Update available",
 				body: `Version ${version}`,
-				actionTypeId: 'arbor-update'
+				actionTypeId: "arbor-update",
 			});
 		} else {
-			await notif.sendNotification({ title: 'Update available', body: `Version ${version}` });
+			await notif.sendNotification({ title: "Update available", body: `Version ${version}` });
 		}
 	} catch {
 		// Notification failure is non-fatal — the gear badge still surfaces the update.
@@ -165,10 +165,10 @@ async function fireUpdateNotification(version: string): Promise<void> {
 export async function registerOnAction(onOpenPane: () => void): Promise<void> {
 	if (!isTauri()) return;
 	try {
-		const notif = await import('@tauri-apps/plugin-notification');
+		const notif = await import("@tauri-apps/plugin-notification");
 		await notif.onAction((n) => {
 			// macOS "Update" button → install immediately. Any other tap → open the pane.
-			if ((n as { actionId?: string }).actionId === 'update') {
+			if ((n as { actionId?: string }).actionId === "update") {
 				void installUpdate();
 			} else {
 				onOpenPane();

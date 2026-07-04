@@ -1,6 +1,6 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
 
 // Data root. Defaults to ~/.arbor; ARBOR_DIR overrides (tests use a temp dir).
 // Falls back to ~/.loom if it exists and ~/.arbor doesn't, so existing installs

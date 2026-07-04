@@ -7,14 +7,23 @@ import CardHandles from './CardHandles.svelte';
 	import type { FileData } from './store.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { renderMarkdown } from '$lib/markdown';
-	import { getFileBlob } from '$lib/files';
+	import { getThumb, hydrateThumb } from '$lib/files';
 	import { searchHighlight } from './globalSearch.svelte';
 	import { markHTML } from './highlights';
+	import { animatedOnce } from './cards';
+	import { isDocxFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
 
 	let { id, data, selected }: NodeProps = $props();
 	const isSelected = $derived(flow.selected === id || selected);
 	const file = $derived(data as FileData);
-	const blob = $derived(getFileBlob(id));
+	// Card face paints a small cached thumbnail — never raw file bytes (see files.ts).
+	const thumb = $derived(getThumb(id));
+	// Entrance animation once per node per session: with viewport-culled rendering,
+	// cards re-mount on every pan back into view — no re-bounce.
+	// svelte-ignore state_referenced_locally -- mount-time check by design
+	const animate = !reducedMotion() && !animatedOnce.has(id);
+	// svelte-ignore state_referenced_locally
+	animatedOnce.add(id);
 	const label = $derived(
 		file.status === 'indexing' ? 'Indexing…' : file.status === 'ready' ? 'Indexed' : 'Failed'
 	);
@@ -48,43 +57,16 @@ import CardHandles from './CardHandles.svelte';
 
 	// Preview body: markdown → rendered, docx → raw HTML (mammoth), text/pdf → plain.
 	const previewHtml = $derived(
-		file.kind === 'markdown' && file.preview
+		isMarkdownFile(file) && file.preview
 			? hlPrev(renderMarkdown(file.preview))
-			: file.kind === 'docx'
+			: isDocxFile(file)
 				? hlPrev(file.preview ?? '')
 				: ''
 	);
 
-	// One object URL per blob, revoked on change/teardown (was leaking one per
-	// $derived recompute — harmless until blobs became reactive, see files.ts).
-	let imgSrc = $state<string | null>(null);
+	// Ensure a thumbnail exists (memory → backend cache → one-time generation).
 	$effect(() => {
-		if (file.kind !== 'image' || !blob) { imgSrc = null; return; }
-		const url = URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }));
-		imgSrc = url;
-		return () => URL.revokeObjectURL(url);
-	});
-
-	let pdfThumbCanvas = $state<HTMLCanvasElement | null>(null);
-
-	$effect(() => {
-		if (file.kind !== 'pdf' || !blob || !pdfThumbCanvas) return;
-		const canvas = pdfThumbCanvas;
-		const bytes = blob.bytes;
-		(async () => {
-			try {
-				const pdfjs = await import('pdfjs-dist');
-				pdfjs.GlobalWorkerOptions.workerSrc = (
-					await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-				).default;
-				const doc = await pdfjs.getDocument({ data: (bytes as ArrayBuffer).slice(0) }).promise;
-				const page = await doc.getPage(1);
-				const viewport = page.getViewport({ scale: 0.4 });
-				canvas.width = viewport.width;
-				canvas.height = viewport.height;
-				await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-			} catch { /* silent — no bytes yet */ }
-		})();
+		if (isPdfFile(file) || isImageFile(file)) void hydrateThumb(id, file.kind);
 	});
 
 	function select() {
@@ -94,26 +76,69 @@ import CardHandles from './CardHandles.svelte';
 	function open() {
 		window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
 	}
+
+	// "Open mindmap" hover affordance — only when this file has a generated map.
+	const hasMindmap = $derived(!!file.mindmapRootId);
+	let hovered = $state(false);
+	// ponytail: 90ms leave-intent delay so crossing the gap to the popup doesn't drop it.
+	let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+	function enter() {
+		clearTimeout(leaveTimer);
+		hovered = true;
+	}
+	function leave() {
+		leaveTimer = setTimeout(() => (hovered = false), 90);
+	}
+
+	function openMindmap() {
+		window.dispatchEvent(new CustomEvent('arbor:focus-mindmap', { detail: { fileId: id } }));
+	}
+
+	// While the popup is up, Return jumps to the map (ignore when typing in a field).
+	function onHoverKey(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		const t = e.target as HTMLElement | null;
+		if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.isContentEditable) return;
+		e.preventDefault();
+		openMindmap();
+	}
+	$effect(() => {
+		if (!(hovered && hasMindmap)) return;
+		window.addEventListener('keydown', onHoverKey);
+		return () => window.removeEventListener('keydown', onHoverKey);
+	});
 </script>
 
 <NodeResizer minWidth={180} minHeight={160} isVisible={isSelected} />
 <CardHandles />
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="file-wrap" onmouseenter={enter} onmouseleave={leave}>
+{#if hovered && hasMindmap}
+	<button
+		class="mm-pop glass"
+		onclick={(e) => { e.stopPropagation(); openMindmap(); }}
+		onpointerdown={(e) => e.stopPropagation()}
+		onmouseenter={enter}
+		onmouseleave={leave}
+		in:scale={reducedMotion() ? { duration: 0 } : { duration: 420, start: 0.5, opacity: 0, easing: backOut }}
+	>Open mindmap ↵</button>
+{/if}
 <div
 	class="file"
 	class:node-glow-selected={isSelected}
 	style="background: var(--block-{file.block})"
 	onclick={select}
 	ondblclick={open}
-	in:scale={reducedMotion() ? { duration: 0 } : { duration: 480, start: 0.6, opacity: 0, easing: backOut }}
+	in:scale={animate ? { duration: 480, start: 0.6, opacity: 0, easing: backOut } : { duration: 0 }}
 >
 	<!-- preview fills entire card -->
 	<div class="preview">
-		{#if imgSrc}
-			<img src={imgSrc} alt={file.filename} class="fill" />
-		{:else if file.kind === 'image'}
+		{#if thumb && isImageFile(file)}
+			<img src={thumb} alt={file.filename} class="fill" />
+		{:else if thumb && isPdfFile(file)}
+			<img src={thumb} alt={file.filename} class="pdf-fill" />
+		{:else if isImageFile(file) || isPdfFile(file)}
 			<div class="center-icon">{icon}</div>
-		{:else if file.kind === 'pdf' && blob}
-			<canvas bind:this={pdfThumbCanvas} class="pdf-fill"></canvas>
 		{:else if previewHtml}
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<div class="doc">{@html previewHtml}</div>
@@ -140,8 +165,39 @@ import CardHandles from './CardHandles.svelte';
 		</span>
 	</div>
 </div>
+</div>
 
 <style>
+	.file-wrap {
+		position: relative;
+		width: 100%;
+		height: 100%;
+	}
+	/* "Open mindmap" pill — floats above the card, same entrance as the Follow Up button. */
+	.mm-pop {
+		position: absolute;
+		left: 50%;
+		bottom: 100%;
+		transform: translateX(-50%);
+		margin-bottom: 8px;
+		padding: 7px 14px;
+		border-radius: var(--r-pill);
+		border: none;
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--c-ink);
+		white-space: nowrap;
+		cursor: pointer;
+		z-index: 30;
+		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
+	}
+	.mm-pop:hover {
+		transform: translateX(-50%) translateY(-1px);
+	}
+	.mm-pop:active {
+		transform: translateX(-50%) scale(0.93);
+	}
 	.file {
 		width: 100%;
 		min-height: 160px;
@@ -151,6 +207,8 @@ import CardHandles from './CardHandles.svelte';
 		border: 1px solid rgba(0, 0, 0, 0.06);
 		overflow: hidden;
 		cursor: pointer;
+		/* See CardNode.svelte: isolate paint. (content-visibility trialled + removed.) */
+		contain: layout paint;
 	}
 	/* Preview fills the entire card */
 	.preview {

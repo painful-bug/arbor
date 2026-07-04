@@ -95,8 +95,9 @@
 		align-items: center;
 		justify-content: center;
 		padding: var(--s-xl);
-		background: rgba(20, 18, 16, 0.32);
-		backdrop-filter: blur(4px);
+		/* Dim instead of blur — blur repaints the whole backdrop every frame during
+		   scroll/drag underneath; a flat scrim reads the same focus cue for ~free. */
+		background: rgba(20, 18, 16, 0.5);
 	}
 	.panel {
 		width: min(760px, 92vw);

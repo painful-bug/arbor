@@ -43,9 +43,7 @@ export interface MosaicDoc {
 
 /** All blocks in global reading order. */
 export function blocksInOrder(doc: MosaicDoc): Block[] {
-	return doc.pages
-		.flatMap((p) => p.blocks)
-		.sort((a, b) => a.readingOrder - b.readingOrder);
+	return doc.pages.flatMap((p) => p.blocks).sort((a, b) => a.readingOrder - b.readingOrder);
 }
 
 /** Plain concatenated text (no markdown syntax) — handy for quick checks. */

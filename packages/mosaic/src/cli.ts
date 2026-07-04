@@ -2,8 +2,8 @@
 // mosaic <file> [--pages 1-10] [--out md|json] — extract a document to Markdown
 // (default) or the raw AST JSON, printed to stdout.
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
 import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { extract, toMarkdown } from "./index.ts";
 
 function arg(name: string): string | undefined {

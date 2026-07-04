@@ -1,8 +1,8 @@
-import { writeFile, unlink } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
-import { type Block } from "../ast.ts";
+import type { Block } from "../ast.ts";
 
 const para = (text: string): Block => ({
 	type: "paragraph",
@@ -37,7 +37,9 @@ export async function parsePptx(bytes: Uint8Array): Promise<Block[]> {
 export async function parseCsv(bytes: Uint8Array): Promise<Block[]> {
 	const { csvParseRows } = await import("d3-dsv");
 	const rows = csvParseRows(new TextDecoder().decode(bytes));
-	return rows.length ? [{ type: "table", page: 1, readingOrder: 0, method: "native", confidence: 1, rows }] : [];
+	return rows.length
+		? [{ type: "table", page: 1, readingOrder: 0, method: "native", confidence: 1, rows }]
+		: [];
 }
 
 /** EPUB has no buffer-native loader here, so spill to a temp file for LangChain. */

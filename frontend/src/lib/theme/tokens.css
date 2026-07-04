@@ -40,9 +40,8 @@
 	--c-on-block-rgb: 28, 28, 28;
 
 	/* type */
-	--font-sans:
-		-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
-	--font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+	--font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 
 	/* sidebar / nav button geometry (shared across rail buttons) */
 	--nav-btn: 40px;
@@ -120,7 +119,7 @@
 	position: relative;
 }
 .node-glow-selected::after {
-	content: '';
+	content: "";
 	position: absolute;
 	inset: -3px;
 	border-radius: inherit;
@@ -220,4 +219,13 @@ mark.mark-active {
 	color: #fff;
 	border-radius: 2px;
 	box-shadow: 0 0 0 1px rgba(109, 40, 217, 0.45);
+}
+
+/* Power: pause every CSS animation while the window is hidden/minimized/occluded
+   (power.svelte.ts sets this attribute on visibilitychange). Cheaper than tearing
+   down each animation individually; resumes automatically when visible again. */
+body[data-hidden] *,
+body[data-hidden] *::before,
+body[data-hidden] *::after {
+	animation-play-state: paused !important;
 }

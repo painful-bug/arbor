@@ -188,15 +188,42 @@ if [ -n "$DMG" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && [ -n "${R2_ACCESS_KEY
   R2_BUCKET="${R2_BUCKET:-arbor-downloads}"
   VERSION=$(grep -m1 '"version"' "$TAURI_DIR/tauri.conf.json" | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
   echo "--- Uploading DMG to R2 bucket: $R2_BUCKET (v$VERSION) ---"
+  # Arbor.dmg is the "latest" key — no-cache forces the CDN to revalidate
+  # with R2 on every request instead of trusting Cloudflare's default
+  # max-age=14400, which previously served a stale DMG for up to 4h after
+  # a new release. Arbor-$VERSION.dmg never changes once published, so it's
+  # safe (and faster for repeat downloads) to cache it aggressively.
   AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
     aws s3 cp "$DMG" "s3://$R2_BUCKET/Arbor.dmg" \
     --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
-    --content-type application/x-apple-diskimage
+    --content-type application/x-apple-diskimage --cache-control "no-cache"
   AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
     aws s3 cp "$DMG" "s3://$R2_BUCKET/Arbor-$VERSION.dmg" \
     --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
-    --content-type application/x-apple-diskimage
-  echo "Uploaded: Arbor.dmg + Arbor-$VERSION.dmg"
+    --content-type application/x-apple-diskimage --cache-control "public, max-age=31536000, immutable"
+  # version.json: the website fetches this client-side to show the latest
+  # version without a rebuild. no-store so the CDN doesn't serve a stale one.
+  printf '{"version":"%s","dmg_url":"https://dl.aishikb.dev/Arbor.dmg","released_at":"%s"}' \
+    "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/arbor-version.json
+  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    aws s3 cp /tmp/arbor-version.json "s3://$R2_BUCKET/version.json" \
+    --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+    --content-type application/json --cache-control "no-store"
+  rm -f /tmp/arbor-version.json
+  echo "Uploaded: Arbor.dmg + Arbor-$VERSION.dmg + version.json"
+  # Belt-and-suspenders: even with no-cache, an edge PoP can serve a
+  # still-valid cached copy for a few seconds/minutes under load. Purge
+  # explicitly so the new DMG is live everywhere immediately. Needs
+  # CLOUDFLARE_API_TOKEN (Zone > Cache Purge) + CLOUDFLARE_ZONE_ID; skipped
+  # silently if either is unset (no-cache alone still bounds staleness).
+  if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ZONE_ID:-}" ]; then
+    echo "--- Purging Cloudflare cache for dl.aishikb.dev ---"
+    curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/purge_cache" \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+      -H "Content-Type: application/json" \
+      --data "{\"files\":[\"https://dl.aishikb.dev/Arbor.dmg\",\"https://dl.aishikb.dev/version.json\"]}"
+    echo
+  fi
 else
   echo "Skipping R2 upload (need DMG + CLOUDFLARE_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY; optional R2_BUCKET)."
 fi

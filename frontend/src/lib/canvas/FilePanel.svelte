@@ -6,22 +6,61 @@
 	// Markdown/text edits save back to disk on desktop; docx is in-app only.
 	import { slide } from 'svelte/transition';
 	import { flow, setFilePreview, setCardText, type FileData, type TextData } from './store.svelte';
-	import { getFileBlob, canUseFs, readFile, writeFile, openPath } from '$lib/files';
+	import { isJobRunning, runMindmap, runStudy } from './studio-jobs.svelte';
+	import { getFileBlob, hydrateFileBlobs, canUseFs, readFile, writeFile, openPath } from '$lib/files';
 	import { renderMarkdown } from '$lib/markdown';
 	import { loadHL, saveHL } from './highlights';
 	import MarkdownBody from './MarkdownBody.svelte';
 	import PdfViewer from './PdfViewer.svelte';
 	import FindBar from './FindBar.svelte';
+	import { isDocxFile, isEditableFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
 	import { resizable } from '$lib/actions/resizable';
 
-	let { fileId, onclose, initialQuery = '', initialPage = 0 }:
-		{ fileId: string; onclose: () => void; initialQuery?: string; initialPage?: number } = $props();
+	let { fileId, onclose, onSplit, initialQuery = '', initialPage = 0 }:
+		{ fileId: string; onclose: () => void; onSplit?: (fileId: string) => void; initialQuery?: string; initialPage?: number } = $props();
+
+	// Mind map / study: delegate to the module-level runner so the job survives this
+	// panel closing — it runs to success (dispatches to canvas) or failure (toast),
+	// never cancelled by unmount. Buttons read the shared running state.
+	const mapping = $derived(isJobRunning('mindmap', fileId));
+	const studying = $derived(isJobRunning('study', fileId));
+	function makeMindmap() {
+		if (mapping || !file) return;
+		runMindmap(fileId, file.filename);
+	}
+	function makeStudy() {
+		if (studying || !file) return;
+		runStudy(fileId, file.filename);
+	}
+
+	// Split-view picker: other openable nodes (files + text notes) to show beside this one.
+	let splitMenu = $state(false);
+	const splitTargets = $derived(
+		onSplit
+			? flow.nodes
+					.filter((n) => (n.type === 'file' || n.type === 'text') && n.id !== fileId)
+					.map((n) => ({
+						id: n.id,
+						label:
+							n.type === 'text'
+								? ((n.data as TextData).text?.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'Note')
+								: ((n.data as FileData).filename ?? 'File')
+					}))
+			: []
+	);
 
 	const node = $derived(flow.nodes.find((n) => n.id === fileId));
 	const isText = $derived(node?.type === 'text');
 	const textData = $derived(isText ? (node?.data as TextData) : undefined);
 	const file = $derived(isText ? undefined : (node?.data as FileData | undefined));
 	const blob = $derived(isText ? undefined : getFileBlob(fileId));
+	// Bytes are fetched on open, not held for every card (see files.ts LRU).
+	let blobLoading = $state(false);
+	$effect(() => {
+		if (isText || blob) return;
+		blobLoading = true;
+		void hydrateFileBlobs([fileId]).finally(() => (blobLoading = false));
+	});
 	const panelTitle = $derived(
 		isText
 			? (textData?.text?.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'Note')
@@ -52,11 +91,11 @@
 
 	// ── Rich text edit (markdown / text / docx) ─────────────────────────────────
 	let editor = $state<HTMLDivElement>();
-	const editable = $derived(file?.kind === 'markdown' || file?.kind === 'text' || file?.kind === 'docx');
+	const editable = $derived(isEditableFile(file));
 
 	async function initEditor(el: HTMLDivElement) {
 		if (!file) return;
-		if (file.kind === 'docx') {
+		if (isDocxFile(file)) {
 			if (blob) {
 				const mammoth = await import('mammoth');
 				const { value } = await mammoth.convertToHtml({ arrayBuffer: blob.bytes });
@@ -75,7 +114,7 @@
 				}
 			}
 			if (!text && blob) text = new TextDecoder().decode(blob.bytes);
-			el.innerHTML = file.kind === 'markdown' ? renderMarkdown(text) : `<pre>${escapeHtml(text)}</pre>`;
+			el.innerHTML = isMarkdownFile(file) ? renderMarkdown(text) : `<pre>${escapeHtml(text)}</pre>`;
 		}
 	}
 
@@ -91,7 +130,7 @@
 	// Save markdown/text back to disk. docx has no in-app writer (Open file instead).
 	async function save() {
 		if (!file || !editor) return;
-		if (file.kind === 'docx') return;
+		if (isDocxFile(file)) return;
 		const text = editor.innerText; // contenteditable → plain text (md is text)
 		setFilePreview(fileId, text.slice(0, 4000));
 		if (!file.path || !canUseFs()) {
@@ -129,18 +168,39 @@
 					<button onclick={clearNoteHL}>Clear marks</button>
 				{/if}
 			{:else}
-				{#if editable && file?.kind !== 'docx'}
+				{#if editable && !isDocxFile(file)}
 					<button onclick={save} class="save">
 						{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Save (desktop)' : 'Save'}
 					</button>
 				{/if}
 				<button onclick={openInOs} disabled={!file?.path || !canUseFs()} title={file?.path ? 'Open in default app' : 'Desktop only'}>Open file ↗</button>
 			{/if}
+			{#if onSplit && splitTargets.length}
+				<div class="split-wrap">
+					<button onclick={() => (splitMenu = !splitMenu)} title="Open a file beside this one" aria-label="Split view">⇆</button>
+					{#if splitMenu}
+						<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+						<div class="split-menu" onmouseleave={() => (splitMenu = false)}>
+							{#each splitTargets as t (t.id)}
+								<button class="split-item" onclick={() => { onSplit?.(t.id); splitMenu = false; }} title={t.label}>{t.label}</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/if}
+			{#if !isText && file?.status === 'ready'}
+				<button onclick={makeMindmap} disabled={mapping} title="Generate a mind map from this document">
+					{mapping ? 'Mapping…' : '🧠 Map'}
+				</button>
+				<button onclick={makeStudy} disabled={studying} title="Generate flashcards + quizzes from this document">
+					{studying ? 'Studying…' : '🎴 Study'}
+				</button>
+			{/if}
 			<button onclick={onclose} aria-label="Close">✕</button>
 		</div>
 	</header>
 
-	{#if file?.kind !== 'pdf'}
+	{#if !isPdfFile(file)}
 		<!-- ponytail: PDF has its own positional find (PdfViewer); FindBar for the rest.
 		     CSS Highlight API can't reach textarea content, so edit-mode find is a gap. -->
 		<FindBar target={contentEl ?? null} />
@@ -169,21 +229,23 @@
 				/>
 			{/if}
 		{/if}
-	{:else if !blob && file?.kind !== 'markdown'}
-		<div class="empty">File bytes not loaded — re-drop "{file?.filename}" to view. (Bytes aren't persisted across reloads.)</div>
-	{:else if file?.kind === 'pdf'}
+	{:else if !blob && !isMarkdownFile(file)}
+		<div class="empty">
+			{#if blobLoading}Loading "{file?.filename}"…{:else}File data not found — re-drop "{file?.filename}" to restore it.{/if}
+		</div>
+	{:else if isPdfFile(file)}
 		<PdfViewer fileId={fileId} blob={blob} {initialQuery} {initialPage} />
 	{:else if editable}
 		<div class="toolbar">
 			<button onclick={() => exec('bold')}><b>B</b></button>
 			<button onclick={() => exec('italic')}><i>I</i></button>
 			<button onclick={() => exec('underline')}><u>U</u></button>
-			{#if file?.kind === 'docx'}<span class="note">docx — edits in-app only; use "Open file" to edit on disk</span>{/if}
+			{#if isDocxFile(file)}<span class="note">docx — edits in-app only; use "Open file" to edit on disk</span>{/if}
 		</div>
 		<div class="editor" bind:this={editor} contenteditable="true"></div>
-	{:else if file?.kind === 'image'}
+	{:else if isImageFile(file)}
 		<div class="imgwrap">
-			{#if blob}<img src={URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }))} alt={file.filename} />{/if}
+			{#if blob}<img src={URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }))} alt={file?.filename} />{/if}
 		</div>
 	{:else}
 		<div class="empty">No preview for this file type. Use "Open file".</div>
@@ -194,6 +256,10 @@
 <style>
 	.panel {
 		position: relative;
+		/* Above the 48px window-drag strip (+layout .titlebar-drag, z-index 30),
+		   else the drag region eats clicks on the header buttons that sit in the
+		   top band (Map/Study/split/close). */
+		z-index: 40;
 		flex: none;
 		height: 100%;
 		display: flex;
@@ -249,6 +315,39 @@
 	.actions button:disabled {
 		opacity: 0.4;
 		cursor: default;
+	}
+	.split-wrap {
+		position: relative;
+	}
+	.split-menu {
+		position: absolute;
+		right: 0;
+		top: calc(100% + 4px);
+		z-index: 20;
+		min-width: 180px;
+		max-width: 280px;
+		max-height: 320px;
+		overflow-y: auto;
+		background: var(--c-surface, #fff);
+		border: 1px solid var(--c-hairline);
+		border-radius: 10px;
+		box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+		padding: 4px;
+	}
+	.split-item {
+		display: block;
+		width: 100%;
+		text-align: left;
+		border: none !important;
+		background: transparent !important;
+		padding: 6px 8px !important;
+		border-radius: 6px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.split-item:hover {
+		background: var(--c-surface-soft, rgba(0,0,0,0.05)) !important;
 	}
 	.save {
 		background: var(--c-primary) !important;

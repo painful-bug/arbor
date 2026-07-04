@@ -16,7 +16,10 @@
 	import CardChatPanel from './CardChatPanel.svelte';
 	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
 	import GlobalSearchBar from './GlobalSearchBar.svelte';
+	import KbOverlay from './KbOverlay.svelte';
+	import StudyOverlay from './StudyOverlay.svelte';
 	import CommandPalette, { type Command } from './CommandPalette.svelte';
+	import { handleCanvasShortcut } from './shortcuts';
 	import {
 		searchState,
 		deepLink,
@@ -34,6 +37,7 @@
 		addFileCard,
 		addWebCard,
 		addTextCard,
+		addMindmap,
 		setFileStatus,
 		setFilePreview,
 		cycleCardBlock,
@@ -47,7 +51,6 @@
 		pushHistory,
 		undo,
 		redo,
-		deleteNodes,
 		groupNodes,
 		cleanUp,
 		nodeCenter,
@@ -55,19 +58,25 @@
 		remapEdgeSides,
 		repositionTags,
 		settings,
-		init
+		init,
+		synthesizeSelection
 	} from './store.svelte';
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
+	import { apiFetch } from '$lib/api';
 	import { asUrl } from '$lib/url';
-	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, hydrateFileBlobs, getFileBlob } from '$lib/files';
-	import { kbAdd, kbClear, kbContents, kbRemove, kbSearch } from '$lib/ai/client';
-	import { currentCanvasId } from './store.svelte';
+	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, type FileKind } from '$lib/files';
+	import { kbAdd, kbRemove } from '$lib/ai/client';
+	import { debounce } from '$lib/debounce';
+	import { currentCanvasId, currentCanvasName } from './store.svelte';
+	import { studioToasts, dismissToast } from './studio-jobs.svelte';
+	import { exportCanvasImage } from './export-image';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
-	import { scale, fade } from 'svelte/transition';
+	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { power } from '$lib/power.svelte';
 
 	// Swoop: spring scale + drop. Out = canvas falls away to the Library; in = a
 	// canvas springs back into view. Shared by both layers so they cross-fade.
@@ -99,6 +108,36 @@
 		deep?: boolean;
 	} | null>(null);
 
+	// Viewport culling (onlyRenderVisibleElements below) is great for steady-state
+	// pan/zoom but fights any *animated* viewport jump: fitView/setCenter interpolate
+	// the transform over ~300-450ms, so nodes that start off-screen only enter the
+	// visible rect partway through — each one mounting for the first time (markdown
+	// render, thumbnail decode, entrance transition) on a frame that's also mid-tween.
+	// That main-thread work competing with the tween's own rAF loop is the choppiness.
+	// Suspending culling for the duration of these animations keeps them buttery;
+	// normal user-driven pan/zoom (incremental, not a sudden full-canvas jump) still
+	// gets the full benefit.
+	let viewportAnimating = $state(false);
+	async function animateViewport(run: () => Promise<unknown>): Promise<void> {
+		viewportAnimating = true;
+		try {
+			await run();
+		} finally {
+			viewportAnimating = false;
+		}
+	}
+
+	// Viewport culling is the ONLY thing that makes pan/zoom touch Svelte's reactive
+	// graph: with it on, every viewport delta recomputes which nodes intersect the
+	// screen and mounts/unmounts them at the edges — each mount rebuilding a card's
+	// DOM (markdown, timeline, handles). Without it, pan/zoom is a pure GPU transform
+	// with zero JS per frame. So we only cull on genuinely large canvases, where
+	// rendering every node would cost more memory/DOM than the churn; below that the
+	// whole graph stays mounted and pan/zoom/drag are buttery. Suspended during
+	// programmatic viewport animations (fitView/search swoop) either way.
+	const CULL_THRESHOLD = 150;
+	const cullNodes = $derived(flow.nodes.length > CULL_THRESHOLD && !viewportAnimating);
+
 	// Generous padding so every card, note, and file is fully visible, not clipped
 	// under the floating toolbar/sidebar chrome. Needs the <SvelteFlow minZoom={0.05}>
 	// prop below: d3-zoom's scaleExtent is fixed at pan-zoom init from that global
@@ -107,7 +146,7 @@
 	// to fit everything no matter the padding.
 	function doFitView() {
 		requestAnimationFrame(() => {
-			void fitView({ duration: 300, padding: 0.18 });
+			void animateViewport(() => fitView({ duration: 300, padding: 0.18 }));
 		});
 	}
 
@@ -130,7 +169,7 @@
 		// Keep the current zoom if already readable; only zoom in when far out.
 		const cur = getZoom();
 		const zoom = cur < 0.7 ? 1 : cur;
-		void setCenter(x, y, { zoom, duration: reducedMotion() ? 0 : 450 });
+		void animateViewport(() => setCenter(x, y, { zoom, duration: reducedMotion() ? 0 : 450 }));
 	});
 
 	let paletteOpen = $state(false);
@@ -153,14 +192,57 @@
 		} },
 		{ id: 'research', group: 'Create', icon: '🔬', label: 'Deep Research', run: startDeepResearch },
 		{ id: 'kb', group: 'Knowledge', icon: '⬡', label: 'Search knowledge base', run: openKB },
+		{ id: 'study', group: 'Knowledge', icon: '🎴', label: 'Study flashcards & quizzes', run: () => (studyOpen = true) },
 		{ id: 'undo', group: 'Edit', icon: '↩', label: 'Undo', hint: 'U', run: doUndo },
 		{ id: 'redo', group: 'Edit', icon: '↪', label: 'Redo', hint: 'R', run: doRedo },
+		{ id: 'synthesize', group: 'Edit', icon: '⨳', label: 'Synthesize selected cards', run: doSynthesize },
+		{ id: 'export-md', group: 'Export', icon: '⇩', label: 'Export as Markdown (.md)', run: () => exportCanvas('md') },
+		{ id: 'export-canvas', group: 'Export', icon: '⇩', label: 'Export as Obsidian Canvas (.canvas)', run: () => exportCanvas('canvas') },
+		{ id: 'export-png', group: 'Export', icon: '⇩', label: 'Export as Image (.png)', run: () => exportCanvas('png') },
+		{ id: 'export-pdf', group: 'Export', icon: '⇩', label: 'Export as PDF (.pdf)', run: () => exportCanvas('pdf') },
 		{ id: 'theme', group: 'App', icon: '◐', label: 'Toggle theme', run: () => {
 			settings.theme = settings.theme === 'dark' ? 'light' : 'dark';
 			persistSettings();
 		} },
 		{ id: 'settings', group: 'App', icon: '⚙', label: 'Open settings', hint: '⌘,', run: () => goto('/settings') }
 	];
+
+	// Synthesize the currently selected cards (≥2) into a new synthesis card.
+	function doSynthesize() {
+		const ids = flow.nodes.filter((n) => n.selected).map((n) => n.id);
+		if (ids.length < 2) return;
+		const id = synthesizeSelection(ids);
+		if (id) flow.selected = id;
+	}
+
+	// Fetch the canvas export and trigger a browser download (WKWebView saves to
+	// ~/Downloads like any other anchor-download). No new Tauri command needed.
+	// png/pdf are rendered client-side from the xyflow viewport; md/canvas come from the backend.
+	async function exportCanvas(format: 'md' | 'canvas' | 'png' | 'pdf') {
+		const id = currentCanvasId();
+		if (!id) return;
+		if (format === 'png' || format === 'pdf') {
+			// Suspend viewport culling so off-screen nodes mount into the DOM before we
+			// rasterize (otherwise the image only captures currently-visible cards).
+			await animateViewport(async () => {
+				await tick();
+				await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+				await exportCanvasImage(format, currentCanvasName() || 'canvas');
+			});
+			return;
+		}
+		const res = await apiFetch(`/api/canvases/${id}/export?format=${format}`);
+		if (!res.ok) return;
+		const blob = await res.blob();
+		const disposition = res.headers.get('Content-Disposition') ?? '';
+		const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `canvas.${format}`;
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 
 	function startDeepResearch() {
 		const x = window.innerWidth / 2;
@@ -195,12 +277,15 @@
 	let cleaningUp = $state(false);
 	async function doCleanUp() {
 		cleaningUp = true;
-		if (reducedMotion()) { await cleanUp(); cleaningUp = false; return; }
-		animatingCleanup = true;
-		await tick();
-		await cleanUp();
-		cleaningUp = false;
-		setTimeout(() => { animatingCleanup = false; }, 550);
+		try {
+			if (reducedMotion()) { await cleanUp(); return; }
+			animatingCleanup = true;
+			await tick();
+			await cleanUp();
+			setTimeout(() => { animatingCleanup = false; }, 550);
+		} finally {
+			cleaningUp = false;
+		}
 	}
 
 	// Undo/redo restore a prior node snapshot under the same ids, so reuse the
@@ -216,12 +301,10 @@
 	function doUndo() { void animateHistory(undo); }
 	function doRedo() { void animateHistory(redo); }
 
-	// Re-hydrate file bytes whenever a file node has none in memory (canvas switch,
-	// or a node restored by undo) — not just once on mount.
-	$effect(() => {
-		const missing = flow.nodes.filter((n) => n.type === 'file' && !getFileBlob(n.id)).map((n) => n.id);
-		if (missing.length) void hydrateFileBlobs(missing);
-	});
+	// No eager blob hydration: card faces render from small cached thumbnails
+	// (FileCard → hydrateThumb) and the file panel fetches bytes on open. Keeping
+	// every dropped file's raw bytes in the webview (~60MB+ on file-heavy
+	// canvases) was the main memory/lag driver.
 
 	function onDblClick(e: MouseEvent) {
 		// Only spawn prompt bubble in hand mode.
@@ -357,6 +440,58 @@
 		flow.selected = addWebCard(pos, url, { parentId: parent ? parentId : undefined });
 	}
 
+	// Web clipper result: the page is already fetched + indexed backend-side. Drop it
+	// as an offline markdown file card beside the source web card (file cards aren't
+	// re-indexed by kb-sync, so this doesn't duplicate what the backend already stored).
+	function onClippedEvent(e: Event) {
+		const { parentId, title, text } = (e as CustomEvent).detail as {
+			parentId: string;
+			title: string;
+			text: string;
+		};
+		const parent = flow.nodes.find((n) => n.id === parentId);
+		const pos = parent
+			? { x: parent.position.x + (parent.width ?? 560) + 48, y: parent.position.y }
+			: screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+		const id = addFileCard(pos, title, { mime: 'text/markdown', kind: 'markdown' });
+		putFileBlob(id, new TextEncoder().encode(text).buffer as ArrayBuffer, 'text/markdown', title);
+		setFilePreview(id, text.slice(0, 4000));
+		setFileStatus(id, 'ready');
+		scheduleAutolink(id);
+		flow.selected = id;
+	}
+
+	// Studio mind map: backend returned a topic tree for a source file → bloom it
+	// into linked cards in open space, select the root, and swoop to frame the map.
+	function onMindmapEvent(e: Event) {
+		const { parentId, nodes } = (e as CustomEvent).detail as {
+			parentId: string;
+			nodes: { id: string; title: string; summary: string; parent: string | null }[];
+		};
+		if (!nodes?.length) return;
+		pushHistory();
+		const rootId = addMindmap(parentId, nodes);
+		if (rootId) flow.selected = rootId;
+		requestAnimationFrame(() => focusMindmap(parentId));
+	}
+
+	// Frame a file's mind map — reuses the global-search swoop (animateViewport keeps
+	// culling suspended for a buttery tween). Fits just the map's tagged cards.
+	function focusMindmap(fileId: string) {
+		const ids = flow.nodes
+			.filter((n) => (n.data as Record<string, unknown>)?.mindmapOf === fileId)
+			.map((n) => ({ id: n.id }));
+		if (!ids.length) return;
+		void animateViewport(() =>
+			fitView({ nodes: ids, duration: reducedMotion() ? 0 : 500, padding: 0.22 }),
+		);
+	}
+
+	function onFocusMindmapEvent(e: Event) {
+		const { fileId } = (e as CustomEvent).detail as { fileId: string };
+		focusMindmap(fileId);
+	}
+
 	function onPaste(e: ClipboardEvent) {
 		const tag = (e.target as HTMLElement)?.tagName;
 		if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -367,152 +502,70 @@
 		flow.selected = addWebCard(pos, url);
 	}
 
-	// Keyboard: tool hotkeys, Escape, Cmd/Ctrl+Z undo/redo.
-	let lastC = 0;
+	// Keyboard: delegate to the pure shortcut handler with a state snapshot + actions.
 	function onKeydown(e: KeyboardEvent) {
 		const tag = (e.target as HTMLElement)?.tagName;
-		const inInput =
-			tag === 'INPUT' ||
-			tag === 'TEXTAREA' ||
-			(e.target as HTMLElement)?.isContentEditable;
+		handleCanvasShortcut(e, {
+			inInput:
+				tag === 'INPUT' || tag === 'TEXTAREA' || !!(e.target as HTMLElement)?.isContentEditable,
+			searchOpen: searchState.open,
+			searchHasMatches: searchState.matches.length > 0,
+			kbOpen,
+			paletteOpen,
+			pendingBranch: !!pendingBranch,
+			openFile: !!openFileId,
+			expanded: !!expandId,
+			chatOrSidebarOpen: chatOpen || ui.sidebarExpanded,
+			toolActive: tool.active,
+			connectPending: !!tool.connectFrom,
+			selectionCount: selectedNodes.length,
 
-		const mod = e.metaKey || e.ctrlKey;
-
-		// Global search (⌘⇧F) and command palette (⌘⇧P) — work regardless of focus.
-		if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
-			e.preventDefault();
-			if (searchState.open) closeSearch();
-			else openSearch();
-			return;
-		}
-		// ⌘F (no shift): focus the KB modal's search field if it's open; otherwise,
-		// with nothing selected on canvas, open global search instead.
-		if (mod && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
-			if (kbOpen) {
-				e.preventDefault();
-				kbInputEl?.focus();
-				kbInputEl?.select();
-				return;
-			}
-			if (!selectedNodes.length) {
-				e.preventDefault();
+			toggleSearch: () => (searchState.open ? closeSearch() : openSearch()),
+			focusKbSearch: () => kbOverlayRef?.focusSearch(),
+			togglePalette: () => (paletteOpen = !paletteOpen),
+			searchNext,
+			searchPrev,
+			closeOverlays: () => {
 				if (searchState.open) closeSearch();
-				else openSearch();
-				return;
-			}
-		}
-		if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
-			e.preventDefault();
-			paletteOpen = !paletteOpen;
-			return;
-		}
-		// Platform find-next secondary bindings, active while global search is open.
-		if (searchState.open && searchState.matches.length) {
-			if ((mod && (e.key === 'g' || e.key === 'G')) || e.key === 'F3') {
-				e.preventDefault();
-				if (e.shiftKey) searchPrev();
-				else searchNext();
-				return;
-			}
-		}
-
-		// Escape closes search / palette first (works whether or not their field has
-		// focus); return so it doesn't also close an underlying preview in the same press.
-		if (e.key === 'Escape' && (searchState.open || paletteOpen || kbOpen)) {
-			if (searchState.open) closeSearch();
-			paletteOpen = false;
-			kbOpen = false;
-			kbClearConfirm = false;
-			e.preventDefault();
-			return;
-		}
-
-		if (!inInput) {
-			if (e.key === 'Enter' && pendingBranch) { e.preventDefault(); confirmBranch(); return; }
-			// Backspace/Delete: delete selected nodes (also prevents browser back-nav in Tauri).
-			if (e.key === 'Backspace' || e.key === 'Delete') {
-				e.preventDefault();
-				if (selectedNodes.length) deleteSelected();
-				return;
-			}
-
-			// Escape: close panels/modals in priority order; last resort → reset to hand.
-			if (e.key === 'Escape') {
-				if (pendingBranch) { dismissBranch(); e.preventDefault(); return; }
-				if (openFileId) { openFileId = null; e.preventDefault(); return; }
-				if (expandId) { expandId = null; e.preventDefault(); return; }
-				if (chatOpen || ui.sidebarExpanded) {
-					chatOpen = false;
-					ui.sidebarExpanded = false;
-					e.preventDefault();
-					return;
-				}
-				if (tool.active !== 'hand' || tool.connectFrom) {
-					tool.active = 'hand';
-					tool.connectFrom = null;
-					e.preventDefault();
-					return;
-				}
-			}
-			// Delete/Backspace: remove selected nodes
-			if (e.key === 'Delete' || e.key === 'Backspace') {
-				const sel = flow.nodes.filter((n) => n.selected).map((n) => n.id);
-				if (sel.length) { deleteNodes(sel); e.preventDefault(); return; }
-			}
-
-			// Space: toggle the expanded preview of the selected card/file.
-			if (e.key === ' ') {
+				paletteOpen = false;
+				kbOpen = false;
+				studyOpen = false;
+			},
+			confirmBranch,
+			dismissBranch,
+			closeFile: () => { if (secondaryFileId) secondaryFileId = null; else openFileId = null; },
+			closeExpand: () => (expandId = null),
+			closeChatAndSidebar: () => {
+				chatOpen = false;
+				ui.sidebarExpanded = false;
+			},
+			setTool: (t) => {
+				tool.active = t;
+				if (t === 'select') tool.connectFrom = null;
+			},
+			resetTool: () => {
+				tool.active = 'hand';
+				tool.connectFrom = null;
+			},
+			deleteSelection: deleteSelected,
+			toggleSpaceTarget: () => {
 				const multi = flow.nodes.filter((n) => n.selected);
 				const id = flow.selected ?? (multi.length === 1 ? multi[0].id : null);
 				const node = id ? flow.nodes.find((n) => n.id === id) : null;
-				if (node) {
-					e.preventDefault(); // stop page/canvas scroll
-					if (node.type === 'card') expandId = expandId === node.id ? null : node.id;
-					else openFileId = openFileId === node.id ? null : node.id; // file + text nodes
-					return;
-				}
-			}
-
-			// Tool hotkeys (no modifier).
-			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-				if (e.key === 'h' || e.key === 'H') { tool.active = 'hand'; tool.connectFrom = null; e.preventDefault(); }
-				else if (e.key === 'v' || e.key === 'V') { tool.active = 'select'; tool.connectFrom = null; e.preventDefault(); }
-				else if (e.key === 't' || e.key === 'T') { tool.active = 'text'; e.preventDefault(); }
-				else if (e.key === 'd' || e.key === 'D') {
-					if (tool.active === 'select' && selectedNodes.length) { duplicateSelected(); e.preventDefault(); }
-					else { tool.active = 'duplicate'; e.preventDefault(); }
-				}
-				else if (e.key === 'c' || e.key === 'C') {
-					const now = Date.now();
-					if (now - lastC < 350) { lastC = 0; tool.active = 'hand'; tool.connectFrom = null; void doCleanUp(); e.preventDefault(); return; }
-					lastC = now;
-					tool.active = 'connect'; e.preventDefault();
-				}
-				else if (e.key === 'u' || e.key === 'U') { doUndo(); e.preventDefault(); }
-				else if (e.key === 'r' || e.key === 'R') { doRedo(); e.preventDefault(); }
-				else if (e.key === 'f' || e.key === 'F') { doFitView(); e.preventDefault(); }
-				else if (e.key === 'g' || e.key === 'G') {
-					const sel = flow.nodes.filter((n) => n.selected).map((n) => n.id);
-					if (sel.length >= 2) { groupNodes(sel); e.preventDefault(); }
-				}
-			}
-		}
-
-		if ((e.metaKey || e.ctrlKey) && e.key === ',' && !inInput) {
-			e.preventDefault();
-			goto('/settings');
-			return;
-		}
-		if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
-			e.preventDefault();
-			chatOpen = !chatOpen;
-			return;
-		}
-		if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
-			e.preventDefault();
-			if (e.shiftKey) doRedo();
-			else doUndo();
-		}
+				if (!node) return false;
+				if (node.type === 'card') expandId = expandId === node.id ? null : node.id;
+				else openFileId = openFileId === node.id ? null : node.id; // file + text nodes
+				return true;
+			},
+			duplicateSelection: duplicateSelected,
+			undo: doUndo,
+			redo: doRedo,
+			fitView: doFitView,
+			groupSelection: () => groupNodes(flow.nodes.filter((n) => n.selected).map((n) => n.id)),
+			cleanUp: () => void doCleanUp(),
+			openSettings: () => goto('/settings'),
+			toggleChat: () => (chatOpen = !chatOpen)
+		});
 	}
 
 	// Click on the empty canvas background collapses the chat panel + sidebar and
@@ -527,16 +580,16 @@
 	}
 
 	onMount(() => {
-		// Async init: load canvas from ~/.arbor, then hydrate file bytes.
-		void init().then(() => {
-			const fileIds = flow.nodes.filter((n) => n.type === 'file').map((n) => n.id);
-			if (fileIds.length) void hydrateFileBlobs(fileIds);
-		});
+		// Async init: load canvas from ~/.arbor (file bytes stay backend-side; see above).
+		void init();
 
 		window.addEventListener('arbor:branch', onBranchEvent);
 		window.addEventListener('arbor:continue', onContinueEvent);
 		window.addEventListener('arbor:expand', onExpandEvent);
 		window.addEventListener('arbor:weburl', onWebUrlEvent);
+		window.addEventListener('arbor:clipped', onClippedEvent);
+		window.addEventListener('arbor:mindmap', onMindmapEvent);
+		window.addEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 		window.addEventListener('arbor:openfile', onOpenFileEvent);
 		window.addEventListener('keydown', onKeydown);
 		document.addEventListener('mouseup', onDocSelect);
@@ -566,11 +619,7 @@
 								const res = await apiFetch(`/api/files/read-bytes?path=${encodeURIComponent(filePath)}`);
 								const b64 = await res.text();
 								const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
-								putFileBlob(id, bytes, mime, name);
-								extractText(bytes, kind).then((t) => t && setFilePreview(id, t.slice(0, 4000))).catch(() => {});
-								const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
-								setFileStatus(id, chunks > 0 ? 'ready' : 'error');
-								if (chunks > 0) scheduleAutolink(id);
+								await indexDroppedFile(id, name, mime, kind, bytes);
 							} catch (err) {
 								console.error('tauri file drop read failed', err);
 								setFileStatus(id, 'error');
@@ -586,6 +635,9 @@
 			window.removeEventListener('arbor:continue', onContinueEvent);
 			window.removeEventListener('arbor:expand', onExpandEvent);
 			window.removeEventListener('arbor:weburl', onWebUrlEvent);
+			window.removeEventListener('arbor:clipped', onClippedEvent);
+			window.removeEventListener('arbor:mindmap', onMindmapEvent);
+			window.removeEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 			window.removeEventListener('arbor:openfile', onOpenFileEvent);
 			window.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('mouseup', onDocSelect);
@@ -595,9 +647,11 @@
 		};
 	});
 
-	// Auto Clean Up: re-run Cmd-C on a timer while enabled, forever, at the user's interval.
+	// Auto Clean Up: re-run Cmd-C on a timer while enabled AND the window is visible —
+	// no timer exists at all while hidden/minimized (power.visible gates it), so a
+	// background window burns zero wakeups on this.
 	$effect(() => {
-		if (!settings.autoCleanup.enabled) return;
+		if (!settings.autoCleanup.enabled || !power.visible) return;
 		const ms = Math.max(1, settings.autoCleanup.intervalMin) * 60_000;
 		const id = setInterval(() => { if (!cleaningUp) void doCleanUp(); }, ms);
 		return () => clearInterval(id);
@@ -605,7 +659,10 @@
 
 	// Autosave + push undo snapshot on change; debounced so streaming doesn't thrash.
 	// Skip the first run: it's the initial empty state before init() loads real data.
-	let saveTimer: ReturnType<typeof setTimeout>;
+	const saveDebounced = debounce(() => {
+		saveCanvas();
+		pushHistory();
+	}, 400);
 	let mounted = false;
 	$effect(() => {
 		flow.nodes;
@@ -614,11 +671,7 @@
 			mounted = true;
 			return;
 		}
-		clearTimeout(saveTimer);
-		saveTimer = setTimeout(() => {
-			saveCanvas();
-			pushHistory();
-		}, 400);
+		saveDebounced();
 	});
 
 	async function onDrop(e: DragEvent) {
@@ -636,32 +689,45 @@
 		e.preventDefault();
 		let pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
 		// Cards spawn synchronously; indexing runs in parallel across files.
-		await Promise.all(files.map((file) => {
+		await Promise.all(files.map(async (file) => {
 			const kind = kindOf(file.name, file.type);
 			const id = addFileCard(pos, file.name, { mime: file.type, kind });
 			pos = { x: pos.x + 30, y: pos.y + 30 };
-			return (async () => {
-				try {
-					const buf = await file.arrayBuffer();
-					putFileBlob(id, buf, file.type, file.name);
-					extractText(buf, kind)
-						.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
-						.catch(() => {});
-					const chunks = await kbAdd(currentCanvasId() || 'default', file.name, file.type, buf);
-					setFileStatus(id, chunks > 0 ? 'ready' : 'error');
-					if (chunks > 0) scheduleAutolink(id);
-				} catch (err) {
-					console.error('kb index failed', err);
-					setFileStatus(id, 'error');
-				}
-			})();
+			await indexDroppedFile(id, file.name, file.type, kind, await file.arrayBuffer());
 		}));
 	}
 
 	let openFileId = $state<string | null>(null);
+	let secondaryFileId = $state<string | null>(null); // split-view right pane
 	let viewTextId = $state<string | null>(null);
 	function onOpenFileEvent(e: Event) {
-		openFileId = (e as CustomEvent).detail.fileId;
+		const id = (e as CustomEvent).detail.fileId;
+		if (id === secondaryFileId) secondaryFileId = null; // don't show the same file twice
+		openFileId = id;
+	}
+	// Closing the primary pane promotes the split pane into it (if any).
+	function closePrimaryFile() {
+		openFileId = secondaryFileId;
+		secondaryFileId = null;
+		previewQuery = '';
+		previewPage = 0;
+	}
+
+	// Shared tail of both drop paths (OS drag via Tauri + browser DataTransfer):
+	// stash bytes, extract a preview, index into the KB, mark status, autolink.
+	async function indexDroppedFile(id: string, name: string, mime: string, kind: FileKind, bytes: ArrayBuffer) {
+		try {
+			putFileBlob(id, bytes, mime, name);
+			extractText(bytes, kind)
+				.then((t) => t && setFilePreview(id, t.slice(0, 4000)))
+				.catch(() => {}); // justified: preview is cosmetic; indexing below still runs
+			const chunks = await kbAdd(currentCanvasId() || 'default', name, mime, bytes);
+			setFileStatus(id, chunks > 0 ? 'ready' : 'error');
+			if (chunks > 0) scheduleAutolink(id);
+		} catch (err) {
+			console.error('file index failed', err);
+			setFileStatus(id, 'error');
+		}
 	}
 
 	// Deep-link from global search: a RAG hit on file content opens that file's
@@ -677,48 +743,15 @@
 		openFileId = deepLink.nodeId;
 	});
 
-	// ── KB overlay ───────────────────────────────────────────────────────────────
+	// ── KB overlay (UI lives in KbOverlay.svelte) ───────────────────────────────
 	let kbOpen = $state(false);
-	let kbInputEl = $state<HTMLInputElement | null>(null);
-	let kbData = $state<{ sources: string[]; chunks: number } | null>(null);
-	let kbLoading = $state(false);
-	let kbClearing = $state(false);
-	let kbClearConfirm = $state(false);
-	let kbQuery = $state('');
-	let kbResults = $state<string[] | null>(null);
-	let kbSearching = $state(false);
-	let kbSearchTimer: ReturnType<typeof setTimeout> | undefined;
-
-	async function openKB() {
+	let kbOverlayRef = $state<KbOverlay | null>(null);
+	function openKB() {
 		kbOpen = true;
-		kbData = null;
-		kbLoading = true;
-		kbClearConfirm = false;
-		kbQuery = '';
-		kbResults = null;
-		kbData = await kbContents(currentCanvasId() || 'default');
-		kbLoading = false;
 	}
 
-	function onKBQueryInput() {
-		clearTimeout(kbSearchTimer);
-		const q = kbQuery;
-		if (!q.trim()) { kbResults = null; kbSearching = false; return; }
-		kbSearching = true;
-		kbSearchTimer = setTimeout(async () => {
-			const results = await kbSearch(currentCanvasId() || 'default', q);
-			if (kbQuery === q) { kbResults = results; kbSearching = false; }
-		}, 250);
-	}
-
-	async function doKBClear() {
-		if (!kbClearConfirm) { kbClearConfirm = true; return; }
-		kbClearing = true;
-		await kbClear(currentCanvasId() || 'default');
-		kbClearConfirm = false;
-		kbData = await kbContents(currentCanvasId() || 'default');
-		kbClearing = false;
-	}
+	// ── Study deck overlay (opens on arbor:study or from the palette) ────────────
+	let studyOpen = $state(false);
 
 	function submit(text: string) {
 		if (!bubble) return;
@@ -767,6 +800,7 @@
 						{edgeTypes}
 						colorMode={settings.theme}
 						minZoom={0.05}
+						onlyRenderVisibleElements={cullNodes}
 						zoomOnDoubleClick={false}
 						selectionOnDrag={tool.active === 'select'}
 						panOnDrag={tool.active === 'select' ? [1, 2] : true}
@@ -815,13 +849,16 @@
 						<div class="selection-bar">
 							<span class="sel-count">{selectedNodes.length} selected</span>
 							<button class="sel-btn" onclick={duplicateSelected} title="Duplicate (D)">⧉ Duplicate</button>
+							{#if selectedNodes.length >= 2}
+								<button class="sel-btn" onclick={doSynthesize} title="Synthesize selected cards">⨳ Synthesize</button>
+							{/if}
 							<button class="sel-btn sel-btn--danger" onclick={deleteSelected} title="Delete (⌫)">⌫ Delete</button>
 						</div>
 					{/if}
 
 					<div class="topbar">
 						<span class="topbar-spacer"></span>
-						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} />
+						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} onExport={exportCanvas} />
 						<div class="canvas-actions">
 							<div class="theme-slot" class:hidden={chatOpen}>
 								<ThemeToggle />
@@ -849,7 +886,10 @@
 					{/if}
 
 				{#if openFileId}
-					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onclose={() => { openFileId = null; previewQuery = ''; previewPage = 0; }} />
+					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onSplit={(id) => (secondaryFileId = id)} onclose={closePrimaryFile} />
+				{/if}
+				{#if secondaryFileId}
+					<FilePanel fileId={secondaryFileId} onclose={() => (secondaryFileId = null)} />
 				{/if}
 
 				<!-- Chat panel tiles as third column; open state lifted here -->
@@ -866,81 +906,18 @@
 
 			<GlobalSearchBar />
 			<CommandPalette open={paletteOpen} {commands} onclose={() => (paletteOpen = false)} />
+			<KbOverlay bind:this={kbOverlayRef} bind:open={kbOpen} />
+			<StudyOverlay bind:open={studyOpen} />
 
-			{#if kbOpen}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div
-					class="kb-backdrop"
-					transition:fade={{ duration: reducedMotion() ? 0 : 150 }}
-					onpointerdown={() => { kbOpen = false; kbClearConfirm = false; }}
-				>
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div
-						class="kb-panel"
-						role="dialog"
-						aria-modal="true"
-						aria-label="Knowledge base"
-						transition:scale={{ duration: reducedMotion() ? 0 : 220, start: 0.96, easing: backOut, opacity: 0 }}
-						onpointerdown={(e) => e.stopPropagation()}
-					>
-						<header class="kb-header">
-							<span class="kb-title">Knowledge Base</span>
-							<div class="kb-actions">
-								<input
-									bind:this={kbInputEl}
-									class="kb-search"
-									type="text"
-									placeholder="Search KB…"
-									bind:value={kbQuery}
-									oninput={onKBQueryInput}
-								/>
-								<button
-									class="kb-btn kb-clear"
-									class:confirm={kbClearConfirm}
-									onclick={doKBClear}
-									disabled={kbClearing}
-								>
-									{kbClearing ? 'Clearing…' : kbClearConfirm ? 'Confirm clear?' : 'Clear KB'}
-								</button>
-								{#if kbClearConfirm}
-									<button class="kb-btn" onclick={() => (kbClearConfirm = false)}>Cancel</button>
-								{/if}
-								<button class="kb-btn" onclick={openKB} disabled={kbLoading} title="Refresh">↺</button>
-								<button class="kb-btn" onclick={() => { kbOpen = false; kbClearConfirm = false; }} aria-label="Close">✕</button>
-							</div>
-						</header>
-						<div class="kb-body">
-							{#if kbQuery.trim()}
-								{#if kbSearching}
-									<div class="kb-empty"><span class="spinner"></span> Searching…</div>
-								{:else if !kbResults || kbResults.length === 0}
-									<div class="kb-empty">No matching chunks.</div>
-								{:else}
-									<section>
-										<h3>Matching chunks ({kbResults.length})</h3>
-										<ul class="kb-chunks">
-											{#each kbResults as chunk, i (i)}
-												<li class="kb-chunk">{chunk}</li>
-											{/each}
-										</ul>
-									</section>
-								{/if}
-							{:else if kbLoading}
-								<div class="kb-empty"><span class="spinner"></span> Loading…</div>
-							{:else if !kbData || kbData.sources.length === 0}
-								<div class="kb-empty">KB is empty — drop files onto the canvas to index them.</div>
-							{:else}
-								<section>
-									<h3>Indexed sources ({kbData.chunks} chunks)</h3>
-									<ul>
-										{#each kbData.sources as s (s)}
-											<li>{s}</li>
-										{/each}
-									</ul>
-								</section>
-							{/if}
+			<!-- Global studio-job errors — survive the file panel closing. -->
+			{#if studioToasts.length}
+				<div class="studio-toasts">
+					{#each studioToasts as toast (toast.id)}
+						<div class="studio-toast" role="alert" transition:scale={reducedMotion() ? { duration: 0 } : { duration: 180, start: 0.94, easing: backOut, opacity: 0 }}>
+							<span>{toast.message}</span>
+							<button class="studio-toast-x" onclick={() => dismissToast(toast.id)} aria-label="Dismiss">✕</button>
 						</div>
-					</div>
+					{/each}
 				</div>
 			{/if}
 		</div>
@@ -1023,6 +1000,39 @@
 		color: var(--c-ink);
 		pointer-events: none;
 	}
+	/* Bottom-centre error stack for studio jobs (mind map / study). */
+	.studio-toasts {
+		position: absolute;
+		bottom: 24px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 120;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		align-items: center;
+	}
+	.studio-toast {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		max-width: 420px;
+		padding: 9px 14px;
+		border-radius: var(--r-pill, 999px);
+		background: var(--c-canvas, #fff);
+		border: 1px solid rgba(220, 38, 38, 0.4);
+		box-shadow: var(--elev-2, 0 6px 24px rgba(0, 0, 0, 0.12));
+		font-size: 12px;
+		color: #b91c1c;
+	}
+	.studio-toast-x {
+		border: none;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+		padding: 0 2px;
+		font-size: 12px;
+	}
 	.spinner {
 		width: 12px;
 		height: 12px;
@@ -1097,17 +1107,17 @@
 	/* An edge whose source/target node is selected (not the edge itself clicked) —
 	   colorful breathing glow, cycling between the two accent colors already used
 	   for selection elsewhere (magenta / violet), matching the node glow ring. */
+	/* No drop-shadow filter here: animating an SVG filter forces a full repaint of
+	   the edge layer every frame in WKWebView — measurable GPU/battery cost. */
 	@keyframes edge-breathe {
 		0%,
 		100% {
 			stroke: var(--c-edge-selected);
 			stroke-width: 2.5px;
-			filter: drop-shadow(0 0 3px var(--c-edge-selected));
 		}
 		50% {
 			stroke: var(--c-edge-semantic);
 			stroke-width: 4px;
-			filter: drop-shadow(0 0 8px var(--c-edge-semantic));
 		}
 	}
 	/* ConnectedEdge.svelte applies .connected directly to the path (BaseEdge's
@@ -1137,6 +1147,17 @@
 	/* Swoop animation for cards during Clean Up */
 	.wrap.cleanup-animating :global(.svelte-flow__node) {
 		transition: transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	/* Promote every node to its own GPU compositing layer. SvelteFlow positions nodes
+	   with an inline transform:translate but gives no layer hint, so a viewport *zoom*
+	   (scale) forces WKWebView to repaint every card's content each frame — the root
+	   cause of fit/zoom lag (Timeline: ~150ms composites, multi-frame jank on F, GPU
+	   re-raster stalls). will-change makes pan/zoom/fit/drag pure GPU transforms; layers
+	   re-raster crisp once motion settles. Bounded by culling above CULL_THRESHOLD, so
+	   the on-screen layer count (and thus GPU memory) can't grow without limit. */
+	.wrap :global(.svelte-flow__node) {
+		will-change: transform;
 	}
 
 	/* Remove SvelteFlow's default border/padding/background on group nodes */
@@ -1184,129 +1205,6 @@
 	.sel-btn--danger:hover { background: rgba(255, 80, 80, 0.5); }
 
 
-	/* ── KB overlay ──────────────────────────────────────────────────────────── */
-	/* Same dialog language as CommandPalette: fixed full-screen scrim, centered
-	   pill-cornered panel, scale-in entrance. */
-	.kb-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 200;
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-		padding-top: 14vh;
-		background: rgba(0, 0, 0, 0.28);
-	}
-	.kb-panel {
-		width: min(680px, 92vw);
-		max-height: 72vh;
-		background: var(--c-canvas, #fff);
-		border-radius: 14px;
-		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
-		box-shadow: var(--elev-3, 0 18px 50px rgba(0, 0, 0, 0.25));
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-	}
-	.kb-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 12px 16px;
-		border-bottom: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
-		flex: none;
-	}
-	.kb-title {
-		font-weight: 600;
-		font-size: 14px;
-		color: var(--c-ink);
-	}
-	.kb-actions {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-	}
-	.kb-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		border: none;
-		background: transparent;
-		border-radius: var(--r-pill, 999px);
-		padding: 5px 10px;
-		font-size: 12px;
-		font-weight: 500;
-		color: var(--c-ink);
-		cursor: pointer;
-		white-space: nowrap;
-		transition: background 0.12s;
-	}
-	.kb-btn:hover:not(:disabled) { background: rgba(var(--ink-rgb), 0.06); }
-	.kb-btn:disabled { opacity: 0.5; cursor: default; }
-	.kb-btn.kb-clear { color: rgb(255, 80, 80); }
-	.kb-btn.kb-clear:hover:not(:disabled) { background: rgba(255, 80, 80, 0.1); }
-	.kb-btn.kb-clear.confirm { background: rgb(255, 80, 80); color: #fff; }
-	.kb-btn.kb-clear.confirm:hover { background: rgb(235, 60, 60); }
-	.kb-search {
-		border: none;
-		outline: none;
-		background: rgba(var(--ink-rgb), 0.05);
-		border-radius: var(--r-pill, 999px);
-		padding: 5px 12px;
-		font-size: 12px;
-		color: var(--c-ink);
-		width: 180px;
-	}
-	.kb-search::placeholder { color: var(--c-ink); opacity: 0.4; }
-	.kb-chunks { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
-	.kb-chunk {
-		padding: 8px 10px;
-		border: 1px solid var(--c-hairline);
-		border-radius: 8px;
-		background: var(--c-surface-soft, #fff);
-		white-space: pre-wrap;
-	}
-	.kb-body {
-		flex: 1;
-		overflow-y: auto;
-		padding: 16px;
-		font-size: 13px;
-		line-height: 1.55;
-	}
-	.kb-empty {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		color: rgba(var(--ink-rgb),0.45);
-		text-align: center;
-		padding: 32px 0;
-	}
-	.kb-body section { margin-bottom: 20px; }
-	.kb-body h3 {
-		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.6px;
-		color: rgba(var(--ink-rgb),0.45);
-		margin: 0 0 8px;
-	}
-	.kb-body ul {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.kb-body li {
-		padding: 5px 10px;
-		background: var(--c-surface-soft, rgba(0,0,0,0.03));
-		border-radius: 6px;
-		font-family: var(--font-mono);
-		font-size: 12px;
-		word-break: break-word;
-	}
 	/* 3-col grid: [spacer 1fr] [toolbar auto] [canvas-actions 1fr].
 	   Toolbar stays centered; canvas-actions can never push into it. */
 	.topbar {

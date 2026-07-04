@@ -2,7 +2,7 @@
 // can be routed to the right processor (text → PP-OCR, formula → LaTeX OCR, table
 // → reconstruction, figure → kept). YOLOv10-based: NMS-free, output is already
 // decoded [1, 300, 6] = (x0,y0,x1,y1, conf, cls) in the 1024 letterbox space.
-import { type BBox } from "../ast.ts";
+import type { BBox } from "../ast.ts";
 import { ensureModel, session } from "./onnx.ts";
 
 export type RegionType = "text" | "title" | "table" | "figure" | "formula";
@@ -20,23 +20,44 @@ const CONF = 0.25;
 
 // DocStructBench class order. "abandon" = headers/footers/page numbers → dropped.
 const CLASSES = [
-	"title", "plain text", "abandon", "figure", "figure_caption",
-	"table", "table_caption", "table_footnote", "isolate_formula", "formula_caption",
+	"title",
+	"plain text",
+	"abandon",
+	"figure",
+	"figure_caption",
+	"table",
+	"table_caption",
+	"table_footnote",
+	"isolate_formula",
+	"formula_caption",
 ] as const;
 
 function mapType(name: string): RegionType | null {
 	switch (name) {
-		case "title": return "title";
-		case "figure": return "figure";
-		case "table": return "table";
-		case "isolate_formula": return "formula";
-		case "abandon": return null; // skip page furniture
-		default: return "text"; // plain text + all captions/footnotes
+		case "title":
+			return "title";
+		case "figure":
+			return "figure";
+		case "table":
+			return "table";
+		case "isolate_formula":
+			return "formula";
+		case "abandon":
+			return null; // skip page furniture
+		default:
+			return "text"; // plain text + all captions/footnotes
 	}
 }
 
 // Letterbox to IMGSZ×IMGSZ (pad 114), BGR, CHW, /255 — matches the model's training transform.
-async function preprocess(png: Uint8Array): Promise<{ tensor: Float32Array; w0: number; h0: number; r: number; padX: number; padY: number }> {
+async function preprocess(png: Uint8Array): Promise<{
+	tensor: Float32Array;
+	w0: number;
+	h0: number;
+	r: number;
+	padX: number;
+	padY: number;
+}> {
 	const { default: sharp } = await import("sharp");
 	const meta = await sharp(png).metadata();
 	const w0 = meta.width ?? 1;
@@ -58,15 +79,20 @@ async function preprocess(png: Uint8Array): Promise<{ tensor: Float32Array; w0: 
 		const rr = data[i * 3] / 255;
 		const gg = data[i * 3 + 1] / 255;
 		const bb = data[i * 3 + 2] / 255;
-		t[i] = bb;          // B plane
-		t[n + i] = gg;      // G plane
-		t[2 * n + i] = rr;  // R plane
+		t[i] = bb; // B plane
+		t[n + i] = gg; // G plane
+		t[2 * n + i] = rr; // R plane
 	}
 	return { tensor: t, w0, h0, r, padX, padY };
 }
 
 export async function detectLayout(png: Uint8Array, modelDir?: string): Promise<Region[]> {
-	const path = await ensureModel(modelDir, "doclayout", "doclayout_yolo_docstructbench_imgsz1024.onnx", MODEL_URL);
+	const path = await ensureModel(
+		modelDir,
+		"doclayout",
+		"doclayout_yolo_docstructbench_imgsz1024.onnx",
+		MODEL_URL,
+	);
 	const sess = await session(path);
 	const ort = await import("onnxruntime-node");
 	const { tensor, w0, h0, r, padX, padY } = await preprocess(png);

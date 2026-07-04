@@ -69,6 +69,26 @@ import CardHandles from './CardHandles.svelte';
 		loaded = !blocked;
 	}
 
+	// Clip: fetch + extract + index this page into the KB, then drop an offline
+	// card beside this one (Canvas handles placement + autolink via the event).
+	let clipState = $state<'idle' | 'clipping' | 'done' | 'error'>('idle');
+	async function clip() {
+		if (clipState === 'clipping') return;
+		clipState = 'clipping';
+		try {
+			const { kbClip } = await import('$lib/ai/client');
+			const { currentCanvasId } = await import('./store.svelte');
+			const { title: t, text } = await kbClip(currentCanvasId() || 'default', url);
+			window.dispatchEvent(
+				new CustomEvent('arbor:clipped', { detail: { parentId: id, title: t || title, text } })
+			);
+			clipState = 'done';
+		} catch (err) {
+			console.warn('[clip] failed', err);
+			clipState = 'error';
+		}
+	}
+
 	let overlayDownX = 0, overlayDownY = 0;
 	function overlayPointerDown(e: PointerEvent) {
 		overlayDownX = e.clientX; overlayDownY = e.clientY;
@@ -100,6 +120,14 @@ import CardHandles from './CardHandles.svelte';
 			title={url}
 			onclick={(e) => { e.preventDefault(); openExternal(url); }}
 		>{title}</a>
+		<button
+			class="ico nodrag"
+			class:clipped={clipState === 'done'}
+			title={clipState === 'done' ? 'Clipped — saved offline & indexed' : clipState === 'error' ? 'Clip failed — retry' : 'Clip: save offline & index into KB'}
+			aria-label="Clip page"
+			disabled={clipState === 'clipping'}
+			onclick={clip}
+		>{clipState === 'clipping' ? '…' : clipState === 'done' ? '✓' : '⤓'}</button>
 		<button class="ico nodrag" title="Reload" aria-label="Reload" onclick={reload}>↻</button>
 		<button class="ico nodrag" title="Open in window" aria-label="Open in window" onclick={() => popOutWindow(url)}>⧉</button>
 		<button class="ico nodrag" title="Open externally" aria-label="Open externally" onclick={() => openExternal(url)}>↗</button>
@@ -212,6 +240,13 @@ import CardHandles from './CardHandles.svelte';
 	}
 	.ico:hover {
 		background: rgba(0, 0, 0, 0.08);
+	}
+	.ico:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.ico.clipped {
+		color: #16a34a;
 	}
 	.frame {
 		position: relative;

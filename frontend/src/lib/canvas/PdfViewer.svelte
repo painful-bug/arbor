@@ -2,8 +2,9 @@
 	// Self-contained PDF viewer with toolbar: fit modes, zoom, page nav, highlight
 	// tool + color picker, search, and highlights persisted inside the canvas doc.
 	import { tick } from 'svelte';
-	import { flow, currentCanvasId, setFileHighlights, type PdfHL } from './store.svelte';
+	import { flow, currentCanvasId, setFileHighlights, addSourceNote, type PdfHL } from './store.svelte';
 	import { kbSearchHits } from '$lib/ai/client';
+	import { debounce } from '$lib/debounce';
 
 	let { fileId, blob, initialQuery = '', initialPage = 0 }:
 		{ fileId: string; blob: { bytes: ArrayBuffer; mime: string; name: string } | undefined; initialQuery?: string; initialPage?: number } = $props();
@@ -45,8 +46,9 @@
 		((flow.nodes.find((n) => n.id === fileId)?.data as { filename?: string })?.filename) ?? blob?.name ?? ''
 	);
 
-	// Send-to-chat context popup
+	// Send-to-chat / make-note context popup
 	let selectionText = $state('');
+	let selPage = $state(0); // 1-based page the selection sits on (0 = unknown)
 	let selPopup = $state<{ x: number; y: number } | null>(null);
 
 	// Highlights from canvas store
@@ -55,6 +57,11 @@
 	);
 	let highlights = $state<PdfHL[]>([]);
 	$effect(() => { highlights = [...nodeHighlights]; });
+
+	// Sticky-comment editor: clicking a highlight (outside the highlight tool) opens
+	// this popover to view/add a note on that highlight.
+	let commentPopup = $state<{ idx: number; x: number; y: number } | null>(null);
+	let commentDraft = $state('');
 
 	// ── Container sizing ────────────────────────────────────────────────────────
 	let containerW = $state(0);
@@ -74,47 +81,74 @@
 		return ((containerW - 32) / base.w) * zoomFactor;
 	}
 
-	// ── PDF load + render ────────────────────────────────────────────────────────
+	// ── PDF load + render (virtualized) ─────────────────────────────────────────
+	// Only pages near the viewport are rendered; pages scrolled far away are freed.
+	// Rendering every page eagerly at DPR resolution (~13MB of canvas per page at
+	// 2x) made large PDFs unopenable — 100 pages ≈ >1GB of bitmaps.
 	let pdfDoc: import('pdfjs-dist').PDFDocumentProxy | null = null;
-	let rendering = false;
+	let docReady = $state(false);
+	const visiblePages = new Set<number>();
+	const renderedScale = new Map<number, string>(); // page → scale key it was drawn at
 
-	async function loadAndRender() {
-		if (!blob || !pagesEl || rendering) return;
-		rendering = true;
+	async function getPdfjs() {
+		const pdfjs = await import('pdfjs-dist');
+		pdfjs.GlobalWorkerOptions.workerSrc = (
+			await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+		).default;
+		return pdfjs;
+	}
+
+	async function loadDoc() {
+		if (!blob || !pagesEl || pdfDoc) return;
+		const pdfjs = await getPdfjs();
+		pdfDoc = await pdfjs.getDocument({ data: blob.bytes.slice(0) }).promise;
+		totalPages = pdfDoc.numPages;
+		pages = Array.from({ length: pdfDoc.numPages }, (_, i) => i);
+		// ponytail: assume page-1 size for all placeholders (probing every page costs
+		// one worker round-trip each — seconds on big docs). Mixed-size pages correct
+		// themselves when rendered (renderPage updates baseSizes[i]).
+		const p1 = await pdfDoc.getPage(1);
+		const vp = p1.getViewport({ scale: 1 });
+		baseSizes = pages.map(() => ({ w: vp.width, h: vp.height }));
+		await tick();
+		docReady = true;
+	}
+
+	// Placeholder CSS size for page i — reactive via baseSizes/containerW/zoom.
+	function pageCss(i: number): { w: number; h: number } {
+		const base = baseSizes[i] ?? { w: 612, h: 792 };
+		const s = effectiveScale(i) || 1;
+		return { w: Math.round(base.w * s), h: Math.round(base.h * s) };
+	}
+
+	async function ensureRendered(i: number) {
+		if (!pdfDoc) return;
+		const scale = effectiveScale(i);
+		if (scale <= 0) return;
+		const key = scale.toFixed(4);
+		if (renderedScale.get(i) === key) return;
+		renderedScale.set(i, key); // set before await — guards concurrent re-entry
 		try {
-			const pdfjs = await import('pdfjs-dist');
-			pdfjs.GlobalWorkerOptions.workerSrc = (
-				await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-			).default;
-			if (pdfDoc) {
-				// Re-use existing doc; just re-render with new scale
-				await renderAll(pdfjs, pdfDoc);
-			} else {
-				pdfDoc = await pdfjs.getDocument({ data: blob.bytes.slice(0) }).promise;
-				totalPages = pdfDoc.numPages;
-				pages = Array.from({ length: pdfDoc.numPages }, (_, i) => i);
-				// Capture base (scale-1) sizes for all pages
-				const sizes: { w: number; h: number }[] = [];
-				for (let i = 0; i < pdfDoc.numPages; i++) {
-					const p = await pdfDoc.getPage(i + 1);
-					const vp = p.getViewport({ scale: 1 });
-					sizes.push({ w: vp.width, h: vp.height });
-				}
-				baseSizes = sizes;
-				await tick();
-				await renderAll(pdfjs, pdfDoc);
-				await buildSearchIndex(pdfDoc);
-			}
-		} finally {
-			rendering = false;
+			await renderPage(await getPdfjs(), pdfDoc, i);
+		} catch {
+			renderedScale.delete(i);
 		}
 	}
 
-	async function renderAll(pdfjs: typeof import('pdfjs-dist'), doc: import('pdfjs-dist').PDFDocumentProxy) {
-		if (!pagesEl) return;
-		for (let i = 0; i < doc.numPages; i++) {
-			await renderPage(pdfjs, doc, i);
+	// Free an offscreen page's bitmap + text layer (placeholder div keeps the layout).
+	function freePage(i: number) {
+		renderedScale.delete(i);
+		const wrap = pagesEl?.querySelector(`[data-page="${i}"]`) as HTMLElement | null;
+		if (!wrap) return;
+		const canvas = wrap.querySelector('canvas') as HTMLCanvasElement | null;
+		if (canvas) {
+			canvas.width = 0;
+			canvas.height = 0;
+			canvas.style.width = '';
+			canvas.style.height = '';
 		}
+		const tl = wrap.querySelector('.textlayer') as HTMLElement | null;
+		if (tl) tl.innerHTML = '';
 	}
 
 	async function renderPage(pdfjs: typeof import('pdfjs-dist'), doc: import('pdfjs-dist').PDFDocumentProxy, i: number) {
@@ -123,7 +157,16 @@
 		if (logicalScale <= 0) return; // containerW not ready yet
 
 		const page = await doc.getPage(i + 1);
-		const dpr = window.devicePixelRatio || 1;
+		// Correct the placeholder if this page's real size differs from page 1's.
+		const vp1 = page.getViewport({ scale: 1 });
+		const base = baseSizes[i];
+		if (base && (Math.abs(base.w - vp1.width) > 1 || Math.abs(base.h - vp1.height) > 1)) {
+			baseSizes[i] = { w: vp1.width, h: vp1.height };
+		}
+		// Cap backing resolution: full DPR (2× on retina) makes a fit-width page a
+		// ~1200×1600 bitmap (~7.7 MB) that the WKWebView compositor must upload on open
+		// — the dominant cost of opening a PDF. 1.5× stays crisp at typical zoom.
+		const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 		// Logical viewport drives CSS dimensions and TextLayer span positions
 		const viewport = page.getViewport({ scale: logicalScale });
 
@@ -135,9 +178,6 @@
 		wrap.style.setProperty('--total-scale-factor', String(logicalScale));
 		wrap.style.setProperty('--scale-round-x', '1px');
 		wrap.style.setProperty('--scale-round-y', '1px');
-
-		wrap.style.width  = `${viewport.width}px`;
-		wrap.style.height = `${viewport.height}px`;
 
 		// Canvas: render at DPR resolution for crisp output, using a transform
 		const canvas = wrap.querySelector('canvas') as HTMLCanvasElement;
@@ -156,6 +196,13 @@
 	}
 
 	// ── Search index ────────────────────────────────────────────────────────────
+	// Built lazily on first search — a full text extraction of a big PDF at open
+	// time blocks for seconds and is wasted if the user never searches.
+	let indexBuilt: Promise<void> | null = null;
+	function ensureSearchIndex(): Promise<void> {
+		return (indexBuilt ??= buildSearchIndex(pdfDoc!));
+	}
+
 	async function buildSearchIndex(doc: import('pdfjs-dist').PDFDocumentProxy) {
 		const index: typeof searchIndex = [];
 		for (let i = 0; i < doc.numPages; i++) {
@@ -177,11 +224,12 @@
 		searchIndex = index;
 	}
 
-	let kbTimer: ReturnType<typeof setTimeout>;
-	function runSearch() {
-		clearTimeout(kbTimer);
+	const kbFallbackDebounced = debounce((q: string) => void kbFallback(q), 200);
+	async function runSearch() {
+		kbFallbackDebounced.cancel();
 		pageHits = [];
 		if (!query.trim()) { searchHits = []; return; }
+		if (pdfDoc) await ensureSearchIndex();
 		const q = query.toLowerCase();
 		const hits: typeof searchHits = [];
 		for (let pi = 0; pi < searchIndex.length; pi++) {
@@ -196,7 +244,7 @@
 		searchCursor = 0;
 		if (hits.length) { scrollToHit(0); return; }
 		// Nothing in the embedded text layer (scanned/OCR PDF) → ask the KB.
-		if (query.trim().length >= 2) kbTimer = setTimeout(() => void kbFallback(query.trim()), 200);
+		if (query.trim().length >= 2) kbFallbackDebounced(query.trim());
 	}
 
 	// Page-level OCR search via the KB. Hits carry their source page (added to the
@@ -236,41 +284,59 @@
 		searchCursor = (searchCursor + 1) % searchHits.length; scrollToHit(searchCursor);
 	}
 
-	// Deep-link from global search. Once the index is built: run the query, and if the
+	// Deep-link from global search. Once the doc is ready: run the query, and if the
 	// embedded text layer yields nothing (scanned/OCR PDF) fall back to the KB-provided
 	// page. `data-page` is 0-based; initialPage is the 1-based source page.
 	let appliedInitial = '';
 	$effect(() => {
-		if (!searchIndex.length || (!initialQuery && !initialPage)) return;
+		if (!docReady || (!initialQuery && !initialPage)) return;
 		const key = `${initialQuery}|${initialPage}`;
 		if (key === appliedInitial) return;
 		appliedInitial = key;
-		if (initialQuery) { query = initialQuery; runSearch(); }
-		if (!searchHits.length && initialPage) {
-			pagesEl?.querySelector(`[data-page="${initialPage - 1}"]`)
-				?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		}
+		void (async () => {
+			if (initialQuery) { query = initialQuery; await runSearch(); }
+			if (!searchHits.length && initialPage) scrollToPage(initialPage);
+		})();
 	});
 
 	// ── Fit/zoom effects ────────────────────────────────────────────────────────
-	let renderTimer: ReturnType<typeof setTimeout>;
+	// Scale changed → everything drawn is stale; redraw only what's on screen.
+	// Offscreen pages re-render when the observer brings them back in.
+	const renderDebounced = debounce(() => {
+		renderedScale.clear();
+		for (const i of visiblePages) void ensureRendered(i);
+	}, 60);
 	$effect(() => {
 		// Re-render when fit/zoom changes (containerW/H tracked via ResizeObserver)
 		fitMode; zoomFactor; containerW; containerH;
 		if (!pdfDoc || !pagesEl) return;
-		clearTimeout(renderTimer);
-		renderTimer = setTimeout(async () => {
-			const pdfjs = await import('pdfjs-dist');
-			pdfjs.GlobalWorkerOptions.workerSrc = (
-				await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-			).default;
-			await renderAll(pdfjs, pdfDoc!);
-		}, 60);
+		renderDebounced();
 	});
 
 	// Initial load
 	$effect(() => {
-		if (blob && pagesEl) loadAndRender();
+		if (blob && pagesEl) void loadDoc();
+	});
+
+	// Render observer: pages within one viewport-height of the scroll window get
+	// drawn; pages leaving that band are freed. Separate from the counter observer
+	// (whose ratios must reflect true on-screen visibility, not the inflated margin).
+	$effect(() => {
+		if (!pagesEl || !pages.length) return;
+		const io = new IntersectionObserver((entries) => {
+			for (const e of entries) {
+				const i = Number((e.target as HTMLElement).dataset.page ?? 0);
+				if (e.isIntersecting) {
+					visiblePages.add(i);
+					void ensureRendered(i);
+				} else {
+					visiblePages.delete(i);
+					freePage(i);
+				}
+			}
+		}, { root: pagesEl, rootMargin: '200px 0px' });
+		for (const el of pagesEl.querySelectorAll('[data-page]')) io.observe(el);
+		return () => { io.disconnect(); visiblePages.clear(); };
 	});
 
 	// ResizeObserver on the container
@@ -304,12 +370,20 @@
 		const sel = window.getSelection();
 		const txt = sel?.toString().trim() ?? '';
 
-		// Selection popup for send-to-chat (always, regardless of tool)
+		// Selection popup for send-to-chat / make-note (always, regardless of tool)
 		if (txt) {
 			selectionText = txt;
 			const r = sel!.getRangeAt(0).getBoundingClientRect();
 			// Position popup above the selection, relative to viewport
 			selPopup = { x: r.left + r.width / 2, y: r.top - 8 };
+			// Which page does the selection midpoint land on? (1-based; 0 = unknown)
+			const mx = r.left + r.width / 2;
+			const my = r.top + r.height / 2;
+			const wrap = [...(pagesEl?.querySelectorAll('[data-page]') ?? [])].find((p) => {
+				const b = p.getBoundingClientRect();
+				return mx >= b.left && mx <= b.right && my >= b.top && my <= b.bottom;
+			}) as HTMLElement | undefined;
+			selPage = wrap ? Number(wrap.dataset.page) + 1 : 0;
 		} else {
 			selPopup = null;
 		}
@@ -346,10 +420,32 @@
 		}
 	}
 
-	function removeHighlight(idx: number) {
-		if (tool !== 'highlight') return;
-		highlights = highlights.filter((_, i) => i !== idx);
+	// Click a highlight → open its editor (add/read a note, or delete). In the
+	// highlight tool every highlight is clickable; outside it, only noted ones are
+	// (note-less highlights stay passive so text underneath stays selectable).
+	function onHighlightClick(e: MouseEvent, h: PdfHL) {
+		const idx = highlights.indexOf(h);
+		if (idx < 0) return;
+		e.stopPropagation();
+		commentDraft = h.note ?? '';
+		commentPopup = { idx, x: e.clientX, y: e.clientY - 8 };
+	}
+
+	function deleteHighlight() {
+		if (!commentPopup) return;
+		highlights = highlights.filter((_, i) => i !== commentPopup!.idx);
 		setFileHighlights(fileId, highlights);
+		commentPopup = null;
+	}
+
+	function saveComment() {
+		if (!commentPopup) return;
+		const note = commentDraft.trim();
+		highlights = highlights.map((h, i) =>
+			i === commentPopup!.idx ? { ...h, note: note || undefined } : h,
+		);
+		setFileHighlights(fileId, highlights);
+		commentPopup = null;
 	}
 
 	function clearHighlights() {
@@ -364,6 +460,13 @@
 		window.dispatchEvent(new CustomEvent('arbor:branch', {
 			detail: { x: pos.x + 480, y: pos.y, parentId: fileId, quote: text }
 		}));
+		window.getSelection()?.removeAllRanges();
+		selPopup = null;
+	}
+
+	// Highlight → Note: turn the selection into a persistent, backlinked note card.
+	function makeNote(text: string) {
+		addSourceNote(fileId, selPage, text);
 		window.getSelection()?.removeAllRanges();
 		selPopup = null;
 	}
@@ -510,7 +613,7 @@
 		onmouseup={onPdfMouseUp}
 	>
 		{#each pages as p (p)}
-			<div class="page" data-page={p}>
+			<div class="page" data-page={p} style="width:{pageCss(p).w}px;height:{pageCss(p).h}px">
 				<canvas></canvas>
 				<div class="textlayer"></div>
 				<!-- Persistent highlights -->
@@ -518,9 +621,10 @@
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<div
 						class="hl"
+						class:has-note={h.note}
 						style="left:{h.x*100}%;top:{h.y*100}%;width:{h.w*100}%;height:{h.h*100}%;background:{h.color}"
-						onclick={() => removeHighlight(highlights.indexOf(h))}
-						title={tool === 'highlight' ? 'Click to remove' : undefined}
+						onclick={(e) => onHighlightClick(e, h)}
+						title={h.note ?? (tool === 'highlight' ? 'Click to note or delete' : '')}
 					></div>
 				{/each}
 				<!-- Search hits -->
@@ -547,6 +651,32 @@
 			onmousedown={(e) => e.preventDefault()}
 		>
 			<button onclick={() => sendToChat(selectionText)}>↗ Send to chat</button>
+			<button onclick={() => makeNote(selectionText)}>✎ Note</button>
+		</div>
+	{/if}
+
+	<!-- Highlight comment editor -->
+	{#if commentPopup}
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div
+			class="comment-popup"
+			style="left:{commentPopup.x}px;top:{commentPopup.y}px"
+			onmousedown={(e) => e.stopPropagation()}
+			onclick={(e) => e.stopPropagation()}
+		>
+			<!-- svelte-ignore a11y_autofocus -->
+			<textarea
+				bind:value={commentDraft}
+				placeholder="Add a note…"
+				rows="3"
+				autofocus
+			></textarea>
+			<div class="comment-actions">
+				<button class="danger" onclick={deleteHighlight} title="Delete highlight">Delete</button>
+				<span class="spacer"></span>
+				<button onclick={() => (commentPopup = null)}>Cancel</button>
+				<button class="primary" onclick={saveComment}>Save</button>
+			</div>
 		</div>
 	{/if}
 </div>
@@ -713,13 +843,28 @@
 		pointer-events: none;
 		mix-blend-mode: multiply;
 	}
-	.highlight-mode .hl {
+	.highlight-mode .hl,
+	.hl.has-note {
 		pointer-events: auto;
 		cursor: pointer;
 	}
-	.highlight-mode .hl:hover {
+	.highlight-mode .hl:hover,
+	.hl.has-note:hover {
 		outline: 2px solid rgba(0,0,0,0.35);
 		outline-offset: 1px;
+	}
+	/* Dog-ear marker so noted highlights are visually distinct from plain ones. */
+	.hl.has-note::after {
+		content: '';
+		position: absolute;
+		top: -3px;
+		right: -3px;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #2563eb;
+		border: 1px solid #fff;
+		pointer-events: none;
 	}
 
 	/* Search hit overlay */
@@ -756,5 +901,56 @@
 		cursor: pointer;
 		white-space: nowrap;
 		box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+	}
+
+	/* Highlight comment editor */
+	.comment-popup {
+		position: fixed;
+		transform: translate(-50%, -100%);
+		z-index: 999;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		width: 220px;
+		padding: 8px;
+		background: var(--c-surface, #fff);
+		border: 1px solid var(--c-hairline, rgba(0,0,0,0.15));
+		border-radius: 10px;
+		box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+	}
+	.comment-popup textarea {
+		width: 100%;
+		box-sizing: border-box;
+		resize: vertical;
+		border: 1px solid var(--c-hairline, rgba(0,0,0,0.15));
+		border-radius: 6px;
+		padding: 6px;
+		font: inherit;
+		font-size: 12px;
+		background: var(--c-canvas, #fff);
+		color: var(--c-ink);
+	}
+	.comment-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.comment-actions .spacer { flex: 1; }
+	.comment-actions button {
+		border: 1px solid var(--c-hairline, rgba(0,0,0,0.15));
+		background: var(--c-surface-soft, #fff);
+		border-radius: 7px;
+		padding: 4px 10px;
+		font-size: 12px;
+		cursor: pointer;
+		color: var(--c-ink);
+	}
+	.comment-actions button.primary {
+		background: var(--c-primary, #3b82f6);
+		color: var(--c-on-primary, #fff);
+		border-color: transparent;
+	}
+	.comment-actions button.danger {
+		color: #dc2626;
 	}
 </style>

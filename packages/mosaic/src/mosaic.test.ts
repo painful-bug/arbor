@@ -1,9 +1,13 @@
-import { test, expect } from "bun:test";
-import { extract, toMarkdown, toMarkdownPages, plainText } from "./index.ts";
+import { expect, test } from "bun:test";
+import { extract, plainText, toMarkdown, toMarkdownPages } from "./index.ts";
 import { parseText } from "./parse/text.ts";
 import { linesToTable } from "./table.ts";
 
-const line = (text: string, x0: number, y0: number) => ({ text, bbox: { x0, y0, x1: x0 + 0.1, y1: y0 + 0.05 }, confidence: 0.9 });
+const line = (text: string, x0: number, y0: number) => ({
+	text,
+	bbox: { x0, y0, x1: x0 + 0.1, y1: y0 + 0.05 },
+	confidence: 0.9,
+});
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -54,5 +58,8 @@ test("linesToTable clusters OCR lines into rows and x-ordered cells", () => {
 		line("A2", 0.1, 0.2),
 		line("B2", 0.5, 0.21),
 	]);
-	expect(rows).toEqual([["A1", "B1"], ["A2", "B2"]]);
+	expect(rows).toEqual([
+		["A1", "B1"],
+		["A2", "B2"],
+	]);
 });

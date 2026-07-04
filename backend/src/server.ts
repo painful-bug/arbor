@@ -3,28 +3,39 @@
 // to stdout so the Tauri shell learns the {port, token} to reach it. The token
 // gates /api/* so other local processes can't drive the backend.
 import { randomBytes } from "node:crypto";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { canvasRoutes } from "./routes/canvases.ts";
-import { settingsRoutes } from "./routes/settings.ts";
-import { blobRoutes } from "./routes/blobs.ts";
-import { keyRoutes } from "./routes/keys.ts";
-import { kbRoutes } from "./routes/kb.ts";
-import { agentRoutes } from "./routes/agent.ts";
-import { fileRoutes } from "./routes/files.ts";
-import { ollamaRoutes } from "./routes/ollama.ts";
-import { cleanupRoutes } from "./routes/cleanup.ts";
-import { importLegacyIfNeeded } from "./store/import-legacy.ts";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { FIRST_PORT, HOST, SERVER_IDLE_TIMEOUT_S } from "./config.ts";
+import { AppError } from "./errors.ts";
+import { log } from "./log.ts";
 import { ARBOR_DIR, BACKEND_HANDSHAKE_FILE } from "./paths.ts";
-
-const HOST = "127.0.0.1";
-const FIRST_PORT = 8765;
+import { agentRoutes } from "./routes/agent.ts";
+import { blobRoutes } from "./routes/blobs.ts";
+import { canvasRoutes } from "./routes/canvases.ts";
+import { cleanupRoutes } from "./routes/cleanup.ts";
+import { fileRoutes } from "./routes/files.ts";
+import { kbRoutes } from "./routes/kb.ts";
+import { keyRoutes } from "./routes/keys.ts";
+import { mcpRoutes } from "./routes/mcp.ts";
+import { ollamaRoutes } from "./routes/ollama.ts";
+import { settingsRoutes } from "./routes/settings.ts";
+import { studioRoutes } from "./routes/studio.ts";
+import { importLegacyIfNeeded } from "./store/import-legacy.ts";
 
 // Build the API. `token` is the shared secret the frontend echoes as a Bearer
 // header. Routes are added here; everything under /api requires the token.
 export function createApp(token: string) {
 	const app = new Hono();
+
+	// Central error boundary: AppError → its status/code, anything else → 500.
+	// Response keeps the `error: string` key the frontend already reads.
+	app.onError((err, c) => {
+		const e = err instanceof AppError ? err : new AppError(err.message ?? "internal error");
+		log.error("http", e.message);
+		return c.json({ error: e.message, code: e.code }, e.status as ContentfulStatusCode);
+	});
 
 	// Liveness check — unauthenticated so the shell can probe readiness.
 	app.get("/health", (c) => c.json({ ok: true }));
@@ -53,6 +64,8 @@ export function createApp(token: string) {
 	app.route("/api", keyRoutes); // /api/keys/* and /api/providers/*
 	app.route("/api/ollama", ollamaRoutes);
 	app.route("/api/cleanup", cleanupRoutes);
+	app.route("/api/mcp", mcpRoutes);
+	app.route("/api/studio", studioRoutes);
 
 	return app;
 }
@@ -65,7 +78,15 @@ export function serveOnFreePort(
 ) {
 	for (let port = first; port < first + 50; port++) {
 		try {
-			const server = Bun.serve({ hostname: HOST, port, fetch, idleTimeout: 0 });
+			// Bounded idle timeout — safe for SSE: the agent stream sends 25s heartbeats
+			// (routes/agent.ts) and ollama pull streams progress continuously, so an
+			// active connection never goes 120s without traffic.
+			const server = Bun.serve({
+				hostname: HOST,
+				port,
+				fetch,
+				idleTimeout: SERVER_IDLE_TIMEOUT_S,
+			});
 			return { server, port };
 		} catch (e) {
 			const code = (e as { code?: string }).code;
@@ -78,7 +99,7 @@ export function serveOnFreePort(
 
 if (import.meta.main) {
 	const imported = importLegacyIfNeeded();
-	if (imported) console.error(`[arbor] legacy import: ${imported}`);
+	if (imported) log.info("arbor", `legacy import: ${imported}`);
 
 	const token = randomBytes(24).toString("hex");
 	const app = createApp(token);

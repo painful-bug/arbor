@@ -12,10 +12,15 @@
 		deleteCanvas,
 		saveCanvas,
 		currentCanvasId,
+		flow,
+		pushHistory,
 		ui
 	} from './store.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import type { CardData } from './store.svelte';
+	import { CANVAS_TEMPLATES } from './templates';
+
+	let showNewMenu = $state(false);
 
 	// Sort newest-edited first; recompute when the list changes.
 	const sorted = $derived([...library.list].sort((a, b) => b.updatedAt - a.updatedAt));
@@ -34,7 +39,21 @@
 	}
 
 	function create() {
+		showNewMenu = false;
 		newCanvas();
+		ui.view = 'canvas';
+	}
+
+	// Start a new canvas seeded from a template's nodes/edges.
+	function createFromTemplate(id: string) {
+		showNewMenu = false;
+		const template = CANVAS_TEMPLATES.find((t) => t.id === id);
+		if (!template) return;
+		newCanvas(template.name);
+		flow.nodes = structuredClone(template.seed.nodes);
+		flow.edges = structuredClone(template.seed.edges);
+		saveCanvas();
+		pushHistory();
 		ui.view = 'canvas';
 	}
 
@@ -58,7 +77,23 @@
 <div class="library">
 	<header>
 		<h1>Library</h1>
-		<button class="new" onclick={create}>＋ New canvas</button>
+		<div class="new-wrap">
+			<button class="new" onclick={() => (showNewMenu = !showNewMenu)}>＋ New canvas</button>
+			{#if showNewMenu}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="new-menu" onpointerdown={(e) => e.stopPropagation()}>
+					<button class="new-menu-item" onclick={create}>Blank canvas</button>
+					<div class="new-menu-sep"></div>
+					<div class="new-menu-label">Start from template</div>
+					{#each CANVAS_TEMPLATES as t (t.id)}
+						<button class="new-menu-item" onclick={() => createFromTemplate(t.id)}>
+							<span class="tmpl-name">{t.name}</span>
+							<span class="tmpl-desc">{t.description}</span>
+						</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
 	</header>
 
 	<div class="grid">
@@ -116,6 +151,9 @@
 		font-weight: 700;
 		letter-spacing: -0.5px;
 	}
+	.new-wrap {
+		position: relative;
+	}
 	.new {
 		border: none;
 		border-radius: var(--r-pill);
@@ -129,6 +167,58 @@
 	}
 	.new:active {
 		transform: scale(0.94);
+	}
+	.new-menu {
+		position: absolute;
+		top: calc(100% + 8px);
+		right: 0;
+		width: 260px;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 6px;
+		border-radius: var(--r-lg, 12px);
+		background: var(--c-canvas, #fff);
+		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
+		box-shadow: var(--elev-3, 0 18px 50px rgba(0, 0, 0, 0.25));
+		z-index: 20;
+	}
+	.new-menu-sep {
+		height: 1px;
+		background: var(--c-hairline, rgba(0, 0, 0, 0.08));
+		margin: 4px 2px;
+	}
+	.new-menu-label {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: rgba(var(--ink-rgb), 0.45);
+		padding: 4px 8px;
+	}
+	.new-menu-item {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 1px;
+		border: none;
+		background: transparent;
+		border-radius: 8px;
+		padding: 7px 8px;
+		cursor: pointer;
+		text-align: left;
+		color: var(--c-ink);
+	}
+	.new-menu-item:hover {
+		background: rgba(var(--ink-rgb), 0.06);
+	}
+	.tmpl-name {
+		font-size: 13px;
+		font-weight: 500;
+	}
+	.tmpl-desc {
+		font-size: 11px;
+		color: rgba(var(--ink-rgb), 0.5);
 	}
 	.grid {
 		display: grid;

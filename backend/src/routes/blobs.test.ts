@@ -1,5 +1,5 @@
 // Blob route tests: store, fetch, and delete bytes by (canvas-namespaced) id.
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { makeTestApp } from "./test-utils.ts";
 
 const { api } = makeTestApp("test-blob-token");
@@ -13,7 +13,7 @@ describe("Blob routes", () => {
 		const put = await api(path, {
 			method: "PUT",
 			headers: { "Content-Type": "text/plain", "X-Filename": encodeURIComponent("a.txt") },
-			body: bytes
+			body: bytes,
 		});
 		expect(put.status).toBe(200);
 
