@@ -41,7 +41,9 @@ async function run(
 	try {
 		await work();
 	} catch (err) {
-		pushToast(err instanceof Error ? err.message : `${kind === "mindmap" ? "Mind map" : "Study"} failed`);
+		pushToast(
+			err instanceof Error ? err.message : `${kind === "mindmap" ? "Mind map" : "Study"} failed`,
+		);
 	} finally {
 		delete runningJobs[key];
 	}

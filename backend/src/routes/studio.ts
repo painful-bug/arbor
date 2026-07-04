@@ -42,13 +42,17 @@ Rules:
 
 // First 800 chars of model output for logs — enough to spot a malformed shape
 // without dumping a whole document into the log stream.
-const snippet = (s: string, n = 800) => (s.length > n ? `${s.slice(0, n)}… (+${s.length - n} chars)` : s);
+const snippet = (s: string, n = 800) =>
+	s.length > n ? `${s.slice(0, n)}… (+${s.length - n} chars)` : s;
 
 // Tolerant parse: models wrap JSON in prose, code fences, or leave trailing
 // commas. Strip fences, slice the outermost { … } object, drop trailing commas,
 // then JSON.parse. Throws (with the offending text visible to the caller's log).
 export function parseJson(raw: string): unknown {
-	let s = raw.trim().replace(/```(?:json)?/gi, "").trim();
+	let s = raw
+		.trim()
+		.replace(/```(?:json)?/gi, "")
+		.trim();
 	// Slice from the first "{" to the last "}" so leading/trailing prose is dropped.
 	const start = s.indexOf("{");
 	const end = s.lastIndexOf("}");
@@ -65,7 +69,12 @@ export function flatten(tree: {
 }): MindNode[] {
 	const out: MindNode[] = [];
 	const rootId = "n0";
-	out.push({ id: rootId, title: (tree.root ?? "Overview").slice(0, 80), summary: "", parent: null });
+	out.push({
+		id: rootId,
+		title: (tree.root ?? "Overview").slice(0, 80),
+		summary: "",
+		parent: null,
+	});
 	let counter = 1;
 	for (const branch of tree.nodes ?? []) {
 		if (!branch?.title) continue;
@@ -99,9 +108,15 @@ studioRoutes.post("/:canvas/mindmap", async (c) => {
 	if (chunks.length === 0) throw badRequest("source not found in this canvas");
 	// Cap the context so a huge doc doesn't blow the prompt window.
 	const text = chunks.join("\n\n").slice(0, 12_000);
-	log.info("studio", `mindmap start [${source}]`, { canvas, chunks: chunks.length, chars: text.length });
+	log.info("studio", `mindmap start [${source}]`, {
+		canvas,
+		chunks: chunks.length,
+		chars: text.length,
+	});
 
-	const raw = await chatComplete(MINDMAP_PROMPT(source, text), 2000, MINDMAP_SYSTEM, { json: true });
+	const raw = await chatComplete(MINDMAP_PROMPT(source, text), 2000, MINDMAP_SYSTEM, {
+		json: true,
+	});
 	if (!raw.trim()) {
 		// No provider/key configured, or the model returned nothing.
 		log.warn("studio", `mindmap no output [${source}]`, { canvas });
@@ -112,13 +127,19 @@ studioRoutes.post("/:canvas/mindmap", async (c) => {
 	try {
 		const nodes = flatten(parseJson(raw) as Parameters<typeof flatten>[0]);
 		if (nodes.length <= 1) {
-			log.warn("studio", `mindmap empty after parse [${source}]`, { nodes: nodes.length, raw: snippet(raw) });
+			log.warn("studio", `mindmap empty after parse [${source}]`, {
+				nodes: nodes.length,
+				raw: snippet(raw),
+			});
 			return c.json({ error: "empty", nodes: [] }, 422);
 		}
 		log.info("studio", `mindmap done [${source}]`, { nodes: nodes.length });
 		return c.json({ nodes });
 	} catch (err) {
-		log.error("studio", `mindmap parse failed [${source}]`, { err: String(err), raw: snippet(raw) });
+		log.error("studio", `mindmap parse failed [${source}]`, {
+			err: String(err),
+			raw: snippet(raw),
+		});
 		return c.json({ error: "parse", nodes: [] }, 422);
 	}
 });
@@ -155,15 +176,27 @@ Rules:
 
 // Parse + validate the LLM's study set into storable items. Drops malformed
 // entries rather than failing the whole batch.
-export function parseStudySet(raw: unknown): { kind: "flashcard" | "mcq"; question: string; answer: string; choices: string[] | null }[] {
+export function parseStudySet(
+	raw: unknown,
+): { kind: "flashcard" | "mcq"; question: string; answer: string; choices: string[] | null }[] {
 	const data = raw as {
 		flashcards?: { q?: string; a?: string }[];
 		quiz?: { q?: string; choices?: string[]; answer?: string }[];
 	};
-	const out: { kind: "flashcard" | "mcq"; question: string; answer: string; choices: string[] | null }[] = [];
+	const out: {
+		kind: "flashcard" | "mcq";
+		question: string;
+		answer: string;
+		choices: string[] | null;
+	}[] = [];
 	for (const f of data.flashcards ?? []) {
 		if (!f?.q || !f?.a) continue;
-		out.push({ kind: "flashcard", question: f.q.slice(0, 500), answer: f.a.slice(0, 1000), choices: null });
+		out.push({
+			kind: "flashcard",
+			question: f.q.slice(0, 500),
+			answer: f.a.slice(0, 1000),
+			choices: null,
+		});
 	}
 	for (const q of data.quiz ?? []) {
 		const choices = (q?.choices ?? []).filter((x) => typeof x === "string" && x.trim()).slice(0, 4);
@@ -174,7 +207,7 @@ export function parseStudySet(raw: unknown): { kind: "flashcard" | "mcq"; questi
 	return out;
 }
 
-function toStudyItem(row: typeof reviewItems.$inferSelect): StudyItem {
+function toStudyItem(row: Pick<typeof reviewItems.$inferSelect, "id" | "kind" | "question" | "answer" | "choices">): StudyItem {
 	return {
 		id: row.id,
 		kind: row.kind as "flashcard" | "mcq",
@@ -193,7 +226,11 @@ studioRoutes.post("/:canvas/generate", async (c) => {
 	const chunks = await readSource(canvas, source);
 	if (chunks.length === 0) throw badRequest("source not found in this canvas");
 	const text = chunks.join("\n\n").slice(0, 12_000);
-	log.info("studio", `study start [${source}]`, { canvas, chunks: chunks.length, chars: text.length });
+	log.info("studio", `study start [${source}]`, {
+		canvas,
+		chunks: chunks.length,
+		chars: text.length,
+	});
 
 	const raw = await chatComplete(STUDY_PROMPT(source, text), 2500, STUDY_SYSTEM, { json: true });
 	if (!raw.trim()) {

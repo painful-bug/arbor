@@ -90,14 +90,34 @@ describe("completeText", () => {
 	});
 
 	it("json:true sets response_format on openai-compat, omitted otherwise", async () => {
-		await completeText({ provider: "openai-compat", baseUrl: base, model: "m", apiKey: "k", prompt: "p", json: true });
+		await completeText({
+			provider: "openai-compat",
+			baseUrl: base,
+			model: "m",
+			apiKey: "k",
+			prompt: "p",
+			json: true,
+		});
 		expect(seen!.body.response_format).toEqual({ type: "json_object" });
-		await completeText({ provider: "openai-compat", baseUrl: base, model: "m", apiKey: "k", prompt: "p" });
+		await completeText({
+			provider: "openai-compat",
+			baseUrl: base,
+			model: "m",
+			apiKey: "k",
+			prompt: "p",
+		});
 		expect(seen!.body.response_format).toBeUndefined();
 	});
 
 	it("json:true sets responseMimeType on google", async () => {
-		await completeText({ provider: "google", baseUrl: base, model: "gemini-2.0-flash", apiKey: "g", prompt: "p", json: true });
+		await completeText({
+			provider: "google",
+			baseUrl: base,
+			model: "gemini-2.0-flash",
+			apiKey: "g",
+			prompt: "p",
+			json: true,
+		});
 		expect(seen!.body.generationConfig).toEqual({ responseMimeType: "application/json" });
 	});
 
