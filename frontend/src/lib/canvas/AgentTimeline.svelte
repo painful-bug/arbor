@@ -2,6 +2,7 @@
 	// Inline activity timeline: reasoning + tool calls a card's agent made, streamed.
 	// Folds the flat AgentEvent[] into thinking blocks and start/end-paired tool rows.
 	import type { AgentEvent } from '$lib/ai/client';
+	import { openSource } from './globalSearch.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { slide } from 'svelte/transition';
 
@@ -25,6 +26,9 @@
 	function basename(p: unknown): string {
 		return typeof p === 'string' ? p.split('/').pop() || p : '';
 	}
+	function chipLabel(s: { source: string; page?: number }): string {
+		return s.page ? `${basename(s.source)} · p.${s.page}` : basename(s.source);
+	}
 	function toolLabel(name: string, args: unknown): string {
 		const a = (args ?? {}) as Record<string, unknown>;
 		const arg = basename(a.path) || (a.query as string) || (a.command as string) || '';
@@ -41,6 +45,7 @@
 				done: boolean;
 				ok: boolean;
 				detail?: string;
+				sources?: { source: string; page?: number }[];
 		  }
 		| { kind: 'fallback'; provider: string; message: string };
 
@@ -70,6 +75,7 @@
 					it.done = true;
 					it.ok = e.ok ?? true;
 					it.detail = e.detail;
+					it.sources = e.sources;
 				}
 			} else if (e.type === 'provider_switch') {
 				out.push({ kind: 'fallback', provider: e.provider ?? '', message: e.message ?? '' });
@@ -120,6 +126,20 @@
 							>
 								{it.label}
 							</button>
+							{#if it.sources?.length}
+								<div class="cites">
+									{#each it.sources as s (s.source + '#' + (s.page ?? ''))}
+										<button
+											class="cite"
+											type="button"
+											title="Open {s.source}{s.page ? ` at page ${s.page}` : ''}"
+											onclick={() => openSource(s.source, s.page ?? 0)}
+										>
+											{chipLabel(s)}
+										</button>
+									{/each}
+								</div>
+							{/if}
 							{#if expanded[i] && it.detail}
 								<pre class="detail nowheel" transition:slideIn>{it.detail}</pre>
 							{/if}
@@ -224,6 +244,32 @@
 		white-space: pre-wrap;
 		max-height: 60px;
 		overflow-y: auto;
+	}
+	.cites {
+		grid-column: 2;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		margin: 3px 0 1px;
+	}
+	.cite {
+		max-width: 100%;
+		padding: 1px 7px;
+		font: inherit;
+		font-size: 11px;
+		line-height: 1.5;
+		color: rgba(var(--ink-rgb), 0.72);
+		background: rgba(var(--ink-rgb), 0.06);
+		border: 1px solid rgba(var(--ink-rgb), 0.12);
+		border-radius: 999px;
+		cursor: pointer;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.cite:hover {
+		background: rgba(var(--ink-rgb), 0.12);
+		color: rgba(var(--ink-rgb), 0.95);
 	}
 	.detail {
 		grid-column: 2;

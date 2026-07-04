@@ -18,8 +18,10 @@ import { cleanupRoutes } from "./routes/cleanup.ts";
 import { fileRoutes } from "./routes/files.ts";
 import { kbRoutes } from "./routes/kb.ts";
 import { keyRoutes } from "./routes/keys.ts";
+import { mcpRoutes } from "./routes/mcp.ts";
 import { ollamaRoutes } from "./routes/ollama.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { studioRoutes } from "./routes/studio.ts";
 import { importLegacyIfNeeded } from "./store/import-legacy.ts";
 
 // Build the API. `token` is the shared secret the frontend echoes as a Bearer
@@ -62,6 +64,8 @@ export function createApp(token: string) {
 	app.route("/api", keyRoutes); // /api/keys/* and /api/providers/*
 	app.route("/api/ollama", ollamaRoutes);
 	app.route("/api/cleanup", cleanupRoutes);
+	app.route("/api/mcp", mcpRoutes);
+	app.route("/api/studio", studioRoutes);
 
 	return app;
 }

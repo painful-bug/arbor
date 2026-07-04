@@ -7,7 +7,7 @@ import CardHandles from './CardHandles.svelte';
 	import type { TextData } from './store.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
-	import { searchHighlight } from './globalSearch.svelte';
+	import { searchHighlight, openSourceNode } from './globalSearch.svelte';
 	import { markHTML } from './highlights';
 	import { animatedOnce } from './cards';
 
@@ -60,6 +60,13 @@ import CardHandles from './CardHandles.svelte';
 		e.stopPropagation();
 		window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
 	}
+
+	// Jump back to the PDF passage this note was made from (Highlight → Note backlink).
+	function openSourcePassage(e: MouseEvent) {
+		e.stopPropagation();
+		const ref = card.sourceRef;
+		if (ref) openSourceNode(ref.fileId, ref.page);
+	}
 </script>
 
 <div
@@ -79,7 +86,16 @@ import CardHandles from './CardHandles.svelte';
 
 	<div class="header">
 		<span class="label">Note</span>
-		<button class="edit-btn" onclick={openEditor} title="Edit in side panel">Edit</button>
+		<div class="actions">
+			{#if card.sourceRef}
+				<button
+					class="src-btn"
+					onclick={openSourcePassage}
+					title="Jump to source{card.sourceRef.page ? ` · page ${card.sourceRef.page}` : ''}"
+				>↩ Source{card.sourceRef.page ? ` p.${card.sourceRef.page}` : ''}</button>
+			{/if}
+			<button class="edit-btn" onclick={openEditor} title="Edit in side panel">Edit</button>
+		</div>
 	</div>
 
 	<div class="body nodrag nowheel" bind:this={bodyEl}>
@@ -100,6 +116,8 @@ import CardHandles from './CardHandles.svelte';
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+		/* See CardNode.svelte: isolate paint. (content-visibility trialled + removed.) */
+		contain: layout paint;
 		border-radius: var(--r-lg);
 		padding: var(--s-sm) var(--s-md) var(--s-md);
 		border: 1px solid rgba(0, 0, 0, 0.06);
@@ -129,7 +147,13 @@ import CardHandles from './CardHandles.svelte';
 		text-transform: uppercase;
 		opacity: 0.45;
 	}
-	.edit-btn {
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.edit-btn,
+	.src-btn {
 		font-size: 11px;
 		font-weight: 500;
 		padding: 2px 8px;
@@ -140,9 +164,16 @@ import CardHandles from './CardHandles.svelte';
 		opacity: 0;
 		transition: opacity 0.15s;
 		color: var(--c-ink);
+		white-space: nowrap;
+	}
+	/* The source backlink stays visible (it's the note's provenance, not a hover action). */
+	.src-btn {
+		opacity: 0.7;
 	}
 	.card:hover .edit-btn,
-	.card.node-glow-selected .edit-btn {
+	.card.node-glow-selected .edit-btn,
+	.card:hover .src-btn,
+	.card.node-glow-selected .src-btn {
 		opacity: 1;
 	}
 	.nodrag {

@@ -51,6 +51,7 @@ export interface AgentEvent {
 	args?: unknown;
 	ok?: boolean;
 	detail?: string;
+	sources?: { source: string; page?: number }[]; // KB search hits, for click-through citations
 	provider?: string;
 	model?: string;
 }
@@ -222,6 +223,98 @@ export async function kbAdd(
 		console.warn("[kbAdd] failed:", err);
 		return 0;
 	}
+}
+
+// Web clipper: backend fetches + extracts + indexes the URL into the canvas KB,
+// returns the page title + readable text (dropped as an offline card by the caller).
+export async function kbClip(
+	canvas: string,
+	url: string,
+): Promise<{ title: string; text: string; chunks: number }> {
+	const { apiFetch } = await import("$lib/api");
+	const res = await apiFetch(`/api/kb/${encodeURIComponent(canvas)}/clip`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ url }),
+	});
+	if (!res.ok) {
+		const body = (await res.json().catch(() => ({}))) as { error?: string };
+		throw new Error(body.error ?? `Clip failed (${res.status})`);
+	}
+	return (await res.json()) as { title: string; text: string; chunks: number };
+}
+
+// Studio mind-map: backend distills a KB source into a topic tree (nodes with
+// parent pointers). Throws with a friendly message when no provider is configured.
+export interface MindNode {
+	id: string;
+	title: string;
+	summary: string;
+	parent: string | null;
+}
+export async function studioMindmap(canvas: string, source: string): Promise<MindNode[]> {
+	const { apiFetch } = await import("$lib/api");
+	const res = await apiFetch(`/api/studio/${encodeURIComponent(canvas)}/mindmap`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ source }),
+	});
+	const data = (await res.json().catch(() => ({}))) as { nodes?: MindNode[]; error?: string };
+	if (!res.ok) {
+		const msg =
+			data.error === "no_provider"
+				? "Set an AI provider key in Settings to generate a mind map."
+				: data.error === "parse" || data.error === "empty"
+					? "The model couldn't produce a mind map for this source."
+					: `Mind map failed (${res.status})`;
+		throw new Error(msg);
+	}
+	return data.nodes ?? [];
+}
+
+// Studio study set: flashcards + MCQs generated (and stored) from a KB source.
+export interface StudyItem {
+	id: string;
+	kind: "flashcard" | "mcq";
+	question: string;
+	answer: string;
+	choices: string[] | null;
+}
+
+async function studioReq(path: string, init?: RequestInit): Promise<Response> {
+	const { apiFetch } = await import("$lib/api");
+	return apiFetch(path, init);
+}
+
+export async function studioGenerate(canvas: string, source: string): Promise<StudyItem[]> {
+	const res = await studioReq(`/api/studio/${encodeURIComponent(canvas)}/generate`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ source }),
+	});
+	const data = (await res.json().catch(() => ({}))) as { items?: StudyItem[]; error?: string };
+	if (!res.ok) {
+		const msg =
+			data.error === "no_provider"
+				? "Set an AI provider key in Settings to generate study cards."
+				: data.error === "parse" || data.error === "empty"
+					? "The model couldn't produce study cards for this source."
+					: `Study generation failed (${res.status})`;
+		throw new Error(msg);
+	}
+	return data.items ?? [];
+}
+
+export async function studioReview(canvas: string): Promise<StudyItem[]> {
+	const res = await studioReq(`/api/studio/${encodeURIComponent(canvas)}/review`);
+	const data = (await res.json().catch(() => ({}))) as { items?: StudyItem[] };
+	return data.items ?? [];
+}
+
+export async function studioDeleteItem(canvas: string, id: string): Promise<void> {
+	await studioReq(`/api/studio/${encodeURIComponent(canvas)}/review/${encodeURIComponent(id)}`, {
+		method: "DELETE",
+	});
 }
 
 // ── Clean Up — semantic force-clustering ───────────────────────────────────

@@ -5,7 +5,7 @@
 	//  - text node → MarkdownBody view with highlights + textarea edit toggle
 	// Markdown/text edits save back to disk on desktop; docx is in-app only.
 	import { slide } from 'svelte/transition';
-	import { flow, setFilePreview, setCardText, type FileData, type TextData } from './store.svelte';
+	import { flow, setFilePreview, setCardText, currentCanvasId, type FileData, type TextData } from './store.svelte';
 	import { getFileBlob, hydrateFileBlobs, canUseFs, readFile, writeFile, openPath } from '$lib/files';
 	import { renderMarkdown } from '$lib/markdown';
 	import { loadHL, saveHL } from './highlights';
@@ -15,8 +15,61 @@
 	import { isDocxFile, isEditableFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
 	import { resizable } from '$lib/actions/resizable';
 
-	let { fileId, onclose, initialQuery = '', initialPage = 0 }:
-		{ fileId: string; onclose: () => void; initialQuery?: string; initialPage?: number } = $props();
+	let { fileId, onclose, onSplit, initialQuery = '', initialPage = 0 }:
+		{ fileId: string; onclose: () => void; onSplit?: (fileId: string) => void; initialQuery?: string; initialPage?: number } = $props();
+
+	// Mind map: distill this file's indexed content into a tree of linked cards.
+	let mapState = $state<'idle' | 'mapping'>('idle');
+	let mapError = $state('');
+	async function makeMindmap() {
+		if (mapState === 'mapping' || !file) return;
+		mapState = 'mapping';
+		mapError = '';
+		try {
+			const { studioMindmap } = await import('$lib/ai/client');
+			const nodes = await studioMindmap(currentCanvasId() || 'default', file.filename);
+			window.dispatchEvent(new CustomEvent('arbor:mindmap', { detail: { parentId: fileId, nodes } }));
+		} catch (err) {
+			mapError = err instanceof Error ? err.message : 'Mind map failed';
+		} finally {
+			mapState = 'idle';
+		}
+	}
+
+	// Study: generate flashcards + quizzes from this file's indexed content, then
+	// open the review deck (StudyOverlay listens for arbor:study).
+	let studyState = $state<'idle' | 'generating'>('idle');
+	let studyError = $state('');
+	async function makeStudy() {
+		if (studyState === 'generating' || !file) return;
+		studyState = 'generating';
+		studyError = '';
+		try {
+			const { studioGenerate } = await import('$lib/ai/client');
+			const items = await studioGenerate(currentCanvasId() || 'default', file.filename);
+			window.dispatchEvent(new CustomEvent('arbor:study', { detail: { items } }));
+		} catch (err) {
+			studyError = err instanceof Error ? err.message : 'Study generation failed';
+		} finally {
+			studyState = 'idle';
+		}
+	}
+
+	// Split-view picker: other openable nodes (files + text notes) to show beside this one.
+	let splitMenu = $state(false);
+	const splitTargets = $derived(
+		onSplit
+			? flow.nodes
+					.filter((n) => (n.type === 'file' || n.type === 'text') && n.id !== fileId)
+					.map((n) => ({
+						id: n.id,
+						label:
+							n.type === 'text'
+								? ((n.data as TextData).text?.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'Note')
+								: ((n.data as FileData).filename ?? 'File')
+					}))
+			: []
+	);
 
 	const node = $derived(flow.nodes.find((n) => n.id === fileId));
 	const isText = $derived(node?.type === 'text');
@@ -144,9 +197,36 @@
 				{/if}
 				<button onclick={openInOs} disabled={!file?.path || !canUseFs()} title={file?.path ? 'Open in default app' : 'Desktop only'}>Open file ↗</button>
 			{/if}
+			{#if onSplit && splitTargets.length}
+				<div class="split-wrap">
+					<button onclick={() => (splitMenu = !splitMenu)} title="Open a file beside this one" aria-label="Split view">⇆</button>
+					{#if splitMenu}
+						<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+						<div class="split-menu" onmouseleave={() => (splitMenu = false)}>
+							{#each splitTargets as t (t.id)}
+								<button class="split-item" onclick={() => { onSplit?.(t.id); splitMenu = false; }} title={t.label}>{t.label}</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/if}
+			{#if !isText && file?.status === 'ready'}
+				<button onclick={makeMindmap} disabled={mapState === 'mapping'} title="Generate a mind map from this document">
+					{mapState === 'mapping' ? 'Mapping…' : '🧠 Map'}
+				</button>
+				<button onclick={makeStudy} disabled={studyState === 'generating'} title="Generate flashcards + quizzes from this document">
+					{studyState === 'generating' ? 'Studying…' : '🎴 Study'}
+				</button>
+			{/if}
 			<button onclick={onclose} aria-label="Close">✕</button>
 		</div>
 	</header>
+	{#if mapError}
+		<div class="map-error" role="alert">{mapError} <button class="dismiss" onclick={() => (mapError = '')} aria-label="Dismiss">✕</button></div>
+	{/if}
+	{#if studyError}
+		<div class="map-error" role="alert">{studyError} <button class="dismiss" onclick={() => (studyError = '')} aria-label="Dismiss">✕</button></div>
+	{/if}
 
 	{#if !isPdfFile(file)}
 		<!-- ponytail: PDF has its own positional find (PdfViewer); FindBar for the rest.
@@ -204,6 +284,10 @@
 <style>
 	.panel {
 		position: relative;
+		/* Above the 48px window-drag strip (+layout .titlebar-drag, z-index 30),
+		   else the drag region eats clicks on the header buttons that sit in the
+		   top band (Map/Study/split/close). */
+		z-index: 40;
 		flex: none;
 		height: 100%;
 		display: flex;
@@ -259,6 +343,57 @@
 	.actions button:disabled {
 		opacity: 0.4;
 		cursor: default;
+	}
+	.map-error {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 6px var(--s-md);
+		font-size: 12px;
+		color: #b91c1c;
+		background: rgba(220, 38, 38, 0.08);
+		border-bottom: 1px solid var(--c-hairline);
+	}
+	.map-error .dismiss {
+		border: none;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+		padding: 0 4px;
+	}
+	.split-wrap {
+		position: relative;
+	}
+	.split-menu {
+		position: absolute;
+		right: 0;
+		top: calc(100% + 4px);
+		z-index: 20;
+		min-width: 180px;
+		max-width: 280px;
+		max-height: 320px;
+		overflow-y: auto;
+		background: var(--c-surface, #fff);
+		border: 1px solid var(--c-hairline);
+		border-radius: 10px;
+		box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+		padding: 4px;
+	}
+	.split-item {
+		display: block;
+		width: 100%;
+		text-align: left;
+		border: none !important;
+		background: transparent !important;
+		padding: 6px 8px !important;
+		border-radius: 6px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.split-item:hover {
+		background: var(--c-surface-soft, rgba(0,0,0,0.05)) !important;
 	}
 	.save {
 		background: var(--c-primary) !important;

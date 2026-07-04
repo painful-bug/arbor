@@ -177,6 +177,11 @@ import CardHandles from './CardHandles.svelte';
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+		/* Isolate each card's layout+paint so a streaming/hovered/resizing card can't
+		   invalidate siblings. (content-visibility was trialled here but removed — at
+		   this app's node counts it added WKWebView compositor churn on pan without the
+		   scale benefit; re-add gated by a large-canvas class if profiling shows gains.) */
+		contain: layout paint;
 		border-radius: var(--r-lg);
 		padding: var(--s-md);
 		border: 1px solid rgba(0, 0, 0, 0.06);

@@ -133,6 +133,8 @@ import CardHandles from './CardHandles.svelte';
 		border: 1px solid rgba(0, 0, 0, 0.06);
 		overflow: hidden;
 		cursor: pointer;
+		/* See CardNode.svelte: isolate paint. (content-visibility trialled + removed.) */
+		contain: layout paint;
 	}
 	/* Preview fills the entire card */
 	.preview {

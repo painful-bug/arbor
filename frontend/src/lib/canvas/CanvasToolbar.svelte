@@ -19,10 +19,10 @@
 		onRedo: () => void;
 		onKB: () => void;
 		onCleanUp: () => void;
-		onExport: (format: 'md' | 'canvas') => void;
+		onExport: (format: 'md' | 'canvas' | 'png' | 'pdf') => void;
 	} = $props();
 
-	function pickExport(format: 'md' | 'canvas') {
+	function pickExport(format: 'md' | 'canvas' | 'png' | 'pdf') {
 		showExport = false;
 		onExport(format);
 	}
@@ -140,6 +140,8 @@
 				<div class="spacing-pop export-pop">
 					<button class="export-item" onclick={() => pickExport('md')}>Markdown (.md)</button>
 					<button class="export-item" onclick={() => pickExport('canvas')}>Obsidian Canvas (.canvas)</button>
+					<button class="export-item" onclick={() => pickExport('png')}>Image (.png)</button>
+					<button class="export-item" onclick={() => pickExport('pdf')}>PDF (.pdf)</button>
 				</div>
 			{/if}
 		</div>

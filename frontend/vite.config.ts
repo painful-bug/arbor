@@ -13,6 +13,9 @@ export default defineConfig({
 			adapter: adapter({ fallback: "index.html" }),
 		}),
 	],
+	// Modern webview (WKWebView / WebView2 / WebKitGTK) — skip needless syntax
+	// down-transpilation and legacy polyfills for a smaller, faster-parsing bundle.
+	build: { target: "es2022" },
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

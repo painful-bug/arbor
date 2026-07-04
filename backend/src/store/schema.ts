@@ -28,3 +28,22 @@ export const blobMeta = sqliteTable("blob_meta", {
 	mime: text("mime").notNull(),
 	name: text("name").notNull(),
 });
+
+// Study items generated from a KB source: flashcards (q/a) and MCQs.
+// `choices` is a JSON array for kind='mcq', null for flashcards.
+// SM-2 scheduling columns (ease/intervalDays/reps/dueAt) feed Phase 5c; a plain
+// review loop ignores them.
+export const reviewItems = sqliteTable("review_items", {
+	id: text("id").primaryKey(),
+	canvas: text("canvas").notNull(),
+	source: text("source").notNull(),
+	kind: text("kind").notNull(), // 'flashcard' | 'mcq'
+	question: text("question").notNull(),
+	answer: text("answer").notNull(),
+	choices: text("choices"), // JSON string[] for mcq, null for flashcard
+	createdAt: integer("created_at").notNull(),
+	ease: integer("ease").notNull().default(250), // SM-2 ease ×100 (2.5)
+	intervalDays: integer("interval_days").notNull().default(0),
+	reps: integer("reps").notNull().default(0),
+	dueAt: integer("due_at").notNull(),
+});

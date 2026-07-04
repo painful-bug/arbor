@@ -36,6 +36,20 @@ sqlite.exec(`
 		mime TEXT NOT NULL,
 		name TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS review_items (
+		id TEXT PRIMARY KEY,
+		canvas TEXT NOT NULL,
+		source TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		question TEXT NOT NULL,
+		answer TEXT NOT NULL,
+		choices TEXT,
+		created_at INTEGER NOT NULL,
+		ease INTEGER NOT NULL DEFAULT 250,
+		interval_days INTEGER NOT NULL DEFAULT 0,
+		reps INTEGER NOT NULL DEFAULT 0,
+		due_at INTEGER NOT NULL
+	);
 `);
 
 export const db = drizzle(sqlite, { schema });

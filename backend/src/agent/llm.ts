@@ -1,5 +1,6 @@
 // One-shot LLM text completion — the single home for provider request/response
 // shapes (moved out of kb/contextualize.ts).
+import { LLM_TIMEOUT_MS } from "../config.ts";
 import { badRequest } from "../errors.ts";
 import { fetchJson } from "../http.ts";
 
@@ -42,6 +43,7 @@ export async function completeText(req: CompleteReq): Promise<string> {
 					messages: [{ role: "user", content: req.prompt }],
 				}),
 			},
+			LLM_TIMEOUT_MS,
 		);
 		return data.content.find((c) => c.type === "text")?.text ?? "";
 	}
@@ -57,7 +59,7 @@ export async function completeText(req: CompleteReq): Promise<string> {
 				...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
 				contents: [{ parts: [{ text: req.prompt }] }],
 			}),
-		});
+		}, LLM_TIMEOUT_MS);
 		return data.candidates[0]?.content?.parts?.find((p) => p.text)?.text ?? "";
 	}
 
@@ -79,6 +81,7 @@ export async function completeText(req: CompleteReq): Promise<string> {
 				],
 			}),
 		},
+		LLM_TIMEOUT_MS,
 	);
 	return data.choices[0]?.message?.content ?? "";
 }

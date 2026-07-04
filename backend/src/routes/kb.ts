@@ -1,7 +1,9 @@
 import { Hono } from "hono";
+import { badRequest } from "../errors.ts";
 import {
 	addFile,
 	clearCanvas,
+	clipUrl,
 	contentsOf,
 	relateNode,
 	removeFile,
@@ -38,6 +40,25 @@ kbRoutes.get("/:canvas/search", async (c) => {
 	}
 	const results = await search(canvas, q, k);
 	return c.json({ results });
+});
+
+// Web clipper: fetch + extract + index a URL; frontend drops the returned text as a card.
+kbRoutes.post("/:canvas/clip", async (c) => {
+	const canvas = c.req.param("canvas");
+	const { url } = (await c.req.json().catch(() => ({}))) as { url?: string };
+	let u: URL;
+	try {
+		u = new URL(url ?? "");
+	} catch {
+		throw badRequest("invalid url");
+	}
+	if (u.protocol !== "http:" && u.protocol !== "https:") throw badRequest("only http(s) urls");
+	try {
+		return c.json(await clipUrl(canvas, u.href));
+	} catch (err) {
+		log.error("kb", `clip error [${u.href}]`, err);
+		return c.json({ error: String((err as Error)?.message ?? err) }, 502);
+	}
 });
 
 kbRoutes.post("/:canvas/relate", async (c) => {

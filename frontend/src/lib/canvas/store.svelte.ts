@@ -71,6 +71,8 @@ export const ui = $state<{ view: "canvas" | "library"; sidebarExpanded: boolean 
 });
 let currentId = "";
 export const currentCanvasId = () => currentId;
+export const currentCanvasName = () =>
+	library.list.find((c) => c.id === currentId)?.name ?? "";
 
 const kbSync = createKbSync({
 	canvas: () => currentId || "default",
@@ -466,6 +468,72 @@ export function addTextCard(position: XYPosition, text = ""): string {
 	const data: TextData = { text, block: nextBlock() };
 	flow.nodes = [...flow.nodes, buildCardNode({ kind: "text", id, position, data })];
 	return id;
+}
+
+// Highlight → Note: spawn a text note beside a PDF's file node, carrying the source
+// passage + page so it can jump back, and draw the parent→note link. Returns note id.
+export function addSourceNote(fileId: string, page: number, text: string): string {
+	const src = flow.nodes.find((n) => n.id === fileId);
+	const base = src?.position ?? { x: 400, y: 300 };
+	const position = { x: base.x + (src?.width ?? 220) + 60, y: base.y };
+	const id = nextNodeId();
+	const data: TextData = { text, block: nextBlock(), sourceRef: { fileId, page } };
+	flow.nodes = [...flow.nodes, buildCardNode({ kind: "text", id, position, data })];
+	flow.edges = [...flow.edges, childEdge(fileId, id)];
+	return id;
+}
+
+// Mind map (Studio 4a): lay out an LLM topic tree as linked text cards in a radial
+// bloom to the right of the source file, and draw parent→child edges. Returns the
+// root card id. `nodes` is the flattened tree (parent=null for the root).
+// ponytail: 2-level radial bloom; deeper levels reuse their parent's angle. Fine for
+// the 3-6 branch × 2-5 child maps the generator produces; revisit if trees get deep.
+export function addMindmap(
+	fileId: string,
+	nodes: { id: string; title: string; summary: string; parent: string | null }[],
+): string | null {
+	const root = nodes.find((n) => n.parent === null);
+	if (!root) return null;
+	const src = flow.nodes.find((n) => n.id === fileId);
+	const base = src?.position ?? { x: 400, y: 300 };
+	const cx = base.x + (src?.width ?? 220) + 360;
+	const cy = base.y;
+	const R1 = 360; // root → main-branch radius
+	const R2 = 700; // root → leaf radius
+	const TAU = Math.PI * 2;
+	const childrenOf = (pid: string) => nodes.filter((n) => n.parent === pid);
+
+	const pos = new Map<string, XYPosition>();
+	pos.set(root.id, { x: cx, y: cy });
+	const mains = childrenOf(root.id);
+	mains.forEach((m, i) => {
+		const ang = (i / Math.max(mains.length, 1)) * TAU - Math.PI / 2;
+		pos.set(m.id, { x: cx + R1 * Math.cos(ang), y: cy + R1 * Math.sin(ang) });
+		const subs = childrenOf(m.id);
+		subs.forEach((s, j) => {
+			const sa = ang + (j - (subs.length - 1) / 2) * 0.4;
+			pos.set(s.id, { x: cx + R2 * Math.cos(sa), y: cy + R2 * Math.sin(sa) });
+		});
+	});
+
+	const idMap = new Map<string, string>();
+	const newNodes: Node[] = [];
+	for (const n of nodes) {
+		const id = nextNodeId();
+		idMap.set(n.id, id);
+		const text = n.summary ? `**${n.title}**\n\n${n.summary}` : `**${n.title}**`;
+		const data: TextData = { text, block: nextBlock() };
+		newNodes.push(buildCardNode({ kind: "text", id, position: pos.get(n.id) ?? { x: cx, y: cy }, data }));
+	}
+	const newEdges: Edge[] = [];
+	for (const n of nodes) {
+		if (n.parent && idMap.has(n.parent)) {
+			newEdges.push(childEdge(idMap.get(n.parent)!, idMap.get(n.id)!));
+		}
+	}
+	flow.nodes = [...flow.nodes, ...newNodes];
+	flow.edges = [...flow.edges, ...newEdges];
+	return idMap.get(root.id) ?? null;
 }
 
 export function setFileStatus(id: string, status: FileData["status"]): void {

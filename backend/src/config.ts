@@ -44,5 +44,9 @@ export const HEARTBEAT_MS = 25_000;
 /** Default timeout for outbound HTTP requests (see http.ts). */
 export const HTTP_TIMEOUT_MS = 15_000;
 
-/** Bun.serve idleTimeout in seconds (wired up in Phase 5). */
-export const SERVER_IDLE_TIMEOUT_S = 120;
+/** Timeout for one-shot LLM completions — generation is far slower than a plain fetch. */
+export const LLM_TIMEOUT_MS = 120_000;
+
+/** Bun.serve idleTimeout in seconds. Above LLM_TIMEOUT_MS so a slow completion
+ *  times out upstream (clean 504) rather than getting its socket dropped. */
+export const SERVER_IDLE_TIMEOUT_S = 180;

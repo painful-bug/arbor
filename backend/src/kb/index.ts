@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { extract, toMarkdownPages } from "@arbor/mosaic";
 import { RERANK_STRONG as STRONG, RERANK_WEAK as WEAK } from "../config.ts";
+import { fetchText } from "../http.ts";
 import { log } from "../log.ts";
 import { MODELS_DIR } from "../paths.ts";
 import { chunkPages } from "./chunk.ts";
@@ -172,6 +173,37 @@ export async function removeFile(canvas: string, filename: string): Promise<void
 
 export async function clearCanvas(canvas: string): Promise<void> {
 	await clear(canvas);
+}
+
+// Web clipper: fetch a page, extract readable text via mosaic, index it into the
+// canvas KB. Returns the title + extracted markdown (for an offline card the
+// frontend drops on the canvas) + chunk count. The page is now offline + searchable.
+export async function clipUrl(
+	canvas: string,
+	url: string,
+): Promise<{ title: string; text: string; chunks: number }> {
+	const raw = await fetchText(url);
+	const title = (
+		/<title[^>]*>([^<]*)<\/title>/i.exec(raw)?.[1] ?? new URL(url).hostname
+	).trim();
+	// Drop script/style blocks so their contents don't pollute the indexed text.
+	const html = raw
+		.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+		.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
+	const doc = await extract(new TextEncoder().encode(html), {
+		filename: `${title}.html`,
+		mime: "text/html",
+		modelDir: MODELS_DIR,
+		ocr: { cloudOcrImage },
+	});
+	const text = toMarkdownPages(doc)
+		.map((p) => p.text)
+		.join("\n\n")
+		.trim();
+	// Index the readable text as the source (cheap plain re-extract; keeps the card
+	// content and the KB content identical). Source key = the page title.
+	const chunks = await addFile(canvas, title, "text/plain", new TextEncoder().encode(text));
+	return { title, text, chunks };
 }
 
 export async function readSource(canvas: string, source: string): Promise<string[]> {

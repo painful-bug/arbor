@@ -2,7 +2,7 @@
 	// Self-contained PDF viewer with toolbar: fit modes, zoom, page nav, highlight
 	// tool + color picker, search, and highlights persisted inside the canvas doc.
 	import { tick } from 'svelte';
-	import { flow, currentCanvasId, setFileHighlights, type PdfHL } from './store.svelte';
+	import { flow, currentCanvasId, setFileHighlights, addSourceNote, type PdfHL } from './store.svelte';
 	import { kbSearchHits } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
 
@@ -46,8 +46,9 @@
 		((flow.nodes.find((n) => n.id === fileId)?.data as { filename?: string })?.filename) ?? blob?.name ?? ''
 	);
 
-	// Send-to-chat context popup
+	// Send-to-chat / make-note context popup
 	let selectionText = $state('');
+	let selPage = $state(0); // 1-based page the selection sits on (0 = unknown)
 	let selPopup = $state<{ x: number; y: number } | null>(null);
 
 	// Highlights from canvas store
@@ -56,6 +57,11 @@
 	);
 	let highlights = $state<PdfHL[]>([]);
 	$effect(() => { highlights = [...nodeHighlights]; });
+
+	// Sticky-comment editor: clicking a highlight (outside the highlight tool) opens
+	// this popover to view/add a note on that highlight.
+	let commentPopup = $state<{ idx: number; x: number; y: number } | null>(null);
+	let commentDraft = $state('');
 
 	// ── Container sizing ────────────────────────────────────────────────────────
 	let containerW = $state(0);
@@ -157,7 +163,10 @@
 		if (base && (Math.abs(base.w - vp1.width) > 1 || Math.abs(base.h - vp1.height) > 1)) {
 			baseSizes[i] = { w: vp1.width, h: vp1.height };
 		}
-		const dpr = window.devicePixelRatio || 1;
+		// Cap backing resolution: full DPR (2× on retina) makes a fit-width page a
+		// ~1200×1600 bitmap (~7.7 MB) that the WKWebView compositor must upload on open
+		// — the dominant cost of opening a PDF. 1.5× stays crisp at typical zoom.
+		const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 		// Logical viewport drives CSS dimensions and TextLayer span positions
 		const viewport = page.getViewport({ scale: logicalScale });
 
@@ -325,7 +334,7 @@
 					freePage(i);
 				}
 			}
-		}, { root: pagesEl, rootMargin: '100% 0px' });
+		}, { root: pagesEl, rootMargin: '200px 0px' });
 		for (const el of pagesEl.querySelectorAll('[data-page]')) io.observe(el);
 		return () => { io.disconnect(); visiblePages.clear(); };
 	});
@@ -361,12 +370,20 @@
 		const sel = window.getSelection();
 		const txt = sel?.toString().trim() ?? '';
 
-		// Selection popup for send-to-chat (always, regardless of tool)
+		// Selection popup for send-to-chat / make-note (always, regardless of tool)
 		if (txt) {
 			selectionText = txt;
 			const r = sel!.getRangeAt(0).getBoundingClientRect();
 			// Position popup above the selection, relative to viewport
 			selPopup = { x: r.left + r.width / 2, y: r.top - 8 };
+			// Which page does the selection midpoint land on? (1-based; 0 = unknown)
+			const mx = r.left + r.width / 2;
+			const my = r.top + r.height / 2;
+			const wrap = [...(pagesEl?.querySelectorAll('[data-page]') ?? [])].find((p) => {
+				const b = p.getBoundingClientRect();
+				return mx >= b.left && mx <= b.right && my >= b.top && my <= b.bottom;
+			}) as HTMLElement | undefined;
+			selPage = wrap ? Number(wrap.dataset.page) + 1 : 0;
 		} else {
 			selPopup = null;
 		}
@@ -403,10 +420,32 @@
 		}
 	}
 
-	function removeHighlight(idx: number) {
-		if (tool !== 'highlight') return;
-		highlights = highlights.filter((_, i) => i !== idx);
+	// Click a highlight → open its editor (add/read a note, or delete). In the
+	// highlight tool every highlight is clickable; outside it, only noted ones are
+	// (note-less highlights stay passive so text underneath stays selectable).
+	function onHighlightClick(e: MouseEvent, h: PdfHL) {
+		const idx = highlights.indexOf(h);
+		if (idx < 0) return;
+		e.stopPropagation();
+		commentDraft = h.note ?? '';
+		commentPopup = { idx, x: e.clientX, y: e.clientY - 8 };
+	}
+
+	function deleteHighlight() {
+		if (!commentPopup) return;
+		highlights = highlights.filter((_, i) => i !== commentPopup!.idx);
 		setFileHighlights(fileId, highlights);
+		commentPopup = null;
+	}
+
+	function saveComment() {
+		if (!commentPopup) return;
+		const note = commentDraft.trim();
+		highlights = highlights.map((h, i) =>
+			i === commentPopup!.idx ? { ...h, note: note || undefined } : h,
+		);
+		setFileHighlights(fileId, highlights);
+		commentPopup = null;
 	}
 
 	function clearHighlights() {
@@ -421,6 +460,13 @@
 		window.dispatchEvent(new CustomEvent('arbor:branch', {
 			detail: { x: pos.x + 480, y: pos.y, parentId: fileId, quote: text }
 		}));
+		window.getSelection()?.removeAllRanges();
+		selPopup = null;
+	}
+
+	// Highlight → Note: turn the selection into a persistent, backlinked note card.
+	function makeNote(text: string) {
+		addSourceNote(fileId, selPage, text);
 		window.getSelection()?.removeAllRanges();
 		selPopup = null;
 	}
@@ -575,9 +621,10 @@
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<div
 						class="hl"
+						class:has-note={h.note}
 						style="left:{h.x*100}%;top:{h.y*100}%;width:{h.w*100}%;height:{h.h*100}%;background:{h.color}"
-						onclick={() => removeHighlight(highlights.indexOf(h))}
-						title={tool === 'highlight' ? 'Click to remove' : undefined}
+						onclick={(e) => onHighlightClick(e, h)}
+						title={h.note ?? (tool === 'highlight' ? 'Click to note or delete' : '')}
 					></div>
 				{/each}
 				<!-- Search hits -->
@@ -604,6 +651,32 @@
 			onmousedown={(e) => e.preventDefault()}
 		>
 			<button onclick={() => sendToChat(selectionText)}>↗ Send to chat</button>
+			<button onclick={() => makeNote(selectionText)}>✎ Note</button>
+		</div>
+	{/if}
+
+	<!-- Highlight comment editor -->
+	{#if commentPopup}
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div
+			class="comment-popup"
+			style="left:{commentPopup.x}px;top:{commentPopup.y}px"
+			onmousedown={(e) => e.stopPropagation()}
+			onclick={(e) => e.stopPropagation()}
+		>
+			<!-- svelte-ignore a11y_autofocus -->
+			<textarea
+				bind:value={commentDraft}
+				placeholder="Add a note…"
+				rows="3"
+				autofocus
+			></textarea>
+			<div class="comment-actions">
+				<button class="danger" onclick={deleteHighlight} title="Delete highlight">Delete</button>
+				<span class="spacer"></span>
+				<button onclick={() => (commentPopup = null)}>Cancel</button>
+				<button class="primary" onclick={saveComment}>Save</button>
+			</div>
 		</div>
 	{/if}
 </div>
@@ -770,13 +843,28 @@
 		pointer-events: none;
 		mix-blend-mode: multiply;
 	}
-	.highlight-mode .hl {
+	.highlight-mode .hl,
+	.hl.has-note {
 		pointer-events: auto;
 		cursor: pointer;
 	}
-	.highlight-mode .hl:hover {
+	.highlight-mode .hl:hover,
+	.hl.has-note:hover {
 		outline: 2px solid rgba(0,0,0,0.35);
 		outline-offset: 1px;
+	}
+	/* Dog-ear marker so noted highlights are visually distinct from plain ones. */
+	.hl.has-note::after {
+		content: '';
+		position: absolute;
+		top: -3px;
+		right: -3px;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #2563eb;
+		border: 1px solid #fff;
+		pointer-events: none;
 	}
 
 	/* Search hit overlay */
@@ -813,5 +901,56 @@
 		cursor: pointer;
 		white-space: nowrap;
 		box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+	}
+
+	/* Highlight comment editor */
+	.comment-popup {
+		position: fixed;
+		transform: translate(-50%, -100%);
+		z-index: 999;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		width: 220px;
+		padding: 8px;
+		background: var(--c-surface, #fff);
+		border: 1px solid var(--c-hairline, rgba(0,0,0,0.15));
+		border-radius: 10px;
+		box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+	}
+	.comment-popup textarea {
+		width: 100%;
+		box-sizing: border-box;
+		resize: vertical;
+		border: 1px solid var(--c-hairline, rgba(0,0,0,0.15));
+		border-radius: 6px;
+		padding: 6px;
+		font: inherit;
+		font-size: 12px;
+		background: var(--c-canvas, #fff);
+		color: var(--c-ink);
+	}
+	.comment-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.comment-actions .spacer { flex: 1; }
+	.comment-actions button {
+		border: 1px solid var(--c-hairline, rgba(0,0,0,0.15));
+		background: var(--c-surface-soft, #fff);
+		border-radius: 7px;
+		padding: 4px 10px;
+		font-size: 12px;
+		cursor: pointer;
+		color: var(--c-ink);
+	}
+	.comment-actions button.primary {
+		background: var(--c-primary, #3b82f6);
+		color: var(--c-on-primary, #fff);
+		border-color: transparent;
+	}
+	.comment-actions button.danger {
+		color: #dc2626;
 	}
 </style>

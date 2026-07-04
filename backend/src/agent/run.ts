@@ -42,6 +42,7 @@ export interface AgentEvent {
 	args?: unknown;
 	ok?: boolean;
 	detail?: string;
+	sources?: { source: string; page?: number }[]; // KB search hits, for click-through citations
 	provider?: string; // set on provider_switch: the rung being switched to
 	model?: string;
 }
@@ -70,6 +71,14 @@ function detailOf(result: unknown): string | undefined {
 	if (!text) return undefined;
 	const oneLine = text.replace(/\s+/g, " ").trim();
 	return oneLine.length > 200 ? `${oneLine.slice(0, 200)}…` : oneLine;
+}
+
+// Cited {source, page} pairs a KB-search tool attached to its result, so the UI can
+// render click-through citations. Other tools have no `details.sources` → undefined.
+function sourcesOf(result: unknown): { source: string; page?: number }[] | undefined {
+	const s = (result as { details?: { sources?: { source: string; page?: number }[] } })?.details
+		?.sources;
+	return s?.length ? s : undefined;
 }
 
 // Rewrite the provider's raw "400 ... input tokens ... context length" error into
@@ -235,6 +244,7 @@ export async function handlePrompt(
 							toolId: ev.toolCallId,
 							ok: !ev.isError,
 							detail: detailOf(ev.result),
+							sources: sourcesOf(ev.result),
 						});
 						break;
 				}

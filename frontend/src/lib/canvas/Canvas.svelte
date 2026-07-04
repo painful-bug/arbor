@@ -17,6 +17,7 @@
 	import ThemeToggle from '$lib/theme/ThemeToggle.svelte';
 	import GlobalSearchBar from './GlobalSearchBar.svelte';
 	import KbOverlay from './KbOverlay.svelte';
+	import StudyOverlay from './StudyOverlay.svelte';
 	import CommandPalette, { type Command } from './CommandPalette.svelte';
 	import { handleCanvasShortcut } from './shortcuts';
 	import {
@@ -36,6 +37,7 @@
 		addFileCard,
 		addWebCard,
 		addTextCard,
+		addMindmap,
 		setFileStatus,
 		setFilePreview,
 		cycleCardBlock,
@@ -66,7 +68,8 @@
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, type FileKind } from '$lib/files';
 	import { kbAdd, kbRemove } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
-	import { currentCanvasId } from './store.svelte';
+	import { currentCanvasId, currentCanvasName } from './store.svelte';
+	import { exportCanvasImage } from './export-image';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
 	import { scale } from 'svelte/transition';
@@ -188,11 +191,14 @@
 		} },
 		{ id: 'research', group: 'Create', icon: '🔬', label: 'Deep Research', run: startDeepResearch },
 		{ id: 'kb', group: 'Knowledge', icon: '⬡', label: 'Search knowledge base', run: openKB },
+		{ id: 'study', group: 'Knowledge', icon: '🎴', label: 'Study flashcards & quizzes', run: () => (studyOpen = true) },
 		{ id: 'undo', group: 'Edit', icon: '↩', label: 'Undo', hint: 'U', run: doUndo },
 		{ id: 'redo', group: 'Edit', icon: '↪', label: 'Redo', hint: 'R', run: doRedo },
 		{ id: 'synthesize', group: 'Edit', icon: '⨳', label: 'Synthesize selected cards', run: doSynthesize },
 		{ id: 'export-md', group: 'Export', icon: '⇩', label: 'Export as Markdown (.md)', run: () => exportCanvas('md') },
 		{ id: 'export-canvas', group: 'Export', icon: '⇩', label: 'Export as Obsidian Canvas (.canvas)', run: () => exportCanvas('canvas') },
+		{ id: 'export-png', group: 'Export', icon: '⇩', label: 'Export as Image (.png)', run: () => exportCanvas('png') },
+		{ id: 'export-pdf', group: 'Export', icon: '⇩', label: 'Export as PDF (.pdf)', run: () => exportCanvas('pdf') },
 		{ id: 'theme', group: 'App', icon: '◐', label: 'Toggle theme', run: () => {
 			settings.theme = settings.theme === 'dark' ? 'light' : 'dark';
 			persistSettings();
@@ -210,9 +216,20 @@
 
 	// Fetch the canvas export and trigger a browser download (WKWebView saves to
 	// ~/Downloads like any other anchor-download). No new Tauri command needed.
-	async function exportCanvas(format: 'md' | 'canvas') {
+	// png/pdf are rendered client-side from the xyflow viewport; md/canvas come from the backend.
+	async function exportCanvas(format: 'md' | 'canvas' | 'png' | 'pdf') {
 		const id = currentCanvasId();
 		if (!id) return;
+		if (format === 'png' || format === 'pdf') {
+			// Suspend viewport culling so off-screen nodes mount into the DOM before we
+			// rasterize (otherwise the image only captures currently-visible cards).
+			await animateViewport(async () => {
+				await tick();
+				await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+				await exportCanvasImage(format, currentCanvasName() || 'canvas');
+			});
+			return;
+		}
 		const res = await apiFetch(`/api/canvases/${id}/export?format=${format}`);
 		if (!res.ok) return;
 		const blob = await res.blob();
@@ -422,6 +439,41 @@
 		flow.selected = addWebCard(pos, url, { parentId: parent ? parentId : undefined });
 	}
 
+	// Web clipper result: the page is already fetched + indexed backend-side. Drop it
+	// as an offline markdown file card beside the source web card (file cards aren't
+	// re-indexed by kb-sync, so this doesn't duplicate what the backend already stored).
+	function onClippedEvent(e: Event) {
+		const { parentId, title, text } = (e as CustomEvent).detail as {
+			parentId: string;
+			title: string;
+			text: string;
+		};
+		const parent = flow.nodes.find((n) => n.id === parentId);
+		const pos = parent
+			? { x: parent.position.x + (parent.width ?? 560) + 48, y: parent.position.y }
+			: screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+		const id = addFileCard(pos, title, { mime: 'text/markdown', kind: 'markdown' });
+		putFileBlob(id, new TextEncoder().encode(text).buffer as ArrayBuffer, 'text/markdown', title);
+		setFilePreview(id, text.slice(0, 4000));
+		setFileStatus(id, 'ready');
+		scheduleAutolink(id);
+		flow.selected = id;
+	}
+
+	// Studio mind map: backend returned a topic tree for a source file → bloom it
+	// into linked cards beside that file, select the root, and pan to fit.
+	function onMindmapEvent(e: Event) {
+		const { parentId, nodes } = (e as CustomEvent).detail as {
+			parentId: string;
+			nodes: { id: string; title: string; summary: string; parent: string | null }[];
+		};
+		if (!nodes?.length) return;
+		pushHistory();
+		const rootId = addMindmap(parentId, nodes);
+		if (rootId) flow.selected = rootId;
+		void doFitView();
+	}
+
 	function onPaste(e: ClipboardEvent) {
 		const tag = (e.target as HTMLElement)?.tagName;
 		if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -459,10 +511,11 @@
 				if (searchState.open) closeSearch();
 				paletteOpen = false;
 				kbOpen = false;
+				studyOpen = false;
 			},
 			confirmBranch,
 			dismissBranch,
-			closeFile: () => (openFileId = null),
+			closeFile: () => { if (secondaryFileId) secondaryFileId = null; else openFileId = null; },
 			closeExpand: () => (expandId = null),
 			closeChatAndSidebar: () => {
 				chatOpen = false;
@@ -516,6 +569,8 @@
 		window.addEventListener('arbor:continue', onContinueEvent);
 		window.addEventListener('arbor:expand', onExpandEvent);
 		window.addEventListener('arbor:weburl', onWebUrlEvent);
+		window.addEventListener('arbor:clipped', onClippedEvent);
+		window.addEventListener('arbor:mindmap', onMindmapEvent);
 		window.addEventListener('arbor:openfile', onOpenFileEvent);
 		window.addEventListener('keydown', onKeydown);
 		document.addEventListener('mouseup', onDocSelect);
@@ -561,6 +616,8 @@
 			window.removeEventListener('arbor:continue', onContinueEvent);
 			window.removeEventListener('arbor:expand', onExpandEvent);
 			window.removeEventListener('arbor:weburl', onWebUrlEvent);
+			window.removeEventListener('arbor:clipped', onClippedEvent);
+			window.removeEventListener('arbor:mindmap', onMindmapEvent);
 			window.removeEventListener('arbor:openfile', onOpenFileEvent);
 			window.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('mouseup', onDocSelect);
@@ -621,9 +678,19 @@
 	}
 
 	let openFileId = $state<string | null>(null);
+	let secondaryFileId = $state<string | null>(null); // split-view right pane
 	let viewTextId = $state<string | null>(null);
 	function onOpenFileEvent(e: Event) {
-		openFileId = (e as CustomEvent).detail.fileId;
+		const id = (e as CustomEvent).detail.fileId;
+		if (id === secondaryFileId) secondaryFileId = null; // don't show the same file twice
+		openFileId = id;
+	}
+	// Closing the primary pane promotes the split pane into it (if any).
+	function closePrimaryFile() {
+		openFileId = secondaryFileId;
+		secondaryFileId = null;
+		previewQuery = '';
+		previewPage = 0;
 	}
 
 	// Shared tail of both drop paths (OS drag via Tauri + browser DataTransfer):
@@ -662,6 +729,9 @@
 	function openKB() {
 		kbOpen = true;
 	}
+
+	// ── Study deck overlay (opens on arbor:study or from the palette) ────────────
+	let studyOpen = $state(false);
 
 	function submit(text: string) {
 		if (!bubble) return;
@@ -796,7 +866,10 @@
 					{/if}
 
 				{#if openFileId}
-					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onclose={() => { openFileId = null; previewQuery = ''; previewPage = 0; }} />
+					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onSplit={(id) => (secondaryFileId = id)} onclose={closePrimaryFile} />
+				{/if}
+				{#if secondaryFileId}
+					<FilePanel fileId={secondaryFileId} onclose={() => (secondaryFileId = null)} />
 				{/if}
 
 				<!-- Chat panel tiles as third column; open state lifted here -->
@@ -814,6 +887,7 @@
 			<GlobalSearchBar />
 			<CommandPalette open={paletteOpen} {commands} onclose={() => (paletteOpen = false)} />
 			<KbOverlay bind:this={kbOverlayRef} bind:open={kbOpen} />
+			<StudyOverlay bind:open={studyOpen} />
 		</div>
 	{/if}
 </div>
@@ -1008,6 +1082,17 @@
 	/* Swoop animation for cards during Clean Up */
 	.wrap.cleanup-animating :global(.svelte-flow__node) {
 		transition: transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	/* Promote every node to its own GPU compositing layer. SvelteFlow positions nodes
+	   with an inline transform:translate but gives no layer hint, so a viewport *zoom*
+	   (scale) forces WKWebView to repaint every card's content each frame — the root
+	   cause of fit/zoom lag (Timeline: ~150ms composites, multi-frame jank on F, GPU
+	   re-raster stalls). will-change makes pan/zoom/fit/drag pure GPU transforms; layers
+	   re-raster crisp once motion settles. Bounded by culling above CULL_THRESHOLD, so
+	   the on-screen layer count (and thus GPU memory) can't grow without limit. */
+	.wrap :global(.svelte-flow__node) {
+		will-change: transform;
 	}
 
 	/* Remove SvelteFlow's default border/padding/background on group nodes */

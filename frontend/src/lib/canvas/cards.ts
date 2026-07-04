@@ -42,6 +42,7 @@ export interface PdfHL {
 	h: number;
 	color: string; // CSS color string, e.g. 'rgba(255,222,89,0.45)'
 	text?: string; // selected text content, used for Send-to-chat
+	note?: string; // optional sticky comment attached to this highlight
 }
 
 // File card on the canvas: shows a preview of a dropped file + indexing progress.
@@ -61,6 +62,9 @@ export interface FileData {
 export interface TextData {
 	text: string;
 	block: string;
+	// Set when the note was spawned from a PDF selection: the source file node + page,
+	// so the note can jump back to the exact passage (Highlight → Note backlink).
+	sourceRef?: { fileId: string; page: number };
 	[key: string]: unknown;
 }
 

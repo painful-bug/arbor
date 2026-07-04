@@ -11,6 +11,21 @@ const kbSchema = Type.Object({
 	}),
 });
 
+/** Distinct {source, page} pairs behind the returned chunks, so the UI can offer a
+ * click-through to each cited passage. Order preserved (best chunk first). */
+function citedSources(chunks: GradedSearch["chunks"]): { source: string; page?: number }[] {
+	const seen = new Set<string>();
+	const out: { source: string; page?: number }[] = [];
+	for (const c of chunks) {
+		if (!c.source) continue;
+		const k = `${c.source}#${c.page ?? ""}`;
+		if (seen.has(k)) continue;
+		seen.add(k);
+		out.push({ source: c.source, page: c.page });
+	}
+	return out;
+}
+
 /** KB hybrid-search AgentTool. `search` is bound to the active canvas by the caller. */
 export function knowledgeBaseSearchTool(
 	search: (query: string) => Promise<GradedSearch>,
@@ -21,7 +36,16 @@ export function knowledgeBaseSearchTool(
 		description:
 			"Search this canvas's indexed content (files, chats, notes) by topic. Returns top matching chunks reranked by a cross-encoder, plus a relevance verdict (strong/weak/none). Use when the user references uploaded material or asks about content that may be in the KB. Search by subject keywords, not filenames. Honor the verdict: on 'weak' rewrite the query once and retry, on 'none' fall back to web_search instead of forcing an answer.",
 		parameters: kbSchema,
-		async execute(_id, params): Promise<AgentToolResult<{ chunks: string[]; verdict: string }>> {
+		async execute(
+			_id,
+			params,
+		): Promise<
+			AgentToolResult<{
+				chunks: string[];
+				verdict: string;
+				sources: { source: string; page?: number }[];
+			}>
+		> {
 			const { chunks, verdict } = await search(params.query);
 			const texts = chunks.map((c) => c.text);
 			if (chunks.length === 0 || verdict === "none") {
@@ -32,7 +56,7 @@ export function knowledgeBaseSearchTool(
 							text: `Relevance verdict: none — the KB has no strong match for "${params.query}". Rewrite with broader subject terms and retry, or fall back to web_search. Do not answer from unrelated chunks.`,
 						},
 					],
-					details: { chunks: texts, verdict: "none" },
+					details: { chunks: texts, verdict: "none", sources: [] },
 				};
 			}
 			const body = chunks
@@ -47,7 +71,7 @@ export function knowledgeBaseSearchTool(
 					: "";
 			return {
 				content: [{ type: "text", text: `Relevance verdict: ${verdict}\n\n${body}${hint}` }],
-				details: { chunks: texts, verdict },
+				details: { chunks: texts, verdict, sources: citedSources(chunks) },
 			};
 		},
 	};

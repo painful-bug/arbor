@@ -193,6 +193,25 @@ export function rebuild(query: string): void {
 	ragDebounced(q);
 }
 
+// Open a file node's preview at a page (0 = top), reusing the deep-link plumbing that
+// PdfViewer already honors via initialPage/initialQuery. Shared by citation chips
+// (agent KB hits) and highlight-note backlinks.
+export function openSourceNode(nodeId: string, page = 0, query = ""): void {
+	deepLink.nodeId = nodeId;
+	deepLink.page = page;
+	deepLink.query = query;
+	deepLink.seq++;
+}
+
+// Same, but resolve a file node by its indexed source name (filename). No-op if the
+// source isn't on the current canvas as a file node.
+export function openSource(source: string, page = 0, query = ""): void {
+	const node = flow.nodes.find(
+		(n) => n.type === "file" && (n.data as Record<string, unknown>).filename === source,
+	);
+	if (node) openSourceNode(node.id, page, query);
+}
+
 export function openSearch(): void {
 	searchState.open = true;
 }

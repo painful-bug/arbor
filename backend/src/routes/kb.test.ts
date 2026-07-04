@@ -224,4 +224,22 @@ describe("KB routes", () => {
 		const off = await searchGraded(canvas, "quantum chromodynamics gluon confinement", 6);
 		expect(off.verdict).toBe("none");
 	}, 120_000);
+
+	it("POST /api/kb/:canvas/clip → 400 on invalid url", async () => {
+		const res = await api("/api/kb/clip-canvas/clip", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ url: "not a url" }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("POST /api/kb/:canvas/clip → 400 rejects non-http(s) schemes", async () => {
+		const res = await api("/api/kb/clip-canvas/clip", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ url: "file:///etc/passwd" }),
+		});
+		expect(res.status).toBe(400);
+	});
 });
