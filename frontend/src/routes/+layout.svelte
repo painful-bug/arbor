@@ -16,6 +16,27 @@
 		document.documentElement.setAttribute('data-theme', settings.theme);
 	});
 
+	// Override the native WKWebView/WebView2 right-click menu (Tauri v2 has no config
+	// flag for this — the supported path is preventDefault on the contextmenu event).
+	// Contextual: keep the native menu inside editable fields (copy/paste survives),
+	// show Arbor's custom menu on file cards, suppress it everywhere else.
+	onMount(() => {
+		function onContextMenu(e: MouseEvent) {
+			const t = e.target as HTMLElement | null;
+			if (t?.closest('input, textarea, [contenteditable="true"]')) return; // native menu
+			const node = t?.closest('.svelte-flow__node') as HTMLElement | null;
+			const fileId = node?.querySelector<HTMLElement>('[data-file-id]')?.dataset.fileId;
+			e.preventDefault();
+			if (fileId) {
+				window.dispatchEvent(
+					new CustomEvent('arbor:filemenu', { detail: { fileId, x: e.clientX, y: e.clientY } })
+				);
+			}
+		}
+		document.addEventListener('contextmenu', onContextMenu);
+		return () => document.removeEventListener('contextmenu', onContextMenu);
+	});
+
 	// Auto-update: register the notification click handler, check at startup, then
 	// re-check at most every 6h — gated by timestamp instead of a persistent timer,
 	// so a hidden/minimized window burns zero timer wakeups (see power.svelte.ts).

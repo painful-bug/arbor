@@ -42,14 +42,39 @@ function buildReq(
 	json?: boolean,
 ): CompleteReq | null {
 	if (provider === "anthropic") {
-		return { provider: "anthropic", model: model || "claude-haiku-4-5-20251001", apiKey, prompt, system, maxTokens, json };
+		return {
+			provider: "anthropic",
+			model: model || "claude-haiku-4-5-20251001",
+			apiKey,
+			prompt,
+			system,
+			maxTokens,
+			json,
+		};
 	}
 	if (provider === "google") {
-		return { provider: "google", model: model || "gemini-2.0-flash", apiKey, prompt, system, maxTokens, json };
+		return {
+			provider: "google",
+			model: model || "gemini-2.0-flash",
+			apiKey,
+			prompt,
+			system,
+			maxTokens,
+			json,
+		};
 	}
 	const baseUrl = OPENAI_COMPAT_BASES[provider];
 	if (!baseUrl) return null;
-	return { provider: "openai-compat", baseUrl, model: model || "gpt-4o-mini", apiKey, prompt, system, maxTokens, json };
+	return {
+		provider: "openai-compat",
+		baseUrl,
+		model: model || "gpt-4o-mini",
+		apiKey,
+		prompt,
+		system,
+		maxTokens,
+		json,
+	};
 }
 
 /**
@@ -70,7 +95,9 @@ export async function resolveCompletion(
 	}
 	const ladder = s.providerLadder?.length ? s.providerLadder : s.provider ? [s.provider] : [];
 	if (ladder.length === 0) {
-		log.warn("llm", "resolveCompletion: empty provider ladder", { settings: { provider: s.provider } });
+		log.warn("llm", "resolveCompletion: empty provider ladder", {
+			settings: { provider: s.provider },
+		});
 		return null;
 	}
 

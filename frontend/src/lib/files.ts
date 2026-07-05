@@ -160,7 +160,9 @@ export async function hydrateThumb(id: string, kind: FileKind): Promise<void> {
 			// Transient: bytes used for the thumbnail then dropped, not put in `blobs`.
 		}
 		const url =
-			kind === "pdf" ? await makePdfThumb(entry.bytes) : await makeImageThumb(entry.bytes, entry.mime);
+			kind === "pdf"
+				? await makePdfThumb(entry.bytes)
+				: await makeImageThumb(entry.bytes, entry.mime);
 		thumbs.set(k, url);
 		void apiFetch(thumbApiUrl(id), {
 			method: "PUT",

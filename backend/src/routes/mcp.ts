@@ -6,10 +6,11 @@
 // Tools are thin, read-only wrappers over functions that already exist in
 // kb/index.ts and the canvases table. Stateless streamable-HTTP: a fresh
 // server+transport is built per request (cheap; avoids cross-request stream state).
-import { eq } from "drizzle-orm";
-import { Hono } from "hono";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { eq } from "drizzle-orm";
+import { Hono } from "hono";
 import { z } from "zod";
 import { contentsOf, readSource, searchGraded } from "../kb/index.ts";
 import { db } from "../store/db.ts";

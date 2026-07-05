@@ -12,6 +12,7 @@ import CardHandles from './CardHandles.svelte';
 	import { markHTML } from './highlights';
 	import { animatedOnce } from './cards';
 	import { isDocxFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
+	import { FileText, FileType, File as FileIcon, FileImage } from '@lucide/svelte';
 
 	let { id, data, selected }: NodeProps = $props();
 	const isSelected = $derived(flow.selected === id || selected);
@@ -27,10 +28,10 @@ import CardHandles from './CardHandles.svelte';
 	const label = $derived(
 		file.status === 'indexing' ? 'Indexing…' : file.status === 'ready' ? 'Indexed' : 'Failed'
 	);
-	const icon = $derived(
-		({ pdf: '📕', markdown: '📝', text: '📄', docx: '📘', image: '🖼️', other: '📄' } as const)[
+	const Icon = $derived(
+		({ pdf: FileText, markdown: FileType, text: FileIcon, docx: FileText, image: FileImage, other: FileIcon })[
 			file.kind
-		] ?? '📄'
+		] ?? FileIcon
 	);
 
 	// Global-search highlight: <mark> the matched word in filename + preview when active,
@@ -127,6 +128,7 @@ import CardHandles from './CardHandles.svelte';
 	class="file"
 	class:node-glow-selected={isSelected}
 	style="background: var(--block-{file.block})"
+	data-file-id={id}
 	onclick={select}
 	ondblclick={open}
 	in:scale={animate ? { duration: 480, start: 0.6, opacity: 0, easing: backOut } : { duration: 0 }}
@@ -138,7 +140,7 @@ import CardHandles from './CardHandles.svelte';
 		{:else if thumb && isPdfFile(file)}
 			<img src={thumb} alt={file.filename} class="pdf-fill" />
 		{:else if isImageFile(file) || isPdfFile(file)}
-			<div class="center-icon">{icon}</div>
+			<div class="center-icon"><Icon size={44} strokeWidth={1.5} /></div>
 		{:else if previewHtml}
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<div class="doc">{@html previewHtml}</div>
@@ -146,7 +148,7 @@ import CardHandles from './CardHandles.svelte';
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<pre class="doc">{@html plainPreviewHtml}</pre>
 		{:else}
-			<div class="center-icon">{icon}</div>
+			<div class="center-icon"><Icon size={44} strokeWidth={1.5} /></div>
 		{/if}
 	</div>
 
@@ -157,7 +159,7 @@ import CardHandles from './CardHandles.svelte';
 
 	<!-- filename + status overlay bar at bottom -->
 	<div class="info-bar">
-		<span class="bar-icon">{icon}</span>
+		<span class="bar-icon"><Icon size={13} /></span>
 		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 		<span class="bar-name" title={file.filename}>{@html nameHtml}</span>
 		<span class="bar-status" class:busy={file.status === 'indexing'} class:err={file.status === 'error'}>

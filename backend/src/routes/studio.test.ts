@@ -27,7 +27,11 @@ describe("studio flatten", () => {
 		const nodes = flatten({
 			root: "Networking",
 			nodes: [
-				{ title: "Routing", summary: "how packets find paths", children: [{ title: "Distance Vector", summary: "Bellman-Ford" }] },
+				{
+					title: "Routing",
+					summary: "how packets find paths",
+					children: [{ title: "Distance Vector", summary: "Bellman-Ford" }],
+				},
 				{ title: "Switching", summary: "L2 forwarding" },
 			],
 		});
@@ -53,7 +57,12 @@ describe("studio parseStudySet", () => {
 			quiz: [{ q: "Which layer?", choices: ["A", "B", "C", "D"], answer: "B" }],
 		});
 		expect(items.length).toBe(2);
-		expect(items[0]).toEqual({ kind: "flashcard", question: "What is TCP?", answer: "A reliable transport protocol", choices: null });
+		expect(items[0]).toEqual({
+			kind: "flashcard",
+			question: "What is TCP?",
+			answer: "A reliable transport protocol",
+			choices: null,
+		});
 		expect(items[1].kind).toBe("mcq");
 		expect(items[1].choices).toEqual(["A", "B", "C", "D"]);
 	});
@@ -61,8 +70,12 @@ describe("studio parseStudySet", () => {
 		expect(parseStudySet({ flashcards: [{ q: "x" }, { a: "y" }] })).toEqual([]);
 	});
 	it("drops mcqs without exactly 4 choices or answer not among them", () => {
-		expect(parseStudySet({ quiz: [{ q: "x", choices: ["A", "B", "C"], answer: "A" }] })).toEqual([]);
-		expect(parseStudySet({ quiz: [{ q: "x", choices: ["A", "B", "C", "D"], answer: "Z" }] })).toEqual([]);
+		expect(parseStudySet({ quiz: [{ q: "x", choices: ["A", "B", "C"], answer: "A" }] })).toEqual(
+			[],
+		);
+		expect(
+			parseStudySet({ quiz: [{ q: "x", choices: ["A", "B", "C", "D"], answer: "Z" }] }),
+		).toEqual([]);
 	});
 });
 

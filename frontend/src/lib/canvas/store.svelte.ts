@@ -72,8 +72,7 @@ export const ui = $state<{ view: "canvas" | "library"; sidebarExpanded: boolean 
 });
 let currentId = "";
 export const currentCanvasId = () => currentId;
-export const currentCanvasName = () =>
-	library.list.find((c) => c.id === currentId)?.name ?? "";
+export const currentCanvasName = () => library.list.find((c) => c.id === currentId)?.name ?? "";
 
 const kbSync = createKbSync({
 	canvas: () => currentId || "default",
@@ -535,7 +534,9 @@ export function addMindmap(
 		const lp = local.get(n.id) ?? { x: 0, y: 0 };
 		const text = n.summary ? `**${n.title}**\n\n${n.summary}` : `**${n.title}**`;
 		const data: TextData = { text, block: nextBlock(), mindmapOf: fileId };
-		newNodes.push(buildCardNode({ kind: "text", id, position: { x: lp.x + t.x, y: lp.y + t.y }, data }));
+		newNodes.push(
+			buildCardNode({ kind: "text", id, position: { x: lp.x + t.x, y: lp.y + t.y }, data }),
+		);
 	}
 	const newEdges: Edge[] = [];
 	for (const n of nodes) {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bboxOf, bloomLocalLayout, findFreeOffset, type Rect, type TreeNode } from "./mindmap-layout";
+import {
+	bboxOf,
+	bloomLocalLayout,
+	findFreeOffset,
+	type Rect,
+	type TreeNode,
+} from "./mindmap-layout";
 
 const tree: TreeNode[] = [
 	{ id: "r", parent: null },

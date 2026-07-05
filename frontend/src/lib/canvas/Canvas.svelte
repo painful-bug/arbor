@@ -63,32 +63,32 @@
 	} from './store.svelte';
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
+	import FileToolbar from './FileToolbar.svelte';
+	import CardContextMenu, { type MenuItem } from './CardContextMenu.svelte';
+	import ConfirmDialog from './ConfirmDialog.svelte';
+	import NoteNotifications from './NoteNotifications.svelte';
+	import { splitView } from './split-view.svelte';
+	import type { PaneController } from './pane-controller.svelte';
+	import {
+		FileText, Columns2, Brain, Layers, MessageSquare, X, Copy, Combine, Trash2,
+		Sparkles, Maximize, Search, Hand, MousePointer2, Type, Spline, Palette,
+		Plus, Microscope, Hexagon, Undo2, Redo2, Download, SunMoon, Settings
+	} from '@lucide/svelte';
 	import { apiFetch } from '$lib/api';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, type FileKind } from '$lib/files';
 	import { kbAdd, kbRemove } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
 	import { currentCanvasId, currentCanvasName } from './store.svelte';
-	import { studioToasts, dismissToast } from './studio-jobs.svelte';
+	import { studioToasts, dismissToast, runMindmap, runStudy } from './studio-jobs.svelte';
 	import { exportCanvasImage } from './export-image';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
 	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { swoop } from '$lib/theme/animations';
 	import { power } from '$lib/power.svelte';
-
-	// Swoop: spring scale + drop. Out = canvas falls away to the Library; in = a
-	// canvas springs back into view. Shared by both layers so they cross-fade.
-	function swoop(_node: Element) {
-		if (reducedMotion()) return { duration: 0 };
-		return {
-			duration: 460,
-			easing: backOut,
-			css: (t: number, u: number) =>
-				`transform: scale(${0.86 + 0.14 * t}) translateY(${u * 48}px); opacity: ${t}`
-		};
-	}
 
 	const { screenToFlowPosition, fitView, setCenter, getZoom } = useSvelteFlow();
 	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode, tag: UserTagCard };
@@ -176,35 +176,35 @@
 
 	// Command palette registry — Utilities pinned on top, then tools and actions.
 	const commands: Command[] = [
-		{ id: 'cleanup', group: 'Utilities', icon: '✦', label: 'Clean Up', hint: 'CC', run: () => doCleanUp() },
-		{ id: 'fit', group: 'Utilities', icon: '⊡', label: 'Fit to view', hint: 'F', run: doFitView },
-		{ id: 'search', group: 'Utilities', icon: '⌕', label: 'Search canvas', run: () => openSearch() },
-		{ id: 'tool-hand', group: 'Tools', icon: '✋', label: 'Hand tool', hint: 'H', run: () => { tool.active = 'hand'; tool.connectFrom = null; } },
-		{ id: 'tool-select', group: 'Tools', icon: '↖', label: 'Select tool', hint: 'V', run: () => { tool.active = 'select'; tool.connectFrom = null; } },
-		{ id: 'tool-text', group: 'Tools', icon: 'T', label: 'Text tool', hint: 'T', run: () => { tool.active = 'text'; } },
-		{ id: 'tool-duplicate', group: 'Tools', icon: '⧉', label: 'Duplicate tool', hint: 'D', run: () => { tool.active = 'duplicate'; } },
-		{ id: 'tool-connect', group: 'Tools', icon: '↗', label: 'Connect tool', hint: 'C', run: () => { tool.active = 'connect'; } },
-		{ id: 'tool-color', group: 'Tools', icon: '◐', label: 'Color tool', run: () => { tool.active = 'color'; } },
-		{ id: 'new-note', group: 'Create', icon: '＋', label: 'New note', run: () => {
+		{ id: 'cleanup', group: 'Utilities', icon: Sparkles, label: 'Clean Up', hint: 'CC', run: () => doCleanUp() },
+		{ id: 'fit', group: 'Utilities', icon: Maximize, label: 'Fit to view', hint: 'F', run: doFitView },
+		{ id: 'search', group: 'Utilities', icon: Search, label: 'Search canvas', run: () => openSearch() },
+		{ id: 'tool-hand', group: 'Tools', icon: Hand, label: 'Hand tool', hint: 'H', run: () => { tool.active = 'hand'; tool.connectFrom = null; } },
+		{ id: 'tool-select', group: 'Tools', icon: MousePointer2, label: 'Select tool', hint: 'V', run: () => { tool.active = 'select'; tool.connectFrom = null; } },
+		{ id: 'tool-text', group: 'Tools', icon: Type, label: 'Text tool', hint: 'T', run: () => { tool.active = 'text'; } },
+		{ id: 'tool-duplicate', group: 'Tools', icon: Copy, label: 'Duplicate tool', hint: 'D', run: () => { tool.active = 'duplicate'; } },
+		{ id: 'tool-connect', group: 'Tools', icon: Spline, label: 'Connect tool', hint: 'C', run: () => { tool.active = 'connect'; } },
+		{ id: 'tool-color', group: 'Tools', icon: Palette, label: 'Color tool', run: () => { tool.active = 'color'; } },
+		{ id: 'new-note', group: 'Create', icon: Plus, label: 'New note', run: () => {
 			const pos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 			tool.active = 'select';
 			addTextCard(pos);
 		} },
-		{ id: 'research', group: 'Create', icon: '🔬', label: 'Deep Research', run: startDeepResearch },
-		{ id: 'kb', group: 'Knowledge', icon: '⬡', label: 'Search knowledge base', run: openKB },
-		{ id: 'study', group: 'Knowledge', icon: '🎴', label: 'Study flashcards & quizzes', run: () => (studyOpen = true) },
-		{ id: 'undo', group: 'Edit', icon: '↩', label: 'Undo', hint: 'U', run: doUndo },
-		{ id: 'redo', group: 'Edit', icon: '↪', label: 'Redo', hint: 'R', run: doRedo },
-		{ id: 'synthesize', group: 'Edit', icon: '⨳', label: 'Synthesize selected cards', run: doSynthesize },
-		{ id: 'export-md', group: 'Export', icon: '⇩', label: 'Export as Markdown (.md)', run: () => exportCanvas('md') },
-		{ id: 'export-canvas', group: 'Export', icon: '⇩', label: 'Export as Obsidian Canvas (.canvas)', run: () => exportCanvas('canvas') },
-		{ id: 'export-png', group: 'Export', icon: '⇩', label: 'Export as Image (.png)', run: () => exportCanvas('png') },
-		{ id: 'export-pdf', group: 'Export', icon: '⇩', label: 'Export as PDF (.pdf)', run: () => exportCanvas('pdf') },
-		{ id: 'theme', group: 'App', icon: '◐', label: 'Toggle theme', run: () => {
+		{ id: 'research', group: 'Create', icon: Microscope, label: 'Deep Research', run: startDeepResearch },
+		{ id: 'kb', group: 'Knowledge', icon: Hexagon, label: 'Search knowledge base', run: openKB },
+		{ id: 'study', group: 'Knowledge', icon: Layers, label: 'Study flashcards & quizzes', run: () => (studyOpen = true) },
+		{ id: 'undo', group: 'Edit', icon: Undo2, label: 'Undo', hint: 'U', run: doUndo },
+		{ id: 'redo', group: 'Edit', icon: Redo2, label: 'Redo', hint: 'R', run: doRedo },
+		{ id: 'synthesize', group: 'Edit', icon: Combine, label: 'Synthesize selected cards', run: doSynthesize },
+		{ id: 'export-md', group: 'Export', icon: Download, label: 'Export as Markdown (.md)', run: () => exportCanvas('md') },
+		{ id: 'export-canvas', group: 'Export', icon: Download, label: 'Export as Obsidian Canvas (.canvas)', run: () => exportCanvas('canvas') },
+		{ id: 'export-png', group: 'Export', icon: Download, label: 'Export as Image (.png)', run: () => exportCanvas('png') },
+		{ id: 'export-pdf', group: 'Export', icon: Download, label: 'Export as PDF (.pdf)', run: () => exportCanvas('pdf') },
+		{ id: 'theme', group: 'App', icon: SunMoon, label: 'Toggle theme', run: () => {
 			settings.theme = settings.theme === 'dark' ? 'light' : 'dark';
 			persistSettings();
 		} },
-		{ id: 'settings', group: 'App', icon: '⚙', label: 'Open settings', hint: '⌘,', run: () => goto('/settings') }
+		{ id: 'settings', group: 'App', icon: Settings, label: 'Open settings', hint: '⌘,', run: () => goto('/settings') }
 	];
 
 	// Synthesize the currently selected cards (≥2) into a new synthesis card.
@@ -272,6 +272,22 @@
 
 	// Chat panel open state lifted here so the flex layout can include it.
 	let chatOpen = $state(false);
+	// Quote seeded into the canvas chat composer by "Send to chat" on a file selection.
+	let chatSeed = $state('');
+
+	// Send-to-chat from a file preview: open the side chat panel (canvas/session mode)
+	// seeded with the quote + file context. In split view the chat tiles beside the
+	// panes (they shrink responsively) instead of disrupting the split.
+	function onFileChatEvent(e: Event) {
+		const { filename, quote, page } = (e as CustomEvent).detail as {
+			filename: string;
+			quote: string;
+			page: number;
+		};
+		flow.selected = null; // canvas/session chat, not a card thread
+		chatSeed = `> "${quote}"\n\n— ${filename || 'file'}${page ? `, p.${page}` : ''}\n\n`;
+		chatOpen = true;
+	}
 
 	let animatingCleanup = $state(false);
 	let cleaningUp = $state(false);
@@ -533,7 +549,11 @@
 			},
 			confirmBranch,
 			dismissBranch,
-			closeFile: () => { if (secondaryFileId) secondaryFileId = null; else openFileId = null; },
+			closeFile: () => {
+				if (splitView.active) closeSplit();
+				else if (secondaryFileId) secondaryFileId = null;
+				else guardPrimary(() => (openFileId = null));
+			},
 			closeExpand: () => (expandId = null),
 			closeChatAndSidebar: () => {
 				chatOpen = false;
@@ -568,14 +588,13 @@
 		});
 	}
 
-	// Click on the empty canvas background collapses the chat panel + sidebar and
-	// closes the file preview. Clicks on a card are ignored so selecting a card
-	// (which retargets the chat) doesn't also close it. FilePanel is a sibling, so
-	// its clicks don't bubble here.
+	// Click on the empty canvas background collapses the sidebar. Clicks on a card
+	// are ignored so selecting a card (which retargets the chat) isn't disrupted.
+	// The file preview deliberately stays open — only ✕ / Escape close it.
 	function onWrapPointerDown(e: PointerEvent) {
 		const t = e.target as HTMLElement;
 		if (t?.closest('.svelte-flow__node') || t?.closest('.canvas-actions') || t?.closest('.topbar')) return;
-		if (openFileId) openFileId = null;
+		// Preview stays open on canvas clicks — only ✕ / Escape close it.
 		ui.sidebarExpanded = false;
 	}
 
@@ -591,6 +610,8 @@
 		window.addEventListener('arbor:mindmap', onMindmapEvent);
 		window.addEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 		window.addEventListener('arbor:openfile', onOpenFileEvent);
+		window.addEventListener('arbor:filemenu', onFileMenuEvent);
+		window.addEventListener('arbor:filechat', onFileChatEvent);
 		window.addEventListener('keydown', onKeydown);
 		document.addEventListener('mouseup', onDocSelect);
 		document.addEventListener('selectionchange', onSelectionChange);
@@ -639,6 +660,8 @@
 			window.removeEventListener('arbor:mindmap', onMindmapEvent);
 			window.removeEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 			window.removeEventListener('arbor:openfile', onOpenFileEvent);
+			window.removeEventListener('arbor:filemenu', onFileMenuEvent);
+			window.removeEventListener('arbor:filechat', onFileChatEvent);
 			window.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('mouseup', onDocSelect);
 			document.removeEventListener('selectionchange', onSelectionChange);
@@ -700,17 +723,88 @@
 	let openFileId = $state<string | null>(null);
 	let secondaryFileId = $state<string | null>(null); // split-view right pane
 	let viewTextId = $state<string | null>(null);
+
+	// ── SplitFileView: per-pane controllers + unsaved-edit guard ─────────────────
+	let primaryController = $state<PaneController>();
+	let secondaryController = $state<PaneController>();
+	let primaryDirty = $state(false);
+	let primarySave = $state<(() => Promise<void>)>();
+	const focusedController = $derived(
+		splitView.focused === 'secondary' ? secondaryController : primaryController
+	);
+	// Split is active only while both panes hold a file.
+	$effect(() => {
+		splitView.active = !!openFileId && !!secondaryFileId;
+		if (!secondaryFileId) splitView.focused = 'primary';
+	});
+
+	// Unsaved-edits confirm: set when a dirty primary pane is about to be replaced/closed.
+	let confirmReplace = $state<null | { proceed: () => void }>(null);
+	function guardPrimary(proceed: () => void) {
+		if (primaryDirty && openFileId) confirmReplace = { proceed };
+		else proceed();
+	}
+
 	function onOpenFileEvent(e: Event) {
 		const id = (e as CustomEvent).detail.fileId;
-		if (id === secondaryFileId) secondaryFileId = null; // don't show the same file twice
-		openFileId = id;
+		guardPrimary(() => {
+			if (id === secondaryFileId) secondaryFileId = null; // don't show the same file twice
+			openFileId = id;
+			primaryDirty = false;
+		});
 	}
 	// Closing the primary pane promotes the split pane into it (if any).
 	function closePrimaryFile() {
+		guardPrimary(() => {
+			openFileId = secondaryFileId;
+			secondaryFileId = null;
+			primaryDirty = false;
+			previewQuery = '';
+			previewPage = 0;
+		});
+	}
+
+	// ── Right-click context menu ─────────────────────────────────────────────────
+	let cardMenu = $state<{ fileId: string; x: number; y: number } | null>(null);
+	function onFileMenuEvent(e: Event) {
+		const { fileId, x, y } = (e as CustomEvent).detail;
+		cardMenu = { fileId, x, y };
+	}
+	const menuItems = $derived<MenuItem[]>([
+		{ id: 'open', label: 'Open', icon: FileText },
+		{ id: 'split', label: 'Open in Split View', icon: Columns2, disabled: !openFileId || openFileId === cardMenu?.fileId },
+		{ id: 'mindmap', label: 'Generate Mind Map', icon: Brain },
+		{ id: 'study', label: 'Generate Flash Cards', icon: Layers }
+	]);
+	function onMenuSelect(action: string) {
+		const id = cardMenu?.fileId;
+		if (!id) return;
+		const filename = (flow.nodes.find((n) => n.id === id)?.data as { filename?: string })?.filename ?? '';
+		if (action === 'open') onOpenFileEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
+		else if (action === 'split') openInSplit(id);
+		else if (action === 'mindmap') runMindmap(id, filename);
+		else if (action === 'study') runStudy(id, filename);
+	}
+	function openInSplit(id: string) {
+		if (!openFileId || id === openFileId) { openFileId = id; return; }
+		secondaryFileId = id;
+		splitView.focused = 'secondary';
+	}
+	function swapPanes() {
+		const a = openFileId;
 		openFileId = secondaryFileId;
+		secondaryFileId = a;
+	}
+	// X on the secondary pane closes it specifically (primary stays).
+	function closeSecondary() {
 		secondaryFileId = null;
-		previewQuery = '';
-		previewPage = 0;
+		splitView.focused = 'primary';
+	}
+	// "Close split view" toolbar button: exit split, keeping whichever pane is focused.
+	function closeSplit() {
+		if (splitView.focused === 'secondary') openFileId = secondaryFileId;
+		secondaryFileId = null;
+		splitView.focused = 'primary';
 	}
 
 	// Shared tail of both drop paths (OS drag via Tauri + browser DataTransfer):
@@ -782,6 +876,7 @@
 				<!-- capture phase: Svelte Flow's d3-zoom stops dblclick propagation in the bubble phase -->
 				<div
 					class="wrap"
+					class:split-hidden={splitView.active}
 					class:cleanup-animating={animatingCleanup}
 					class:cursor-default={tool.active === 'select'}
 					class:cursor-text={tool.active === 'text'}
@@ -848,11 +943,11 @@
 					{#if tool.active === 'select' && selectedNodes.length > 0}
 						<div class="selection-bar">
 							<span class="sel-count">{selectedNodes.length} selected</span>
-							<button class="sel-btn" onclick={duplicateSelected} title="Duplicate (D)">⧉ Duplicate</button>
+							<button class="sel-btn" onclick={duplicateSelected} title="Duplicate (D)"><Copy size={13} /> Duplicate</button>
 							{#if selectedNodes.length >= 2}
-								<button class="sel-btn" onclick={doSynthesize} title="Synthesize selected cards">⨳ Synthesize</button>
+								<button class="sel-btn" onclick={doSynthesize} title="Synthesize selected cards"><Combine size={13} /> Synthesize</button>
 							{/if}
-							<button class="sel-btn sel-btn--danger" onclick={deleteSelected} title="Delete (⌫)">⌫ Delete</button>
+							<button class="sel-btn sel-btn--danger" onclick={deleteSelected} title="Delete (⌫)"><Trash2 size={13} /> Delete</button>
 						</div>
 					{/if}
 
@@ -870,9 +965,7 @@
 								aria-label={chatOpen ? 'Close chat panel' : 'Open chat panel'}
 								title={chatOpen ? 'Close chat (⌘\\)' : 'Open chat (⌘\\)'}
 							>
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-									<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
+								<MessageSquare size={16} />
 							</button>
 						</div>
 					</div>
@@ -886,14 +979,45 @@
 					{/if}
 
 				{#if openFileId}
-					<FilePanel fileId={openFileId} initialQuery={previewQuery} initialPage={previewPage} onSplit={(id) => (secondaryFileId = id)} onclose={closePrimaryFile} />
+					<FilePanel
+						fileId={openFileId}
+						initialQuery={previewQuery}
+						initialPage={previewPage}
+						fill={!!secondaryFileId}
+						hideToolbar={!!secondaryFileId}
+						growAnim
+						focused={splitView.active && splitView.focused === 'primary'}
+						onfocuspane={() => (splitView.focused = 'primary')}
+						bind:controller={primaryController}
+						bind:dirty={primaryDirty}
+						bind:saveNow={primarySave}
+						onclose={closePrimaryFile}
+					/>
 				{/if}
 				{#if secondaryFileId}
-					<FilePanel fileId={secondaryFileId} onclose={() => (secondaryFileId = null)} />
+					<FilePanel
+						fileId={secondaryFileId}
+						fill={true}
+						hideToolbar={true}
+						focused={splitView.active && splitView.focused === 'secondary'}
+						onfocuspane={() => (splitView.focused = 'secondary')}
+						bind:controller={secondaryController}
+						onclose={closeSecondary}
+					/>
 				{/if}
 
-				<!-- Chat panel tiles as third column; open state lifted here -->
-				<CardChatPanel bind:open={chatOpen} />
+				<!-- SplitFileView top toolbar — pane-focused editing tools, top-centre. -->
+				{#if splitView.active && focusedController}
+					<div class="split-topbar">
+						<FileToolbar controller={focusedController} onSwap={swapPanes} onCloseSplit={closeSplit} />
+					</div>
+				{/if}
+
+				<!-- Chat panel tiles as third column; open state lifted here. In split it
+				     stays hidden unless opened (Send to chat), then tiles beside the panes. -->
+				<div class="chat-slot" class:split-hidden={splitView.active && !chatOpen}>
+					<CardChatPanel bind:open={chatOpen} seedText={chatSeed} />
+				</div>
 			</div>
 
 			{#if expandId}
@@ -909,13 +1033,31 @@
 			<KbOverlay bind:this={kbOverlayRef} bind:open={kbOpen} />
 			<StudyOverlay bind:open={studyOpen} />
 
+			<NoteNotifications />
+
+			{#if cardMenu}
+				<CardContextMenu x={cardMenu.x} y={cardMenu.y} items={menuItems} onselect={onMenuSelect} onclose={() => (cardMenu = null)} />
+			{/if}
+
+			{#if confirmReplace}
+				<ConfirmDialog
+					title="Save changes before switching?"
+					message="This file has unsaved edits."
+					confirmLabel="Save"
+					discardLabel="Discard"
+					onconfirm={async () => { await primarySave?.(); const p = confirmReplace?.proceed; confirmReplace = null; p?.(); }}
+					ondiscard={() => { primaryDirty = false; const p = confirmReplace?.proceed; confirmReplace = null; p?.(); }}
+					oncancel={() => (confirmReplace = null)}
+				/>
+			{/if}
+
 			<!-- Global studio-job errors — survive the file panel closing. -->
 			{#if studioToasts.length}
 				<div class="studio-toasts">
 					{#each studioToasts as toast (toast.id)}
 						<div class="studio-toast" role="alert" transition:scale={reducedMotion() ? { duration: 0 } : { duration: 180, start: 0.94, easing: backOut, opacity: 0 }}>
 							<span>{toast.message}</span>
-							<button class="studio-toast-x" onclick={() => dismissToast(toast.id)} aria-label="Dismiss">✕</button>
+							<button class="studio-toast-x" onclick={() => dismissToast(toast.id)} aria-label="Dismiss"><X size={13} /></button>
 						</div>
 					{/each}
 				</div>
@@ -944,6 +1086,27 @@
 		display: flex;
 		flex-direction: row;
 		overflow: hidden;
+		position: relative;
+	}
+	/* SplitFileView: canvas + chat collapse so the two file panes fill the screen. */
+	.split-hidden {
+		display: none !important;
+	}
+	/* Wrapper is layout-transparent so CardChatPanel keeps tiling as a flex column. */
+	.chat-slot {
+		display: contents;
+	}
+	.split-topbar {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 56px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
+		z-index: 50;
 	}
 	.wrap {
 		flex: 1;
@@ -1190,6 +1353,9 @@
 		padding-right: 4px;
 	}
 	.sel-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 		border: none;
 		background: rgba(255,255,255,0.12);
 		color: inherit;

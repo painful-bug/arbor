@@ -55,15 +55,19 @@ export async function completeText(req: CompleteReq): Promise<string> {
 		const base = req.baseUrl ?? "https://generativelanguage.googleapis.com";
 		const data = await fetchJson<{
 			candidates: { content: { parts: { text?: string }[] } }[];
-		}>(`${base}/v1beta/models/${req.model}:generateContent?key=${req.apiKey}`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
-				contents: [{ parts: [{ text: req.prompt }] }],
-				...(req.json ? { generationConfig: { responseMimeType: "application/json" } } : {}),
-			}),
-		}, LLM_TIMEOUT_MS);
+		}>(
+			`${base}/v1beta/models/${req.model}:generateContent?key=${req.apiKey}`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
+					contents: [{ parts: [{ text: req.prompt }] }],
+					...(req.json ? { generationConfig: { responseMimeType: "application/json" } } : {}),
+				}),
+			},
+			LLM_TIMEOUT_MS,
+		);
 		return data.candidates[0]?.content?.parts?.find((p) => p.text)?.text ?? "";
 	}
 

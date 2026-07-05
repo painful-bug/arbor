@@ -10,6 +10,7 @@ import CardHandles from './CardHandles.svelte';
 	import { searchHighlight, openSourceNode } from './globalSearch.svelte';
 	import { markHTML } from './highlights';
 	import { animatedOnce } from './cards';
+	import { CornerDownLeft } from '@lucide/svelte';
 
 	let { id, data, selected: nativeSelected }: NodeProps = $props();
 	const card = $derived(data as TextData);
@@ -92,7 +93,7 @@ import CardHandles from './CardHandles.svelte';
 					class="src-btn"
 					onclick={openSourcePassage}
 					title="Jump to source{card.sourceRef.page ? ` · page ${card.sourceRef.page}` : ''}"
-				>↩ Source{card.sourceRef.page ? ` p.${card.sourceRef.page}` : ''}</button>
+				><CornerDownLeft size={12} /> Source{card.sourceRef.page ? ` p.${card.sourceRef.page}` : ''}</button>
 			{/if}
 			<button class="edit-btn" onclick={openEditor} title="Edit in side panel">Edit</button>
 		</div>

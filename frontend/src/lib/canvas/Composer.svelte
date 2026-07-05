@@ -5,12 +5,14 @@
 		placeholder = '',
 		disabled = false,
 		focusOnMount = false,
+		initialText = '',
 		onsend,
 		onblurempty
 	}: {
 		placeholder?: string;
 		disabled?: boolean;
 		focusOnMount?: boolean;
+		initialText?: string;
 		onsend: (text: string) => void;
 		onblurempty?: () => void;
 	} = $props();
@@ -22,6 +24,18 @@
 
 	$effect(() => {
 		if (focusOnMount && el) el.focus();
+	});
+
+	// Seed the draft when the caller supplies new initial text (e.g. a quote sent from
+	// a file selection). Only fires when the seed actually changes, so it never fights
+	// the user's own typing.
+	let lastSeed = '';
+	$effect(() => {
+		if (initialText && initialText !== lastSeed) {
+			lastSeed = initialText;
+			draft = initialText;
+			el?.focus();
+		}
 	});
 
 	function send() {

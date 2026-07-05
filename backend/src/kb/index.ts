@@ -183,9 +183,7 @@ export async function clipUrl(
 	url: string,
 ): Promise<{ title: string; text: string; chunks: number }> {
 	const raw = await fetchText(url);
-	const title = (
-		/<title[^>]*>([^<]*)<\/title>/i.exec(raw)?.[1] ?? new URL(url).hostname
-	).trim();
+	const title = (/<title[^>]*>([^<]*)<\/title>/i.exec(raw)?.[1] ?? new URL(url).hostname).trim();
 	// Drop script/style blocks so their contents don't pollute the indexed text.
 	const html = raw
 		.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")

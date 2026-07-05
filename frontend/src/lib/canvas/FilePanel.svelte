@@ -4,7 +4,7 @@
 	//  - md/text/docx → contenteditable rich edit (bold/italic/underline)
 	//  - text node → MarkdownBody view with highlights + textarea edit toggle
 	// Markdown/text edits save back to disk on desktop; docx is in-app only.
-	import { slide } from 'svelte/transition';
+	import { splitSwoopIn } from '$lib/theme/animations';
 	import { flow, setFilePreview, setCardText, type FileData, type TextData } from './store.svelte';
 	import { isJobRunning, runMindmap, runStudy } from './studio-jobs.svelte';
 	import { getFileBlob, hydrateFileBlobs, canUseFs, readFile, writeFile, openPath } from '$lib/files';
@@ -15,9 +15,58 @@
 	import FindBar from './FindBar.svelte';
 	import { isDocxFile, isEditableFile, isImageFile, isMarkdownFile, isPdfFile } from './kinds';
 	import { resizable } from '$lib/actions/resizable';
+	import { createPaneController, type PaneController } from './pane-controller.svelte';
+	import { Pencil, ExternalLink, Brain, Layers, X, Bold, Italic, Underline } from '@lucide/svelte';
 
-	let { fileId, onclose, onSplit, initialQuery = '', initialPage = 0 }:
-		{ fileId: string; onclose: () => void; onSplit?: (fileId: string) => void; initialQuery?: string; initialPage?: number } = $props();
+	let {
+		fileId,
+		onclose,
+		initialQuery = '',
+		initialPage = 0,
+		hideToolbar = false,
+		fill = false,
+		focused = false,
+		growAnim = false,
+		onfocuspane,
+		controller = $bindable<PaneController | undefined>(undefined),
+		dirty = $bindable(false),
+		saveNow = $bindable<(() => Promise<void>) | undefined>(undefined),
+	}: {
+		fileId: string;
+		onclose: () => void;
+		initialQuery?: string;
+		initialPage?: number;
+		hideToolbar?: boolean;
+		fill?: boolean;
+		focused?: boolean;
+		growAnim?: boolean;
+		onfocuspane?: () => void;
+		controller?: PaneController;
+		dirty?: boolean;
+		saveNow?: () => Promise<void>;
+	} = $props();
+
+	// Per-pane control facade — PdfViewer / the rich-text editor publish into it so
+	// the SplitFileView top toolbar (FileToolbar) can drive this pane when focused.
+	controller ??= createPaneController();
+	saveNow = () => save();
+
+	// Primary pane only (growAnim): one-shot "grow to fill" / "restore" settle whenever
+	// the pane enters or leaves split (fill toggles). Skips the initial mount so a plain
+	// file open just uses its slide-in transition.
+	let settling = $state(false);
+	let fillSeen = false;
+	$effect(() => {
+		fill; // track
+		if (!growAnim) return;
+		if (!fillSeen) {
+			fillSeen = true;
+			return;
+		}
+		settling = true;
+		const t = setTimeout(() => (settling = false), 340);
+		return () => clearTimeout(t);
+	});
 
 	// Mind map / study: delegate to the module-level runner so the job survives this
 	// panel closing — it runs to success (dispatches to canvas) or failure (toast),
@@ -32,22 +81,6 @@
 		if (studying || !file) return;
 		runStudy(fileId, file.filename);
 	}
-
-	// Split-view picker: other openable nodes (files + text notes) to show beside this one.
-	let splitMenu = $state(false);
-	const splitTargets = $derived(
-		onSplit
-			? flow.nodes
-					.filter((n) => (n.type === 'file' || n.type === 'text') && n.id !== fileId)
-					.map((n) => ({
-						id: n.id,
-						label:
-							n.type === 'text'
-								? ((n.data as TextData).text?.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'Note')
-								: ((n.data as FileData).filename ?? 'File')
-					}))
-			: []
-	);
 
 	const node = $derived(flow.nodes.find((n) => n.id === fileId));
 	const isText = $derived(node?.type === 'text');
@@ -125,12 +158,13 @@
 	function exec(cmd: 'bold' | 'italic' | 'underline') {
 		editor?.focus();
 		document.execCommand(cmd); // ponytail: deprecated but adequate for B/I/U; swap for a real editor only if rich features grow
+		dirty = true;
 	}
 
 	// Save markdown/text back to disk. docx has no in-app writer (Open file instead).
 	async function save() {
 		if (!file || !editor) return;
-		if (isDocxFile(file)) return;
+		if (isDocxFile(file)) { dirty = false; return; }
 		const text = editor.innerText; // contenteditable → plain text (md is text)
 		setFilePreview(fileId, text.slice(0, 4000));
 		if (!file.path || !canUseFs()) {
@@ -141,10 +175,25 @@
 		try {
 			await writeFile(file.path, text);
 			saveState = 'saved';
+			dirty = false;
 		} catch {
 			saveState = 'error';
 		}
 	}
+
+	// Publish rich-text controls to the pane controller for the split-mode toolbar.
+	// PDFs are handled inside PdfViewer; images/other panes stay 'none'.
+	$effect(() => {
+		if (!controller || isPdfFile(file)) return;
+		if (editable) {
+			controller.kind = 'text';
+			controller.bold = () => exec('bold');
+			controller.italic = () => exec('italic');
+			controller.underline = () => exec('underline');
+		} else {
+			controller.kind = 'none';
+		}
+	});
 
 	async function openInOs() {
 		if (file?.path && canUseFs()) await openPath(file.path);
@@ -155,14 +204,26 @@
 	});
 </script>
 
-<aside class="panel" style="width: {width}px" transition:slide={{ axis: 'x', duration: 220 }}>
-	<div class="grip" use:resizable={{ min: 360, max: () => window.innerWidth - 120, getWidth: () => width, onwidth: (w) => (width = w) }} role="separator" aria-label="Resize" tabindex="-1"></div>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<aside
+	class="panel"
+	class:fill
+	class:focused
+	class:grow={settling}
+	style={fill ? '' : `width: ${width}px`}
+	transition:splitSwoopIn
+	onpointerdown={() => onfocuspane?.()}
+	onmouseenter={() => fill && onfocuspane?.()}
+>
+	{#if !fill}
+		<div class="grip" use:resizable={{ min: 360, max: () => window.innerWidth - 120, getWidth: () => width, onwidth: (w) => (width = w) }} role="separator" aria-label="Resize" tabindex="-1"></div>
+	{/if}
 	<header>
 		<span class="title" title={panelTitle}>{panelTitle}</span>
 		<div class="actions">
 			{#if isText}
-				<button onclick={() => (textEditing = !textEditing)}>
-					{textEditing ? 'Preview' : 'Edit ✎'}
+				<button class="icon-label" onclick={() => (textEditing = !textEditing)}>
+					{#if textEditing}Preview{:else}<Pencil size={13} /> Edit{/if}
 				</button>
 				{#if !textEditing && noteHL.length}
 					<button onclick={clearNoteHL}>Clear marks</button>
@@ -173,30 +234,17 @@
 						{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Save (desktop)' : 'Save'}
 					</button>
 				{/if}
-				<button onclick={openInOs} disabled={!file?.path || !canUseFs()} title={file?.path ? 'Open in default app' : 'Desktop only'}>Open file ↗</button>
-			{/if}
-			{#if onSplit && splitTargets.length}
-				<div class="split-wrap">
-					<button onclick={() => (splitMenu = !splitMenu)} title="Open a file beside this one" aria-label="Split view">⇆</button>
-					{#if splitMenu}
-						<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-						<div class="split-menu" onmouseleave={() => (splitMenu = false)}>
-							{#each splitTargets as t (t.id)}
-								<button class="split-item" onclick={() => { onSplit?.(t.id); splitMenu = false; }} title={t.label}>{t.label}</button>
-							{/each}
-						</div>
-					{/if}
-				</div>
+				<button class="icon-label" onclick={openInOs} disabled={!file?.path || !canUseFs()} title={file?.path ? 'Open in default app' : 'Desktop only'}><ExternalLink size={13} /> Open file</button>
 			{/if}
 			{#if !isText && file?.status === 'ready'}
-				<button onclick={makeMindmap} disabled={mapping} title="Generate a mind map from this document">
-					{mapping ? 'Mapping…' : '🧠 Map'}
+				<button class="icon-label" onclick={makeMindmap} disabled={mapping} title="Generate a mind map from this document">
+					<Brain size={13} /> {mapping ? 'Mapping…' : 'Map'}
 				</button>
-				<button onclick={makeStudy} disabled={studying} title="Generate flashcards + quizzes from this document">
-					{studying ? 'Studying…' : '🎴 Study'}
+				<button class="icon-label" onclick={makeStudy} disabled={studying} title="Generate flashcards + quizzes from this document">
+					<Layers size={13} /> {studying ? 'Studying…' : 'Study'}
 				</button>
 			{/if}
-			<button onclick={onclose} aria-label="Close">✕</button>
+			<button class="icon-btn" onclick={onclose} aria-label="Close"><X size={15} /></button>
 		</div>
 	</header>
 
@@ -219,7 +267,7 @@
 			></textarea>
 		{:else}
 			{#if !textData?.text?.trim()}
-				<div class="empty">Empty note — click <strong>Edit ✎</strong> to add content.</div>
+				<div class="empty">Empty note — click <strong>Edit</strong> to add content.</div>
 			{:else}
 				<div class="note-hint">Select text to highlight</div>
 				<MarkdownBody
@@ -234,15 +282,15 @@
 			{#if blobLoading}Loading "{file?.filename}"…{:else}File data not found — re-drop "{file?.filename}" to restore it.{/if}
 		</div>
 	{:else if isPdfFile(file)}
-		<PdfViewer fileId={fileId} blob={blob} {initialQuery} {initialPage} />
+		<PdfViewer fileId={fileId} blob={blob} {initialQuery} {initialPage} {controller} {hideToolbar} />
 	{:else if editable}
 		<div class="toolbar">
-			<button onclick={() => exec('bold')}><b>B</b></button>
-			<button onclick={() => exec('italic')}><i>I</i></button>
-			<button onclick={() => exec('underline')}><u>U</u></button>
+			<button onclick={() => exec('bold')} aria-label="Bold"><Bold size={15} /></button>
+			<button onclick={() => exec('italic')} aria-label="Italic"><Italic size={15} /></button>
+			<button onclick={() => exec('underline')} aria-label="Underline"><Underline size={15} /></button>
 			{#if isDocxFile(file)}<span class="note">docx — edits in-app only; use "Open file" to edit on disk</span>{/if}
 		</div>
-		<div class="editor" bind:this={editor} contenteditable="true"></div>
+		<div class="editor" bind:this={editor} contenteditable="true" oninput={() => (dirty = true)}></div>
 	{:else if isImageFile(file)}
 		<div class="imgwrap">
 			{#if blob}<img src={URL.createObjectURL(new Blob([blob.bytes], { type: blob.mime }))} alt={file?.filename} />{/if}
@@ -267,6 +315,38 @@
 		background: var(--c-canvas);
 		border-left: 1px solid var(--c-hairline);
 		overflow: hidden;
+	}
+	/* SplitFileView: each pane fills half the screen instead of a fixed side width.
+	   flex (not fixed width) so an opened chat panel can shrink the panes responsively. */
+	.panel.fill {
+		flex: 1 1 0;
+		min-width: 0;
+	}
+	/* Focused pane in split — dynamic accent ring so it's clear which pane the top
+	   toolbar drives. Only meaningful in split (focused is gated there by Canvas). */
+	.panel.focused {
+		box-shadow: inset 0 0 0 2px var(--c-accent-magenta);
+	}
+	/* One-shot "grow to fill" / "restore" settle on the primary pane whenever it
+	   enters or leaves split (driven by `settling`). The secondary pane animates via
+	   its swoop-in mount transition instead. */
+	.panel.grow {
+		animation: pane-grow-in var(--spring-snappy);
+	}
+	@keyframes pane-grow-in {
+		from {
+			transform: scale(0.96);
+			opacity: 0.55;
+		}
+		to {
+			transform: none;
+			opacity: 1;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.panel.grow {
+			animation: none;
+		}
 	}
 	.content {
 		flex: 1;
@@ -316,38 +396,16 @@
 		opacity: 0.4;
 		cursor: default;
 	}
-	.split-wrap {
-		position: relative;
+	.actions button.icon-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 	}
-	.split-menu {
-		position: absolute;
-		right: 0;
-		top: calc(100% + 4px);
-		z-index: 20;
-		min-width: 180px;
-		max-width: 280px;
-		max-height: 320px;
-		overflow-y: auto;
-		background: var(--c-surface, #fff);
-		border: 1px solid var(--c-hairline);
-		border-radius: 10px;
-		box-shadow: 0 6px 20px rgba(0,0,0,0.2);
-		padding: 4px;
-	}
-	.split-item {
-		display: block;
-		width: 100%;
-		text-align: left;
-		border: none !important;
-		background: transparent !important;
-		padding: 6px 8px !important;
-		border-radius: 6px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.split-item:hover {
-		background: var(--c-surface-soft, rgba(0,0,0,0.05)) !important;
+	.actions button.icon-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 4px 6px;
 	}
 	.save {
 		background: var(--c-primary) !important;

@@ -5,7 +5,8 @@
     import ThreadView from "./ThreadView.svelte";
     import Composer from "./Composer.svelte";
 
-    let { open = $bindable(false) }: { open?: boolean } = $props();
+    let { open = $bindable(false), seedText = "" }: { open?: boolean; seedText?: string } =
+        $props();
 
     let chatWidth = $state(340);
     let resizing = $state(false);
@@ -124,6 +125,7 @@
                         ? "Thinking…"
                         : "Message the canvas…"}
                     disabled={session.streaming}
+                    initialText={seedText}
                     onsend={(text) => runSession(text)}
                 />
             </div>

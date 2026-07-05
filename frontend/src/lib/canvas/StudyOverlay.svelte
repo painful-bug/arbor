@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { fade, scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
+	import { X, ChevronLeft, ChevronRight } from '@lucide/svelte';
 	import { studioReview, studioDeleteItem, type StudyItem } from '$lib/ai/client';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { currentCanvasId } from './store.svelte';
@@ -113,7 +114,7 @@
 						<span class="sd-kind">{current.kind === 'mcq' ? 'Quiz' : 'Flashcard'}</span>
 						<button class="sd-btn sd-del" onclick={discard} title="Remove this card">Delete</button>
 					{/if}
-					<button class="sd-btn" onclick={close} aria-label="Close">✕</button>
+					<button class="sd-btn" onclick={close} aria-label="Close"><X size={15} /></button>
 				</div>
 			</header>
 
@@ -121,7 +122,7 @@
 				{#if loading}
 					<div class="sd-empty"><span class="spinner"></span> Loading…</div>
 				{:else if !current}
-					<div class="sd-empty">No study cards yet. Open a document and click <strong>🎴 Study</strong>.</div>
+					<div class="sd-empty">No study cards yet. Open a document and click <strong>Study</strong>.</div>
 				{:else}
 					<div class="sd-card">
 						<div class="sd-q">{current.question}</div>
@@ -160,8 +161,8 @@
 
 			{#if current}
 				<footer class="sd-footer">
-					<button class="sd-btn" onclick={prev} disabled={idx === 0}>← Prev</button>
-					<button class="sd-btn" onclick={next} disabled={idx >= items.length - 1}>Next →</button>
+					<button class="sd-btn nav" onclick={prev} disabled={idx === 0}><ChevronLeft size={14} /> Prev</button>
+					<button class="sd-btn nav" onclick={next} disabled={idx >= items.length - 1}>Next <ChevronRight size={14} /></button>
 				</footer>
 			{/if}
 		</div>
@@ -289,6 +290,7 @@
 		border-radius: 10px;
 		padding: 6px 14px;
 	}
+	.sd-btn.nav { display: inline-flex; align-items: center; gap: 4px; }
 	.spinner {
 		width: 12px;
 		height: 12px;

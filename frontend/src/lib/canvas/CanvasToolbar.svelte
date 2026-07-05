@@ -1,4 +1,9 @@
 <script lang="ts">
+	import type { Component } from 'svelte';
+	import {
+		Hand, MousePointer2, Type, Copy, Spline, Palette,
+		Undo2, Redo2, Maximize, Sparkles, MoveHorizontal, Tag, Microscope, Hexagon, Download
+	} from '@lucide/svelte';
 	import { tool, settings, setClusterSpacing, addClusterTags, type Tool } from './store.svelte';
 
 	let showSpacing = $state(false);
@@ -27,13 +32,13 @@
 		onExport(format);
 	}
 
-	const tools: { id: Tool; label: string; icon: string; key: string; title: string }[] = [
-		{ id: 'hand',      label: 'Hand',      icon: '✋', key: 'H', title: 'Hand tool -- pan canvas (H)' },
-		{ id: 'select',    label: 'Select',    icon: '↖',  key: 'V', title: 'Select -- click or drag to select cards (V)' },
-		{ id: 'text',      label: 'Text',      icon: 'T',  key: 'T', title: 'Text tool -- click to place a note (T)' },
-		{ id: 'duplicate', label: 'Duplicate', icon: '⧉',  key: 'D', title: 'Duplicate -- click a card to copy it (D)' },
-		{ id: 'connect',   label: 'Connect',   icon: '↗',  key: 'C', title: 'Connect -- click two cards to draw an edge (C)' },
-		{ id: 'color',     label: 'Color',     icon: '◐',  key: '',  title: 'Color -- click a card to cycle its color' }
+	const tools: { id: Tool; label: string; icon: Component; key: string; title: string }[] = [
+		{ id: 'hand',      label: 'Hand',      icon: Hand,          key: 'H', title: 'Hand tool -- pan canvas (H)' },
+		{ id: 'select',    label: 'Select',    icon: MousePointer2, key: 'V', title: 'Select -- click or drag to select cards (V)' },
+		{ id: 'text',      label: 'Text',      icon: Type,          key: 'T', title: 'Text tool -- click to place a note (T)' },
+		{ id: 'duplicate', label: 'Duplicate', icon: Copy,          key: 'D', title: 'Duplicate -- click a card to copy it (D)' },
+		{ id: 'connect',   label: 'Connect',   icon: Spline,        key: 'C', title: 'Connect -- click two cards to draw an edge (C)' },
+		{ id: 'color',     label: 'Color',     icon: Palette,       key: '',  title: 'Color -- click a card to cycle its color' }
 	];
 
 	function select(t: Tool) {
@@ -53,7 +58,7 @@
 				title={t.title}
 				aria-pressed={tool.active === t.id}
 			>
-				<span class="icon">{t.icon}</span>
+				<span class="icon"><t.icon size={15} /></span>
 				<span class="label">{t.label}</span>
 				{#if t.key}<span class="key">{t.key}</span>{/if}
 			</button>
@@ -64,22 +69,22 @@
 
 	<div class="actions">
 		<button class="action" onclick={onUndo} title="Undo last action (U)">
-			<span class="icon">↩</span>
+			<span class="icon"><Undo2 size={15} /></span>
 			<span class="label">Undo</span>
 			<span class="key">U</span>
 		</button>
 		<button class="action" onclick={onRedo} title="Redo (R)">
-			<span class="icon">↪</span>
+			<span class="icon"><Redo2 size={15} /></span>
 			<span class="label">Redo</span>
 			<span class="key">R</span>
 		</button>
 		<button class="action" onclick={onFit} title="Zoom to fit all cards (F)">
-			<span class="icon">⊡</span>
+			<span class="icon"><Maximize size={15} /></span>
 			<span class="label">Fit</span>
 			<span class="key">F</span>
 		</button>
 		<button class="action secondary" onclick={onCleanUp} title="Clean Up — arrange cards into semantic clusters (CC)">
-			<span class="icon">✦</span>
+			<span class="icon"><Sparkles size={15} /></span>
 			<span class="label">Clean Up</span>
 			<span class="key">CC</span>
 		</button>
@@ -92,7 +97,7 @@
 				aria-label="Cluster spacing"
 				aria-pressed={showSpacing}
 			>
-				<span class="icon">↔</span>
+				<span class="icon"><MoveHorizontal size={15} /></span>
 			</button>
 			{#if showSpacing}
 				<div class="spacing-pop">
@@ -115,14 +120,14 @@
 			title="Label clusters — drop an editable tag on each Clean Up cluster"
 			aria-label="Label clusters"
 		>
-			<span class="icon">🏷</span>
+			<span class="icon"><Tag size={15} /></span>
 		</button>
 		<button class="action secondary" onclick={onDeepResearch} title="Deep Research -- plan and search real papers">
-			<span class="icon">🔬</span>
+			<span class="icon"><Microscope size={15} /></span>
 			<span class="label">Research</span>
 		</button>
 		<button class="action secondary" onclick={onKB} title="Knowledge Base -- view and clear indexed content">
-			<span class="icon">⬡</span>
+			<span class="icon"><Hexagon size={15} /></span>
 			<span class="label">KB</span>
 		</button>
 		<div class="spacing-wrap">
@@ -133,7 +138,7 @@
 				title="Export this canvas"
 				aria-pressed={showExport}
 			>
-				<span class="icon">⇩</span>
+				<span class="icon"><Download size={15} /></span>
 				<span class="label">Export</span>
 			</button>
 			{#if showExport}
