@@ -4,6 +4,7 @@
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { searchState, rebuild, next, prev, closeSearch } from './globalSearch.svelte';
 	import { flow } from './store.svelte';
+	import { Search, ChevronUp, ChevronDown, X } from '@lucide/svelte';
 
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let barEl = $state<HTMLDivElement | null>(null);
@@ -59,10 +60,7 @@
 		class="search-bar"
 		transition:scale={{ duration: reducedMotion() ? 0 : 220, start: 0.94, easing: backOut, opacity: 0 }}
 	>
-		<svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-			<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
-			<path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-		</svg>
+		<span class="icon"><Search size={15} /></span>
 		<input
 			bind:this={inputEl}
 			class="field"
@@ -84,9 +82,9 @@
 				…
 			{/if}
 		</span>
-		<button class="nav" onclick={prev} disabled={total === 0} aria-label="Previous match" title="Previous (⇧⏎)">⌃</button>
-		<button class="nav" onclick={next} disabled={total === 0} aria-label="Next match" title="Next (⏎)">⌄</button>
-		<button class="nav close" onclick={closeSearch} aria-label="Close search" title="Close (Esc)">✕</button>
+		<button class="nav" onclick={prev} disabled={total === 0} aria-label="Previous match" title="Previous (⇧⏎)"><ChevronUp size={15} /></button>
+		<button class="nav" onclick={next} disabled={total === 0} aria-label="Next match" title="Next (⏎)"><ChevronDown size={15} /></button>
+		<button class="nav close" onclick={closeSearch} aria-label="Close search" title="Close (Esc)"><X size={15} /></button>
 	</div>
 {/if}
 

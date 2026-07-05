@@ -6,6 +6,7 @@
 import CardHandles from './CardHandles.svelte';
 	import { faviconFor, labelFor, toEmbedUrl, isMediaEmbed, youtubeThumb } from '$lib/url';
 	import { popOutWindow, openExternal } from '$lib/web';
+	import { Check, Download, RotateCw, Copy, ArrowUpRight, Play } from '@lucide/svelte';
 
 	let { id, data, selected }: NodeProps = $props();
 	const url = $derived((data as { url: string }).url);
@@ -127,10 +128,10 @@ import CardHandles from './CardHandles.svelte';
 			aria-label="Clip page"
 			disabled={clipState === 'clipping'}
 			onclick={clip}
-		>{clipState === 'clipping' ? '…' : clipState === 'done' ? '✓' : '⤓'}</button>
-		<button class="ico nodrag" title="Reload" aria-label="Reload" onclick={reload}>↻</button>
-		<button class="ico nodrag" title="Open in window" aria-label="Open in window" onclick={() => popOutWindow(url)}>⧉</button>
-		<button class="ico nodrag" title="Open externally" aria-label="Open externally" onclick={() => openExternal(url)}>↗</button>
+		>{#if clipState === 'clipping'}…{:else if clipState === 'done'}<Check size={14} />{:else}<Download size={14} />{/if}</button>
+		<button class="ico nodrag" title="Reload" aria-label="Reload" onclick={reload}><RotateCw size={14} /></button>
+		<button class="ico nodrag" title="Open in window" aria-label="Open in window" onclick={() => popOutWindow(url)}><Copy size={14} /></button>
+		<button class="ico nodrag" title="Open externally" aria-label="Open externally" onclick={() => openExternal(url)}><ArrowUpRight size={14} /></button>
 	</header>
 
 	<!-- Frame: NOT nodrag so it acts as drag surface when iframe is inactive.
@@ -177,7 +178,9 @@ import CardHandles from './CardHandles.svelte';
 		{#if blocked}
 			<div class="fallback">
 				<p>{media ? "Can't play here — open in a window." : 'This site blocks embedding.'}</p>
-				<button class="nodrag" onclick={() => popOutWindow(url)}>{media ? '▶ Play in window' : 'Open in window ↗'}</button>
+				<button class="nodrag pop-btn" onclick={() => popOutWindow(url)}>
+					{#if media}<Play size={13} /> Play in window{:else}Open in window <ArrowUpRight size={13} />{/if}
+				</button>
 			</div>
 		{/if}
 	</div>

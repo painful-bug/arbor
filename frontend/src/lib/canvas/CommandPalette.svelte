@@ -1,9 +1,10 @@
 <script lang="ts" module>
+	import type { Component } from 'svelte';
 	export interface Command {
 		id: string;
 		label: string;
 		group: string;
-		icon?: string;
+		icon?: Component;
 		hint?: string;
 		run: () => void;
 	}
@@ -122,7 +123,7 @@
 							onpointerenter={() => (cursor = i)}
 							onclick={() => exec(cmd)}
 						>
-							{#if cmd.icon}<span class="cmd-icon">{cmd.icon}</span>{/if}
+							{#if cmd.icon}<span class="cmd-icon"><cmd.icon size={16} /></span>{/if}
 							<span class="cmd-label">{cmd.label}</span>
 							{#if cmd.hint}<span class="cmd-hint">{cmd.hint}</span>{/if}
 						</div>

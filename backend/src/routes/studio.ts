@@ -207,7 +207,9 @@ export function parseStudySet(
 	return out;
 }
 
-function toStudyItem(row: Pick<typeof reviewItems.$inferSelect, "id" | "kind" | "question" | "answer" | "choices">): StudyItem {
+function toStudyItem(
+	row: Pick<typeof reviewItems.$inferSelect, "id" | "kind" | "question" | "answer" | "choices">,
+): StudyItem {
 	return {
 		id: row.id,
 		kind: row.kind as "flashcard" | "mcq",

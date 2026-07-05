@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { ui, newCanvas } from '$lib/canvas/store.svelte';
 	import { hasUpdate } from '$lib/updates/store.svelte';
+	import { LayoutGrid, Library as LibraryIcon, Plus, Settings } from '@lucide/svelte';
 
 	const onCanvas = $derived($page.url.pathname === '/');
 	const updateReady = $derived(hasUpdate());
@@ -23,35 +24,6 @@
 		ui.view = 'canvas';
 	}
 
-	function canvasIcon() {
-		return `<svg width="24" height="24" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-			<rect x="2" y="2" width="7" height="7" rx="2" fill="currentColor" opacity="0.85"/>
-			<rect x="11" y="2" width="7" height="7" rx="2" fill="currentColor" opacity="0.45"/>
-			<rect x="2" y="11" width="7" height="7" rx="2" fill="currentColor" opacity="0.45"/>
-			<rect x="11" y="11" width="7" height="7" rx="2" fill="currentColor" opacity="0.85"/>
-		</svg>`;
-	}
-
-	function settingsIcon() {
-		return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-			<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" stroke="currentColor" stroke-width="1.5"/>
-			<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
-		</svg>`;
-	}
-
-	function libraryIcon() {
-		return `<svg width="24" height="24" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-			<rect x="2.5" y="3" width="4" height="14" rx="1" stroke="currentColor" stroke-width="1.5"/>
-			<rect x="8" y="3" width="4" height="14" rx="1" stroke="currentColor" stroke-width="1.5"/>
-			<path d="M14 4.5l3 0.8 2.4 13.6-3-0.8z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-		</svg>`;
-	}
-
-	function plusIcon() {
-		return `<svg width="24" height="24" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-			<path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-		</svg>`;
-	}
 </script>
 
 <aside class="sidebar" class:expanded={ui.sidebarExpanded}>
@@ -78,27 +50,23 @@
 
 	<nav>
 		<button class="nav-item" class:active={onCanvas && ui.view === 'canvas'} onclick={showCanvas}>
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			<span class="icon">{@html canvasIcon()}</span>
+			<span class="icon"><LayoutGrid size={22} strokeWidth={1.75} /></span>
 			{#if ui.sidebarExpanded}<span class="label">Canvas</span>{/if}
 		</button>
 
 		<button class="nav-item" class:active={onCanvas && ui.view === 'library'} onclick={showLibrary}>
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			<span class="icon">{@html libraryIcon()}</span>
+			<span class="icon"><LibraryIcon size={22} strokeWidth={1.75} /></span>
 			{#if ui.sidebarExpanded}<span class="label">Library</span>{/if}
 		</button>
 
 		<button class="nav-item" onclick={createCanvas}>
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			<span class="icon">{@html plusIcon()}</span>
+			<span class="icon"><Plus size={22} strokeWidth={1.75} /></span>
 			{#if ui.sidebarExpanded}<span class="label">New canvas</span>{/if}
 		</button>
 
 		<a href="/settings" class="nav-item" class:active={$page.url.pathname === '/settings'} style="margin-top: auto">
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<span class="icon">
-				{@html settingsIcon()}
+				<Settings size={22} strokeWidth={1.75} />
 				{#if updateReady}<span class="update-dot" aria-label="Update available"></span>{/if}
 			</span>
 			{#if ui.sidebarExpanded}<span class="label">Settings</span>{/if}

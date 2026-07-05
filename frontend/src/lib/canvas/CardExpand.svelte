@@ -9,6 +9,7 @@
 	import Composer from './Composer.svelte';
 	import FindBar from './FindBar.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { X } from '@lucide/svelte';
 
 	let { cardId, onclose }: { cardId: string; onclose: () => void } = $props();
 
@@ -62,7 +63,7 @@
 			<FindBar target={bodyEl ?? null} />
 			<header>
 				<h2>{card.title}</h2>
-				<button class="close" onclick={onclose} aria-label="Close">✕</button>
+				<button class="close" onclick={onclose} aria-label="Close"><X size={16} /></button>
 			</header>
 
 			<div class="body" bind:this={bodyEl}>

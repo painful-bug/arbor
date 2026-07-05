@@ -185,6 +185,19 @@ npm run dev            # from repo root — runs tauri dev which runs vite
 
 Or just `npm run dev` from root which does both via `cd frontend && npx tauri dev` (Tauri's `beforeDevCommand` starts Vite).
 
+### Before every commit / PR — CI parity
+
+CI (`.github/workflows/ci.yml`, job `quality`) runs these in order; run them all locally first, in this order, and fix everything before committing:
+
+```bash
+npx biome check --write .        # 1. lint + format (auto-fixes in place)
+cd backend && bun x tsc --noEmit # 2. backend typecheck
+cd backend && bun run test       # 3. backend tests
+cd frontend && npm test          # 4. frontend tests
+```
+
+Biome is the formatter — never hand-format and never fight its output; run `--write` and commit what it produces. A type error surfaced only after merging two branches (e.g. one branch's route code vs. another's schema change) is a real bug, not a formatting nit — fix the type mismatch at its root (narrow the accepted shape, don't cast).
+
 ---
 
 ## Core directives (do not violate)

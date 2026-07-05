@@ -17,6 +17,7 @@
 		ui
 	} from './store.svelte';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { Plus, X } from '@lucide/svelte';
 	import type { CardData } from './store.svelte';
 	import { CANVAS_TEMPLATES } from './templates';
 
@@ -78,7 +79,7 @@
 	<header>
 		<h1>Library</h1>
 		<div class="new-wrap">
-			<button class="new" onclick={() => (showNewMenu = !showNewMenu)}>＋ New canvas</button>
+			<button class="new" onclick={() => (showNewMenu = !showNewMenu)}><Plus size={15} /> New canvas</button>
 			{#if showNewMenu}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div class="new-menu" onpointerdown={(e) => e.stopPropagation()}>
@@ -126,7 +127,7 @@
 					<span>{p.count} card{p.count === 1 ? '' : 's'}</span>
 					<span>{fmt(c.updatedAt)}</span>
 				</div>
-				<button class="del" onclick={(e) => onDelete(c.id, e)} aria-label="Delete canvas">✕</button>
+				<button class="del" onclick={(e) => onDelete(c.id, e)} aria-label="Delete canvas"><X size={14} /></button>
 			</div>
 		{/each}
 	</div>
@@ -155,6 +156,9 @@
 		position: relative;
 	}
 	.new {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 		border: none;
 		border-radius: var(--r-pill);
 		padding: 10px 18px;

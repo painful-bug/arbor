@@ -7,6 +7,7 @@
 	import type { TextData } from './store.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import FindBar from './FindBar.svelte';
+	import { Pencil, X } from '@lucide/svelte';
 
 	let { cardId, onclose }: { cardId: string; onclose: () => void } = $props();
 
@@ -93,8 +94,8 @@
 				{#if highlights.length}
 					<button onclick={clearHighlights}>Clear marks</button>
 				{/if}
-				<button class="edit" onclick={openEditor}>Edit ✎</button>
-				<button onclick={onclose} aria-label="Close">✕</button>
+				<button class="edit icon-label" onclick={openEditor}><Pencil size={13} /> Edit</button>
+				<button class="icon-btn" onclick={onclose} aria-label="Close"><X size={15} /></button>
 			</div>
 		</header>
 		<div class="hint">Select text to highlight</div>
@@ -159,6 +160,8 @@
 		cursor: pointer;
 		color: var(--c-ink);
 	}
+	.actions button.icon-label { display: inline-flex; align-items: center; gap: 4px; }
+	.actions button.icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 4px 7px; }
 	.actions button.edit {
 		background: var(--c-ink);
 		color: var(--c-on-primary, #fff);

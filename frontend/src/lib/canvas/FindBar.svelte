@@ -2,6 +2,7 @@
 	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { ChevronUp, ChevronDown, X } from '@lucide/svelte';
 
 	// Reusable find-in-view bar (⌘F) for any overlay's scroll container. Uses the
 	// native CSS Custom Highlight API so it never mutates the DOM — safe over the
@@ -145,9 +146,9 @@
 		<span class="count">
 			{#if query.trim() && total === 0}No results{:else if total > 0}{cursor + 1} of {total}{/if}
 		</span>
-		<button class="nav" onclick={() => step(-1)} disabled={total === 0} aria-label="Previous" title="Previous (⇧⏎)">⌃</button>
-		<button class="nav" onclick={() => step(1)} disabled={total === 0} aria-label="Next" title="Next (⏎)">⌄</button>
-		<button class="nav close" onclick={close} aria-label="Close find" title="Close (Esc)">✕</button>
+		<button class="nav" onclick={() => step(-1)} disabled={total === 0} aria-label="Previous" title="Previous (⇧⏎)"><ChevronUp size={15} /></button>
+		<button class="nav" onclick={() => step(1)} disabled={total === 0} aria-label="Next" title="Next (⏎)"><ChevronDown size={15} /></button>
+		<button class="nav close" onclick={close} aria-label="Close find" title="Close (Esc)"><X size={15} /></button>
 	</div>
 {/if}
 

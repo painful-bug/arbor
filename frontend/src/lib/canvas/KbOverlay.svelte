@@ -4,6 +4,7 @@
 	import { kbClear, kbContents, kbSearch } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
 	import { reducedMotion } from '$lib/theme/motion.svelte';
+	import { X } from '@lucide/svelte';
 	import { currentCanvasId } from './store.svelte';
 
 	// Knowledge-base overlay: indexed sources + live chunk search for the active
@@ -107,7 +108,7 @@
 						<button class="kb-btn" onclick={() => (clearConfirm = false)}>Cancel</button>
 					{/if}
 					<button class="kb-btn" onclick={refresh} disabled={loading} title="Refresh">↺</button>
-					<button class="kb-btn" onclick={close} aria-label="Close">✕</button>
+					<button class="kb-btn" onclick={close} aria-label="Close"><X size={15} /></button>
 				</div>
 			</header>
 			<div class="kb-body">

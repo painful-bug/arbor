@@ -4,10 +4,13 @@
 	import { tick } from 'svelte';
 	import { flow, currentCanvasId, setFileHighlights, addSourceNote, type PdfHL } from './store.svelte';
 	import { kbSearchHits } from '$lib/ai/client';
+	import { notifyNote } from './notifications.svelte';
 	import { debounce } from '$lib/debounce';
+	import type { PaneController } from './pane-controller.svelte';
+	import { Minus, Plus, MoveHorizontal, Maximize, Square, ChevronLeft, ChevronRight, Highlighter, ArrowUpRight, PenLine } from '@lucide/svelte';
 
-	let { fileId, blob, initialQuery = '', initialPage = 0 }:
-		{ fileId: string; blob: { bytes: ArrayBuffer; mime: string; name: string } | undefined; initialQuery?: string; initialPage?: number } = $props();
+	let { fileId, blob, initialQuery = '', initialPage = 0, controller, hideToolbar = false }:
+		{ fileId: string; blob: { bytes: ArrayBuffer; mime: string; name: string } | undefined; initialQuery?: string; initialPage?: number; controller?: PaneController; hideToolbar?: boolean } = $props();
 
 	// ── Highlight colors ────────────────────────────────────────────────────────
 	const COLORS = [
@@ -339,6 +342,23 @@
 		return () => { io.disconnect(); visiblePages.clear(); };
 	});
 
+	// Trackpad pinch-to-zoom (macOS): a pinch gesture arrives as a wheel event with
+	// ctrlKey set. Multiply zoomFactor relative to the current fit scale so it zooms
+	// smoothly in any fit mode. Non-passive listener so preventDefault stops the page
+	// (and WKWebView page-zoom) from also scaling.
+	$effect(() => {
+		const el = pagesEl;
+		if (!el) return;
+		function onWheel(e: WheelEvent) {
+			if (!e.ctrlKey) return;
+			e.preventDefault();
+			const next = zoomFactor * Math.exp(-e.deltaY * 0.01);
+			zoomFactor = Math.min(4, Math.max(0.25, parseFloat(next.toFixed(3))));
+		}
+		el.addEventListener('wheel', onWheel, { passive: false });
+		return () => el.removeEventListener('wheel', onWheel);
+	});
+
 	// ResizeObserver on the container
 	$effect(() => {
 		if (!pagesEl) return;
@@ -454,19 +474,21 @@
 	}
 
 	// ── Send-to-chat ────────────────────────────────────────────────────────────
+	// Open the side chat panel seeded with the quote + file context (Canvas handles
+	// it — and keeps the split view intact, tiling the chat panel beside it).
 	function sendToChat(text: string) {
-		const node = flow.nodes.find((n) => n.id === fileId);
-		const pos = node?.position ?? { x: 400, y: 300 };
-		window.dispatchEvent(new CustomEvent('arbor:branch', {
-			detail: { x: pos.x + 480, y: pos.y, parentId: fileId, quote: text }
+		window.dispatchEvent(new CustomEvent('arbor:filechat', {
+			detail: { fileId, filename, quote: text, page: selPage }
 		}));
 		window.getSelection()?.removeAllRanges();
 		selPopup = null;
 	}
 
-	// Highlight → Note: turn the selection into a persistent, backlinked note card.
+	// Highlight → Note: turn the selection into a persistent, backlinked note card,
+	// and surface an in-app notification of what was captured.
 	function makeNote(text: string) {
 		addSourceNote(fileId, selPage, text);
+		notifyNote(text);
 		window.getSelection()?.removeAllRanges();
 		selPopup = null;
 	}
@@ -487,6 +509,41 @@
 	function zoomOut() { zoomFactor = Math.max(0.25, parseFloat((zoomFactor - 0.25).toFixed(2))); }
 	function zoomPct() { return `${Math.round(zoomFactor * 100)}%`; }
 
+	// ── Page nav (shared by the in-viewer toolbar and the split-mode top toolbar) ─
+	function goPrevPage() {
+		const w = pagesEl?.querySelector(`[data-page="${currentPage - 2}"]`);
+		w?.scrollIntoView({ behavior: 'smooth' });
+	}
+	function goNextPage() {
+		const w = pagesEl?.querySelector(`[data-page="${currentPage}"]`);
+		w?.scrollIntoView({ behavior: 'smooth' });
+	}
+
+	// ── Publish state + actions to the shared pane controller (drives FileToolbar) ─
+	$effect(() => {
+		if (!controller) return;
+		controller.kind = 'pdf';
+		controller.zoomPct = Math.round(zoomFactor * 100);
+		controller.fitMode = fitMode;
+		controller.currentPage = currentPage;
+		controller.totalPages = totalPages;
+		controller.highlightOn = tool === 'highlight';
+		controller.activeColor = activeColor;
+		controller.colors = COLORS;
+		controller.query = query;
+	});
+	$effect(() => {
+		if (!controller) return;
+		controller.zoomIn = zoomIn;
+		controller.zoomOut = zoomOut;
+		controller.setFit = (m) => { fitMode = m; zoomFactor = 1; };
+		controller.prevPage = goPrevPage;
+		controller.nextPage = goNextPage;
+		controller.toggleHighlight = () => (tool = tool === 'highlight' ? 'pan' : 'highlight');
+		controller.setColor = (c) => (activeColor = c);
+		controller.setQuery = (q) => { query = q; void runSearch(); };
+	});
+
 	// ── Cmd/Ctrl+F → focus in-PDF search ────────────────────────────────────────
 	let searchEl = $state<HTMLInputElement>();
 
@@ -505,29 +562,30 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="viewer">
-	<!-- Toolbar -->
+	<!-- Toolbar (hidden in SplitFileView — controls move to the top FileToolbar) -->
+	{#if !hideToolbar}
 	<div class="toolbar">
 		<!-- Zoom -->
 		<div class="tool-group">
-			<button onclick={zoomOut} title="Zoom out" aria-label="Zoom out">−</button>
+			<button onclick={zoomOut} title="Zoom out" aria-label="Zoom out"><Minus size={15} /></button>
 			<span class="zoom-label">{zoomPct()}</span>
-			<button onclick={zoomIn} title="Zoom in" aria-label="Zoom in">+</button>
+			<button onclick={zoomIn} title="Zoom in" aria-label="Zoom in"><Plus size={15} /></button>
 		</div>
 
 		<div class="divider"></div>
 
 		<!-- Fit modes -->
 		<div class="tool-group">
-			<button class:active={fitMode === 'width'}  onclick={() => { fitMode = 'width';  zoomFactor = 1; }} title="Fit width">⇔</button>
-			<button class:active={fitMode === 'page'}   onclick={() => { fitMode = 'page';   zoomFactor = 1; }} title="Fit page">⛶</button>
-			<button class:active={fitMode === 'actual'} onclick={() => { fitMode = 'actual'; zoomFactor = 1; }} title="Actual size (100%)">1:1</button>
+			<button class:active={fitMode === 'width'}  onclick={() => { fitMode = 'width';  zoomFactor = 1; }} title="Fit width" aria-label="Fit width"><MoveHorizontal size={15} /></button>
+			<button class:active={fitMode === 'page'}   onclick={() => { fitMode = 'page';   zoomFactor = 1; }} title="Fit page" aria-label="Fit page"><Maximize size={15} /></button>
+			<button class:active={fitMode === 'actual'} onclick={() => { fitMode = 'actual'; zoomFactor = 1; }} title="Actual size (100%)" aria-label="Actual size"><Square size={15} /></button>
 		</div>
 
 		<div class="divider"></div>
 
 		<!-- Page nav -->
 		<div class="tool-group">
-			<button onclick={() => { const w = pagesEl?.querySelector(`[data-page="${currentPage - 2}"]`); w?.scrollIntoView({ behavior: 'smooth' }); }} disabled={currentPage <= 1} aria-label="Previous page">‹</button>
+			<button onclick={goPrevPage} disabled={currentPage <= 1} aria-label="Previous page"><ChevronLeft size={15} /></button>
 			{#if jumping}
 				<!-- svelte-ignore a11y_autofocus -->
 				<input
@@ -545,7 +603,7 @@
 					{currentPage} / {totalPages}
 				</button>
 			{/if}
-			<button onclick={() => { const w = pagesEl?.querySelector(`[data-page="${currentPage}"]`); w?.scrollIntoView({ behavior: 'smooth' }); }} disabled={currentPage >= totalPages} aria-label="Next page">›</button>
+			<button onclick={goNextPage} disabled={currentPage >= totalPages} aria-label="Next page"><ChevronRight size={15} /></button>
 		</div>
 
 		<div class="divider"></div>
@@ -557,7 +615,7 @@
 				onclick={() => (tool = tool === 'highlight' ? 'pan' : 'highlight')}
 				title="Highlight tool (H)"
 				aria-label="Highlight tool"
-			>🖊</button>
+			><Highlighter size={15} /></button>
 			{#if tool === 'highlight'}
 				<div class="colors">
 					{#each COLORS as c}
@@ -589,12 +647,12 @@
 			/>
 			{#if searchHits.length}
 				<span class="search-count">{searchCursor + 1}/{searchHits.length}</span>
-				<button onclick={prevHit} aria-label="Previous match">‹</button>
-				<button onclick={nextHit} aria-label="Next match">›</button>
+				<button onclick={prevHit} aria-label="Previous match"><ChevronLeft size={15} /></button>
+				<button onclick={nextHit} aria-label="Next match"><ChevronRight size={15} /></button>
 			{:else if pageHits.length}
 				<span class="search-count" title="Page matches from OCR text">pg {pageCursor + 1}/{pageHits.length}</span>
-				<button onclick={prevHit} aria-label="Previous page match">‹</button>
-				<button onclick={nextHit} aria-label="Next page match">›</button>
+				<button onclick={prevHit} aria-label="Previous page match"><ChevronLeft size={15} /></button>
+				<button onclick={nextHit} aria-label="Next page match"><ChevronRight size={15} /></button>
 			{/if}
 		</div>
 
@@ -603,6 +661,7 @@
 			<button class="clear-btn" onclick={clearHighlights}>Clear marks</button>
 		{/if}
 	</div>
+	{/if}
 
 	<!-- Pages -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -650,8 +709,8 @@
 			style="left:{selPopup.x}px;top:{selPopup.y}px"
 			onmousedown={(e) => e.preventDefault()}
 		>
-			<button onclick={() => sendToChat(selectionText)}>↗ Send to chat</button>
-			<button onclick={() => makeNote(selectionText)}>✎ Note</button>
+			<button onclick={() => sendToChat(selectionText)}><ArrowUpRight size={13} /> Send to chat</button>
+			<button onclick={() => makeNote(selectionText)}><PenLine size={13} /> Note</button>
 		</div>
 	{/if}
 
@@ -819,12 +878,15 @@
 	}
 	.page canvas { display: block; pointer-events: none; }
 
+	/* opacity:1 — spans are color:transparent so the text stays invisible, but the
+	   ::selection highlight must render at full strength (0.25 made drag-selection
+	   almost invisible, reading as "can't select"). */
 	.textlayer {
 		position: absolute;
 		inset: 0;
 		overflow: hidden;
 		line-height: 1;
-		opacity: 0.25;
+		opacity: 1;
 	}
 	.textlayer :global(span) {
 		color: transparent;
@@ -833,7 +895,7 @@
 		cursor: text;
 		transform-origin: 0 0;
 	}
-	.textlayer :global(::selection) {
+	.textlayer :global(span::selection) {
 		background: rgba(255,222,89,0.6);
 	}
 
@@ -892,6 +954,9 @@
 		margin-top: -4px;
 	}
 	.sel-popup button {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 		background: var(--c-primary, #3b82f6);
 		color: var(--c-on-primary, #fff);
 		border: none;
