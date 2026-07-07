@@ -2,11 +2,12 @@
 // Keys come from Bun.secrets instead of being injected per-call by Rust.
 // Emits AgentEvent objects to the caller (caller streams them as SSE).
 
-import { Agent, type AgentMessage, type AgentEvent as PiEvent } from "@mariozechner/pi-agent-core";
-import { type Api, type Message, type Model, streamSimple } from "@mariozechner/pi-ai";
-import { createCodingTools } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+import type { Api, Message, Model } from "@mariozechner/pi-ai";
+import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { addChat, contentsOf, searchGraded as kbSearchGraded, readSource } from "../kb/index.ts";
-import { buildModel } from "./providers.ts";
+import { log } from "../log.ts";
+import { buildAgentModel, buildSession } from "./session.ts";
 import {
 	createCardTool,
 	createNoteTool,
@@ -22,8 +23,9 @@ import {
 const SERVICE = "app.arbor.canvas";
 const key = (name: string) => Bun.secrets.get({ service: SERVICE, name }).catch(() => null);
 
-// One Agent per running card. Cancel aborts via agent.abort().
-export const runs = new Map<string, Agent>();
+// One running session per card. Cancel aborts via .abort() (AgentSession.abort also
+// cancels any in-flight compaction). Typed structurally so the cancel route is unchanged.
+export const runs = new Map<string, { abort: () => void | Promise<void> }>();
 
 export interface AgentEvent {
 	type:
@@ -164,18 +166,18 @@ export async function handlePrompt(
 	try {
 		const tavilyKey = (await key("tavily")) ?? undefined;
 
-		// Tools are provider-independent — build once, reuse across ladder rungs.
-		const all = createCodingTools(process.cwd());
-		const tools = req.bash ? all : all.filter((t) => t.name !== "bash");
+		// Custom (non-coding) tools — provider-independent, built once, reused across ladder
+		// rungs. Built-in read/bash/edit/write are owned by the session's own registry.
+		const customTools: AgentTool[] = [];
 		if (req.websearch) {
-			tools.push(webSearchTool(req.websearchBackend ?? "duckduckgo", tavilyKey));
+			customTools.push(webSearchTool(req.websearchBackend ?? "duckduckgo", tavilyKey));
 		}
-		tools.push(scholarSearchTool(), researchPlanTool());
+		customTools.push(scholarSearchTool(), researchPlanTool());
 		// KB search + overview + full-source read via local hybrid RAG (LanceDB).
-		tools.push(knowledgeBaseSearchTool((query) => kbSearchGraded(canvas, query)));
-		tools.push(knowledgeBaseOverviewTool(() => contentsOf(canvas)));
-		tools.push(knowledgeBaseReadSourceTool((source) => readSource(canvas, source)));
-		if (req.canvasTools) tools.push(createCardTool(), createNoteTool(), updateCardTool());
+		customTools.push(knowledgeBaseSearchTool((query) => kbSearchGraded(canvas, query)));
+		customTools.push(knowledgeBaseOverviewTool(() => contentsOf(canvas)));
+		customTools.push(knowledgeBaseReadSourceTool((source) => readSource(canvas, source)));
+		if (req.canvasTools) customTools.push(createCardTool(), createNoteTool(), updateCardTool());
 
 		const systemPrompt = req.systemPrompt ?? "";
 		let lastError: string | undefined;
@@ -189,28 +191,34 @@ export async function handlePrompt(
 			}
 			// pi-ai rejects empty-string keys even for local providers; pass a dummy value.
 			const effectiveKey = apiKey ?? "ollama";
-			const model = buildModel(rung.provider, rung.model);
-			const trimmedMessages = trimToContext(req.messages, systemPrompt, model);
+			const model = buildAgentModel(rung.provider, rung.model);
 
-			const agent = new Agent({
-				streamFn: streamSimple,
-				getApiKey: () => effectiveKey,
-				convertToLlm: (messages) => messages as Message[],
-				toolExecution: "parallel",
-				initialState: {
-					systemPrompt,
-					model,
-					tools,
-					messages: toLlmMessages(trimmedMessages, model) as AgentMessage[],
-				},
+			// Trim old turns to the model's window before the run; unbounded mid-run growth
+			// (huge KB results, long reasoning) is handled by the session's auto-compaction.
+			const trimmed = trimToContext(req.messages, systemPrompt, model);
+			// The last user turn is the new prompt; everything before it is prior context.
+			let ui = trimmed.length - 1;
+			while (ui >= 0 && trimmed[ui].role !== "user") ui--;
+			const lastUserText = ui >= 0 ? trimmed[ui].content : "";
+			const prior = ui >= 0 ? trimmed.slice(0, ui) : trimmed;
+
+			const session = await buildSession({
+				provider: rung.provider,
+				model: rung.model,
+				apiKey: effectiveKey,
+				systemPrompt,
+				tools: customTools,
+				bash: !!req.bash,
 			});
-
-			runs.set(cardId, agent);
+			// Seed prior turns so the model has conversation context. These are already
+			// LLM-ready Messages (convertToLlm passes user/assistant through unchanged).
+			session.agent.state.messages = toLlmMessages(prior, model) as AgentMessage[];
+			runs.set(cardId, session);
 
 			// Accumulate the response text so we can ingest the turn into the KB.
 			let answerText = "";
 
-			agent.subscribe((ev: PiEvent) => {
+			const unsub = session.subscribe((ev: AgentSessionEvent) => {
 				switch (ev.type) {
 					case "message_update": {
 						const a = ev.assistantMessageEvent;
@@ -247,19 +255,28 @@ export async function handlePrompt(
 							sources: sourcesOf(ev.result),
 						});
 						break;
+					case "compaction_start":
+						log.info("agent", `compacting context (${ev.reason})`, { cardId });
+						break;
 				}
 			});
 
-			await agent.continue();
-			const err = agent.state.errorMessage;
+			try {
+				await session.prompt(lastUserText);
+			} finally {
+				unsub();
+			}
+			const err = session.state.errorMessage;
 			if (!err) {
 				emit({ type: "done", id: cardId });
+				session.dispose();
 				// Ingest this conversation turn into the canvas KB (fire-and-forget).
 				const userPrompt =
 					[...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
 				if (userPrompt && answerText) void addChat(canvas, cardId, userPrompt, answerText);
 				return;
 			}
+			session.dispose();
 
 			lastError = err;
 			const next = ladder[i + 1];

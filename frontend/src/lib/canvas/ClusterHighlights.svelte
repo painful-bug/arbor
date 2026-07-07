@@ -3,6 +3,12 @@
 	import { flow, settings } from './store.svelte';
 	import type { TagData } from './cards';
 
+	// Picker mode (Move to cluster): hulls become interactive click targets — dimmed by
+	// default, the hovered one emphasised — and `onpick` fires the chosen cluster's id.
+	let { picker = false, onpick }: { picker?: boolean; onpick?: (tagId: string) => void } =
+		$props();
+	let hoveredId = $state<string | null>(null);
+
 	// Internal breathing room between the member bbox and the hull edge.
 	const PAD = 72;
 
@@ -25,12 +31,21 @@
 	}
 
 	// One hull per cluster tag; recomputed whenever node positions/anchors change.
-	// O(n + Σmembers), short-circuits entirely when the setting is off.
+	// O(n + Σmembers). Renders when highlights are on OR the picker is active (so you
+	// can still pick a target even if cluster highlighting is turned off).
 	const clusters = $derived.by(() => {
-		if (!settings.highlightClusters) return [];
+		if (!settings.highlightClusters && !picker) return [];
 		const circle = settings.clusterShape === 'circle';
 		const byId = new Map(flow.nodes.map((n) => [n.id, n]));
-		const out: { id: string; x: number; y: number; w: number; h: number; color: string }[] = [];
+		const out: {
+			id: string;
+			name: string;
+			x: number;
+			y: number;
+			w: number;
+			h: number;
+			color: string;
+		}[] = [];
 		for (const t of flow.nodes) {
 			if (t.type !== 'tag') continue;
 			const d = t.data as TagData;
@@ -67,7 +82,7 @@
 				bw += gx * 2;
 				bh += gy * 2;
 			}
-			out.push({ id: t.id, x, y, w: bw, h: bh, color: d.color ?? 'lilac' });
+			out.push({ id: t.id, name: d.text ?? '', x, y, w: bw, h: bh, color: d.color ?? 'lilac' });
 		}
 		return out;
 	});
@@ -75,9 +90,20 @@
 </script>
 
 {#if clusters.length}
-	<ViewportPortal target="back">
+	<ViewportPortal target={picker ? 'front' : 'back'}>
 		{#each clusters as c (c.id)}
-			<div class="hull" style="transform: translate({c.x}px, {c.y}px); width:{c.w}px; height:{c.h}px;">
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div
+				class="hull"
+				class:picker
+				class:dim={picker && hoveredId !== null && hoveredId !== c.id}
+				class:emph={picker && hoveredId === c.id}
+				style="transform: translate({c.x}px, {c.y}px); width:{c.w}px; height:{c.h}px;"
+				onmouseenter={picker ? () => (hoveredId = c.id) : undefined}
+				onmouseleave={picker ? () => (hoveredId = null) : undefined}
+				onclick={picker ? () => onpick?.(c.id) : undefined}
+			>
 				<svg width="100%" height="100%" viewBox="0 0 {c.w} {c.h}" aria-hidden="true">
 					{#if isCircle}
 						<ellipse
@@ -97,6 +123,9 @@
 						/>
 					{/if}
 				</svg>
+				{#if picker && c.name}
+					<span class="hull-label">{c.name}</span>
+				{/if}
 			</div>
 		{/each}
 	</ViewportPortal>
@@ -119,6 +148,42 @@
 		stroke-dasharray: 5;
 		vector-effect: non-scaling-stroke;
 		animation: dashdraw 0.5s linear infinite;
+	}
+	/* Picker mode: hulls are clickable targets, brighter and emphasised on hover. */
+	.hull.picker {
+		pointer-events: auto;
+		cursor: pointer;
+	}
+	.hull.picker .hull-shape {
+		fill-opacity: 0.18;
+		stroke-opacity: 0.85;
+		stroke-width: 2.5;
+		transition:
+			fill-opacity 120ms ease,
+			stroke-opacity 120ms ease;
+	}
+	.hull.dim {
+		opacity: 0.35;
+	}
+	.hull.emph .hull-shape {
+		fill-opacity: 0.32;
+		stroke-opacity: 1;
+	}
+	.hull-label {
+		position: absolute;
+		top: 8px;
+		left: 50%;
+		transform: translateX(-50%);
+		padding: 3px 10px;
+		border-radius: var(--r-pill, 999px);
+		background: var(--c-canvas, #fff);
+		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.1));
+		box-shadow: var(--elev-2, 0 4px 16px rgba(0, 0, 0, 0.12));
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--c-ink);
+		white-space: nowrap;
+		pointer-events: none;
 	}
 	@keyframes dashdraw {
 		to {

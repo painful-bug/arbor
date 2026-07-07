@@ -34,6 +34,7 @@ export interface MenuCtx {
 	canRedo?: boolean;
 	hasNodes?: boolean; // pane: canvas has at least one node
 	isDriveLinked?: boolean; // phase 5: node.data.drive is set
+	hasClusters?: boolean; // ≥1 cluster tag exists → offer "Move to cluster"
 }
 
 export interface MenuEntry {
@@ -70,6 +71,14 @@ function duplicateEntry(): MenuEntry {
 	return { id: "duplicate", label: "Duplicate", icon: "duplicate", hint: "D" };
 }
 
+// "Move to cluster" — shown only when a cluster tag exists to move into. Present on
+// card/file/text/multi surfaces (things that can belong to a cluster).
+function moveToClusterEntry(ctx: MenuCtx): MenuEntry[] {
+	return ctx.hasClusters
+		? [{ id: "move-to-cluster", label: "Move to cluster", icon: "cluster" }]
+		: [];
+}
+
 function deleteEntry(label = "Delete"): MenuEntry {
 	return { id: "delete", label, icon: "delete", hint: "⌫", danger: true };
 }
@@ -86,6 +95,7 @@ export function menuItemsFor(surface: MenuSurface, ctx: MenuCtx): MenuEntry[][] 
 					{ id: "copy-answer", label: "Copy answer text", icon: "copy-text" },
 					...clipboardSection(ctx),
 					duplicateEntry(),
+					...moveToClusterEntry(ctx),
 					{ id: "rename", label: "Rename", icon: "rename" },
 				],
 				zorderSection(ctx),
@@ -126,7 +136,7 @@ export function menuItemsFor(surface: MenuSurface, ctx: MenuCtx): MenuEntry[][] 
 						? [{ id: "resync", label: "Re-sync from Drive", icon: "resync" }]
 						: []),
 				],
-				[...clipboardSection(ctx), duplicateEntry()],
+				[...clipboardSection(ctx), duplicateEntry(), ...moveToClusterEntry(ctx)],
 				zorderSection(ctx),
 				[deleteEntry()],
 			];
@@ -140,6 +150,7 @@ export function menuItemsFor(surface: MenuSurface, ctx: MenuCtx): MenuEntry[][] 
 					{ id: "copy-text", label: "Copy text", icon: "copy-text" },
 					...clipboardSection(ctx),
 					duplicateEntry(),
+					...moveToClusterEntry(ctx),
 					...(ctx.isDriveLinked
 						? [{ id: "resync", label: "Re-sync from Drive", icon: "resync" }]
 						: []),
@@ -170,6 +181,7 @@ export function menuItemsFor(surface: MenuSurface, ctx: MenuCtx): MenuEntry[][] 
 					{ id: "focus", label: "Focus", icon: "focus" },
 				],
 				ctx.branchId ? [{ id: "pin-branch", label: "Pin branch", icon: "pin-branch" }] : [],
+				zorderSection(ctx),
 				[deleteEntry()],
 			];
 			return sections.filter((s) => s.length);
@@ -182,6 +194,7 @@ export function menuItemsFor(surface: MenuSurface, ctx: MenuCtx): MenuEntry[][] 
 					{ id: "rename", label: "Rename label", icon: "rename" },
 					{ id: "select-children", label: "Select children", icon: "select-children" },
 				],
+				zorderSection(ctx),
 				[deleteEntry("Delete group")],
 			];
 			return sections.filter((s) => s.length);
@@ -211,6 +224,7 @@ export function menuItemsFor(surface: MenuSurface, ctx: MenuCtx): MenuEntry[][] 
 					{ id: "synthesize", label: "Synthesize", icon: "synthesize" },
 					...clipboardSection(ctx),
 					duplicateEntry(),
+					...moveToClusterEntry(ctx),
 				],
 				alignSection,
 				zorderSection(ctx),
