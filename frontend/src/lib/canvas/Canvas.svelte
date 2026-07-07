@@ -82,6 +82,7 @@
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import DriveConnectDialog from './DriveConnectDialog.svelte';
 	import { importDriveUrl, isDriveUrl, resyncDriveNode } from './drive';
+	import IndexingToast from './IndexingToast.svelte';
 	import NoteNotifications from './NoteNotifications.svelte';
 	import { splitView } from './split-view.svelte';
 	import type { PaneController } from './pane-controller.svelte';
@@ -93,19 +94,19 @@
 		Pin, Crosshair, RefreshCw, Group as GroupIcon, Scissors, ClipboardPaste,
 		BringToFront, SendToBack, Lock, LockOpen, AlignStartVertical, AlignEndVertical,
 		AlignStartHorizontal, AlignEndHorizontal, AlignCenterHorizontal, AlignCenterVertical,
-		AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter
+		AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Boxes
 	} from '@lucide/svelte';
 	import { menuItemsFor, type MenuSurface, type MenuCtx, type MenuEntry } from './menu-items';
-	import { cardTitle, cardPlainText } from './cards';
+	import { cardTitle, cardPlainText, type TagData, type Turn } from './cards';
 	import { copySelection, pasteAt, hasClipboard, isInternalPaste } from './clipboard';
 	import { align, distribute, type Box } from './align';
 	import { apiFetch } from '$lib/api';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, type FileKind } from '$lib/files';
-	import { kbAdd, kbRemove } from '$lib/ai/client';
+	import { editSelection, kbAdd, kbRemove } from '$lib/ai/client';
 	import { debounce } from '$lib/debounce';
 	import { currentCanvasId, currentCanvasName } from './store.svelte';
-	import { studioToasts, dismissToast, runMindmap, runStudy } from './studio-jobs.svelte';
+	import { studioToasts, dismissToast, pushToast, runMindmap, runStudy } from './studio-jobs.svelte';
 	import { exportCanvasImage } from './export-image';
 	import { scheduleAutolink } from './autolink';
 	import { goto } from '$app/navigation';
@@ -132,6 +133,7 @@
 		continueId?: string;
 		overModal?: boolean;
 		deep?: boolean;
+		edit?: { parentId: string; quote: string }; // in-place rewrite of a selection
 	} | null>(null);
 
 	// Viewport culling (onlyRenderVisibleElements below) is great for steady-state
@@ -343,6 +345,66 @@
 	function doUndo() { void animateHistory(undo); }
 	function doRedo() { void animateHistory(redo); }
 
+	// ── Move to cluster ──────────────────────────────────────────────────────────
+	// After the "Move to cluster" menu action, the canvas enters a picker mode:
+	// cluster hulls light up (ClusterHighlights), the user clicks one, and the target
+	// node(s) drop into it with the same cc transition as Clean Up (animateHistory).
+	// Esc or a pane click cancels. Works for a single node or a multi-selection.
+	let clusterPicker = $state<{ ids: string[] } | null>(null);
+
+	function startClusterPicker(ids: string[]) {
+		ctxMenu = null;
+		clusterPicker = { ids };
+		doFitView(); // bring all clusters into view to pick from
+	}
+
+	function moveToCluster(targetTagId: string) {
+		const picker = clusterPicker;
+		clusterPicker = null;
+		if (!picker) return;
+		const target = flow.nodes.find((n) => n.id === targetTagId && n.type === 'tag');
+		if (!target) return;
+		const targetAnchor = (target.data as TagData).anchor ?? [];
+		const idSet = new Set(picker.ids.filter((id) => !targetAnchor.includes(id)));
+		if (idSet.size === 0) return; // already all in the target cluster
+
+		// Landing spot: to the right of the target cluster's current members, stacked.
+		const byId = new Map(flow.nodes.map((n) => [n.id, n]));
+		let maxX = -Infinity;
+		let minY = Infinity;
+		for (const mid of targetAnchor) {
+			const n = byId.get(mid);
+			if (!n) continue;
+			const w = n.measured?.width ?? (n.width as number) ?? 400;
+			maxX = Math.max(maxX, n.position.x + w);
+			minY = Math.min(minY, n.position.y);
+		}
+		const placeX = Number.isFinite(maxX) ? maxX + 60 : target.position.x;
+		const placeY = Number.isFinite(minY) ? minY : target.position.y + 40;
+
+		void animateHistory(() => {
+			let dy = 0;
+			flow.nodes = flow.nodes.map((n) => {
+				if (n.type === 'tag') {
+					const d = n.data as TagData;
+					const anchor = d.anchor ?? [];
+					if (n.id === targetTagId)
+						return { ...n, data: { ...d, anchor: Array.from(new Set([...anchor, ...idSet])) } };
+					if (anchor.some((a) => idSet.has(a)))
+						return { ...n, data: { ...d, anchor: anchor.filter((a) => !idSet.has(a)) } };
+					return n;
+				}
+				if (idSet.has(n.id)) {
+					const h = n.measured?.height ?? (n.height as number) ?? 200;
+					const pos = { x: placeX, y: placeY + dy };
+					dy += h + 30;
+					return { ...n, position: pos };
+				}
+				return n;
+			});
+		});
+	}
+
 	// No eager blob hydration: card faces render from small cached thumbnails
 	// (FileCard → hydrateThumb) and the file panel fetches bytes on open. Keeping
 	// every dropped file's raw bytes in the webview (~60MB+ on file-heavy
@@ -362,6 +424,7 @@
 
 	// Pane click: text tool places a note card; otherwise deselect.
 	function onPaneClick({ event }: { event: MouseEvent }) {
+		if (clusterPicker) { clusterPicker = null; return; } // clicking empty space cancels the picker
 		if (tool.active === 'text') {
 			const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
 			const id = addTextCard(pos);
@@ -410,23 +473,86 @@
 		bubble = { x, y, flow: pos, parentId, quote, overModal };
 	}
 
+	// Resolve the single card a selection belongs to. Walks up from BOTH endpoints and
+	// requires the same card host — a selection spanning two cards (or landing in an
+	// input) has no single owner, so we ignore it. Keeps the popup from mis-anchoring.
+	function selectionHost(sel: Selection): { id: string; overModal: boolean } | null {
+		const hostOf = (node: Node | null) => {
+			const el = node instanceof Element ? node : (node?.parentElement ?? null);
+			if (el?.closest('input, textarea, [contenteditable="true"]')) return null;
+			return el?.closest('[data-card-id]') ?? null;
+		};
+		const a = hostOf(sel.anchorNode);
+		const f = hostOf(sel.focusNode);
+		if (!a || a !== f) return null; // no host, spans cards, or lands in an input
+		return { id: a.getAttribute('data-card-id') as string, overModal: !!a.closest('.backdrop') };
+	}
+
 	function onDocSelect(e: MouseEvent) {
 		const sel = window.getSelection();
 		const text = sel?.toString().trim();
-		if (!text || !sel) return;
-		const anchor = sel.anchorNode;
-		const el = anchor instanceof Element ? anchor : anchor?.parentElement;
-		const host = el?.closest('[data-card-id]');
-		if (!host) return;
-		const parentId = host.getAttribute('data-card-id') as string;
-		const overModal = !!host.closest('.backdrop');
+		if (!text || !sel) { if (pendingBranch) dismissBranch(); return; }
+		const host = selectionHost(sel);
+		if (!host) { if (pendingBranch) dismissBranch(); return; }
 		const rect = sel.getRangeAt(0).getBoundingClientRect();
 		const cx = rect.width ? rect.left + rect.width / 2 : e.clientX;
 		const cy = rect.height ? rect.top + rect.height / 2 : e.clientY;
 		// Button sits just above the selection midpoint.
 		const bx = Math.max(60, Math.min(window.innerWidth - 60, cx));
 		const by = Math.max(40, cy - 52);
-		pendingBranch = { x: bx, y: by, selCx: cx, selCy: cy, parentId, quote: text, overModal };
+		pendingBranch = { x: bx, y: by, selCx: cx, selCy: cy, parentId: host.id, quote: text, overModal: host.overModal };
+	}
+
+	// Selection popup "Edit" (button or `e`): swap the Follow-Up popup for a prompt
+	// bubble that rewrites the selected passage in place instead of branching a new card.
+	function startEdit() {
+		if (!pendingBranch) return;
+		const { selCx, selCy, parentId, quote, overModal } = pendingBranch;
+		pendingBranch = null;
+		bubble = {
+			x: selCx,
+			y: selCy,
+			flow: screenToFlowPosition({ x: selCx, y: selCy }),
+			overModal,
+			edit: { parentId, quote }
+		};
+	}
+
+	// Splice a one-shot rewrite back into the card's markdown by string match. The
+	// autosave effect snapshots the change 400ms later, so it's a normal undo step.
+	// ponytail: literal string replace — fine for the broken-LaTeX / prose fixes this
+	// targets (the selection IS the source text); rendered-math spans won't match, so we
+	// warn instead of silently no-op. Upgrade to offset mapping only if that proves common.
+	async function performEdit(parentId: string, quote: string, instruction: string) {
+		let edited: string;
+		try {
+			edited = await editSelection(quote, instruction);
+		} catch (err) {
+			pushToast(err instanceof Error ? err.message : 'Edit failed');
+			return;
+		}
+		let matched = false;
+		const next = flow.nodes.map((n) => {
+			if (n.id !== parentId) return n;
+			const d = n.data as Record<string, unknown>;
+			if (n.type === 'text' && typeof d.text === 'string' && d.text.includes(quote)) {
+				matched = true;
+				return { ...n, data: { ...d, text: d.text.replace(quote, edited) } };
+			}
+			if (n.type === 'card' && Array.isArray(d.turns)) {
+				const turns = (d.turns as Turn[]).map((t) => {
+					if (!matched && t.answer.includes(quote)) {
+						matched = true;
+						return { ...t, answer: t.answer.replace(quote, edited) };
+					}
+					return t;
+				});
+				return { ...n, data: { ...d, turns } };
+			}
+			return n;
+		});
+		if (!matched) { pushToast("Couldn't locate the selected text to edit."); return; }
+		flow.nodes = next;
 	}
 
 	function confirmBranch() {
@@ -469,7 +595,15 @@
 	// Re-anchor edges to the facing sides whenever a node is dragged. Shared with CC.
 	// Also reflow any cluster tags whose cluster just moved.
 	function onNodeDragStop({ nodes }: { targetNode: unknown; nodes: { id: string }[]; event: MouseEvent | TouchEvent }) {
-		remapEdgeSides(new Set<string>(nodes.map((n) => n.id)));
+		// Dragging a group moves its members too (they keep their relative position),
+		// so their edges need re-anchoring even though only the group id was "dragged".
+		const touched = new Set<string>(nodes.map((n) => n.id));
+		for (const id of [...touched]) {
+			for (const child of flow.nodes) {
+				if (child.parentId === id) touched.add(child.id);
+			}
+		}
+		remapEdgeSides(touched);
 		repositionTags();
 	}
 
@@ -579,6 +713,8 @@
 
 	// Keyboard: delegate to the pure shortcut handler with a state snapshot + actions.
 	function onKeydown(e: KeyboardEvent) {
+		// Cluster-picker mode owns Escape while active (cancel without moving).
+		if (clusterPicker && e.key === 'Escape') { clusterPicker = null; e.preventDefault(); return; }
 		const tag = (e.target as HTMLElement)?.tagName;
 		handleCanvasShortcut(e, {
 			inInput:
@@ -609,6 +745,7 @@
 			},
 			confirmBranch,
 			dismissBranch,
+			startEdit,
 			closeFile: () => {
 				if (splitView.active) closeSplit();
 				else if (secondaryFileId) secondaryFileId = null;
@@ -890,7 +1027,8 @@
 		'align-center-h': AlignCenterHorizontal,
 		'align-center-v': AlignCenterVertical,
 		'distribute-h': AlignHorizontalDistributeCenter,
-		'distribute-v': AlignVerticalDistributeCenter
+		'distribute-v': AlignVerticalDistributeCenter,
+		cluster: Boxes
 	};
 
 	let ctxMenu = $state<{ surface: MenuSurface; nodeId?: string; branchId?: string; x: number; y: number } | null>(null);
@@ -926,6 +1064,9 @@
 			canRedo: canRedo(),
 			canPaste: hasClipboard(),
 			isDriveLinked: !!(node?.data as { drive?: unknown } | undefined)?.drive,
+			hasClusters: flow.nodes.some(
+				(n) => n.type === 'tag' && ((n.data as TagData).anchor?.length ?? 0) >= 2
+			),
 			caps: { clipboard: true, zorder: true, align: true }
 		};
 	}
@@ -1053,6 +1194,11 @@
 			case 'synthesize':
 				doSynthesize();
 				return;
+			case 'move-to-cluster': {
+				const ids = surface === 'multi' ? selectedNodes.map((n) => n.id) : nodeId ? [nodeId] : [];
+				if (ids.length) startClusterPicker(ids);
+				return;
+			}
 			case 'new-card':
 				bubble = { x, y, flow: screenToFlowPosition({ x, y }) };
 				return;
@@ -1205,6 +1351,12 @@
 
 	function submit(text: string) {
 		if (!bubble) return;
+		if (bubble.edit) {
+			const { parentId, quote } = bubble.edit;
+			bubble = null;
+			void performEdit(parentId, quote, text);
+			return;
+		}
 		if (bubble.continueId) {
 			continueCard(bubble.continueId, text);
 			flow.selected = bubble.continueId;
@@ -1262,20 +1414,21 @@
 						onpaneclick={onPaneClick}
 						onnodeclick={({ node }) => onNodeClick(node)}
 					>
-						<ClusterHighlights />
+						<ClusterHighlights picker={!!clusterPicker} onpick={moveToCluster} />
 						<Background bgColor="var(--c-canvas)" patternColor="var(--c-pattern)" gap={28} />
 						<Controls showLock={false} />
 					</SvelteFlow>
 
 					{#if pendingBranch}
-						<button
-							class="branch-trigger glass"
+						<div
+							class="branch-pop"
 							class:is-hiding={branchHiding}
 							style="left: {pendingBranch.x}px; top: {pendingBranch.y}px; z-index: {pendingBranch.overModal ? 200 : 60}"
 							in:scale={reducedMotion() ? { duration: 0 } : { duration: 420, start: 0.5, opacity: 0, easing: backOut }}
-							onmousedown={(e) => e.preventDefault()}
-							onclick={confirmBranch}
-						>Follow Up ↵</button>
+						>
+							<button class="branch-trigger glass" onmousedown={(e) => e.preventDefault()} onclick={confirmBranch}>Follow Up ↵</button>
+							<button class="branch-trigger glass" onmousedown={(e) => e.preventDefault()} onclick={startEdit}>Edit ✎</button>
+						</div>
 					{/if}
 
 					{#if bubble}
@@ -1283,7 +1436,7 @@
 							x={bubble.x}
 							y={bubble.y}
 							z={bubble.overModal ? 200 : 50}
-							placeholder={bubble.continueId ? 'Follow up…' : 'Ask anything…'}
+							placeholder={bubble.edit ? 'Describe the change…' : bubble.continueId ? 'Follow up…' : 'Ask anything…'}
 							onsubmit={submit}
 							oncancel={() => (bubble = null)}
 						/>
@@ -1334,6 +1487,15 @@
 							Cleaning up…
 						</div>
 					{/if}
+
+					{#if clusterPicker}
+						<div class="cleanup-toast" transition:scale={reducedMotion() ? { duration: 0 } : { duration: 180, start: 0.94, easing: backOut, opacity: 0 }}>
+							<Boxes size={13} />
+							Click a cluster to move {clusterPicker.ids.length} item{clusterPicker.ids.length === 1 ? '' : 's'} · Esc to cancel
+						</div>
+					{/if}
+
+					<IndexingToast />
 
 				{#if openFileId}
 					<FilePanel
@@ -1594,9 +1756,21 @@
 	@keyframes spin {
 		to { transform: rotate(360deg); }
 	}
-	.branch-trigger {
+	/* Selection popup: a fixed container centred on the selection, holding the
+	   Follow Up + Edit pills side by side. */
+	.branch-pop {
 		position: fixed;
 		transform: translate(-50%, -50%);
+		display: flex;
+		gap: 6px;
+		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
+	}
+	.branch-pop.is-hiding {
+		transform: translate(-50%, -50%) scale(0.82);
+		opacity: 0;
+		pointer-events: none;
+	}
+	.branch-trigger {
 		padding: 8px 18px;
 		border-radius: var(--r-pill);
 		border: none;
@@ -1609,12 +1783,7 @@
 		transition: transform 180ms var(--ease-glass), opacity 180ms ease;
 	}
 	.branch-trigger:active {
-		transform: translate(-50%, -50%) scale(0.93);
-	}
-	.branch-trigger.is-hiding {
-		transform: translate(-50%, -50%) scale(0.82);
-		opacity: 0;
-		pointer-events: none;
+		transform: scale(0.93);
 	}
 
 	/* Resize controls (SvelteFlow NodeResizer): invisible paint, enlarged hit area.

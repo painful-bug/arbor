@@ -53,4 +53,25 @@ describe("agent routes", () => {
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
 	});
+
+	it("POST /api/agent/edit-selection rejects missing fields with 400", async () => {
+		const res = await api("/api/agent/edit-selection", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ text: "$E=mc^2$" }), // no instruction
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("POST /api/agent/edit-selection degrades gracefully (never an unhandled 500)", async () => {
+		const res = await api("/api/agent/edit-selection", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ text: "E=mc^2", instruction: "wrap in LaTeX math" }),
+		});
+		// Outcome depends on ambient provider config (shared across the suite): 400 when
+		// nothing is configured, 200 when a real provider answers, 502 on an upstream
+		// error — but never an unhandled 500.
+		expect(res.status).not.toBe(500);
+	}, 15_000);
 });

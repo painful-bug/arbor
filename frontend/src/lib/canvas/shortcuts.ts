@@ -29,6 +29,7 @@ export interface CanvasShortcutDeps {
 	closeOverlays(): void; // search + palette + KB overlay
 	confirmBranch(): void;
 	dismissBranch(): void;
+	startEdit(): void;
 	closeFile(): void;
 	closeExpand(): void;
 	closeChatAndSidebar(): void;
@@ -108,6 +109,12 @@ export function handleCanvasShortcut(e: KeyboardEvent, a: CanvasShortcutDeps): b
 		if (key === "Enter" && a.pendingBranch) {
 			e.preventDefault();
 			a.confirmBranch();
+			return true;
+		}
+		// `e` on an active selection popup: edit the passage in place (vs. Enter = branch).
+		if ((key === "e" || key === "E") && a.pendingBranch) {
+			e.preventDefault();
+			a.startEdit();
 			return true;
 		}
 		// Backspace/Delete: delete selected nodes (also prevents browser back-nav in Tauri).

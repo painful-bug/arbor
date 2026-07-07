@@ -152,9 +152,9 @@ import CardHandles from './CardHandles.svelte';
 		{/if}
 	</div>
 
-	<!-- indexing progress bar — eases toward ~90% then vanishes when indexed -->
+	<!-- indexing indicator: a multicoloured beam of light circling the perimeter -->
 	{#if file.status === 'indexing'}
-		<div class="progress"><div class="progress-fill"></div></div>
+		<div class="indexing-beam" aria-hidden="true"></div>
 	{/if}
 
 	<!-- filename + status overlay bar at bottom -->
@@ -252,27 +252,55 @@ import CardHandles from './CardHandles.svelte';
 		padding-bottom: 36px; /* shift up to account for info-bar */
 	}
 
-	/* ponytail: estimated progress — real per-stage % needs backend SSE, but the
-	   long pole (OCR/extract) is one opaque await, so an eased bar reads better.
-	   Sits just above the info-bar; unmounts when status leaves 'indexing'. */
-	.progress {
+	/* Indexing beam: a multicoloured light circling the card perimeter. Reuses the
+	   selected-node breathing palette (magenta→violet, +success green) as a rotating
+	   conic ring with a bright travelling hotspot, masked to a thin border so it hugs
+	   the edge. Unmounts when status leaves 'indexing'. Under reduced motion the global
+	   rule (tokens.css) freezes the spin to a static multicoloured ring. */
+	@property --beam-angle {
+		syntax: '<angle>';
+		initial-value: 0deg;
+		inherits: false;
+	}
+	.indexing-beam {
 		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 36px;
-		height: 3px;
-		background: rgba(255, 255, 255, 0.25);
-		z-index: 1;
+		inset: 0;
+		border-radius: var(--r-lg);
+		padding: 2.5px;
+		pointer-events: none;
+		z-index: 5;
+		background:
+			conic-gradient(
+				from var(--beam-angle),
+				transparent 0deg,
+				transparent 250deg,
+				#fff 300deg,
+				transparent 330deg,
+				transparent 360deg
+			),
+			conic-gradient(
+				from var(--beam-angle),
+				var(--c-edge-selected),
+				var(--c-edge-semantic),
+				var(--c-success),
+				var(--c-accent-magenta),
+				var(--c-edge-selected)
+			);
+		-webkit-mask:
+			linear-gradient(#000 0 0) content-box,
+			linear-gradient(#000 0 0);
+		mask:
+			linear-gradient(#000 0 0) content-box,
+			linear-gradient(#000 0 0);
+		-webkit-mask-composite: xor;
+		mask-composite: exclude;
+		filter: drop-shadow(0 0 3px rgba(255, 61, 139, 0.55));
+		animation: beam-spin 2.4s linear infinite;
 	}
-	.progress-fill {
-		height: 100%;
-		width: 8%;
-		background: var(--c-ink, #2563eb);
-		animation: index-progress 12s cubic-bezier(0.15, 0.85, 0.3, 1) forwards;
-	}
-	@keyframes index-progress {
-		0%   { width: 8%; }
-		100% { width: 90%; }
+	@keyframes beam-spin {
+		to {
+			--beam-angle: 360deg;
+		}
 	}
 
 	/* Bottom overlay */

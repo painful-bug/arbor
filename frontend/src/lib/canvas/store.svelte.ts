@@ -23,6 +23,7 @@ import {
 import { clusterColor, clusterKey, matchCluster } from "./cluster-tags";
 import { snippetOf } from "./context";
 import { createHistory } from "./history";
+import { finishIndexing, startIndexing } from "./indexing.svelte";
 import { cleanupFileNodes, createKbSync } from "./kb-sync";
 import { findFreeOffset } from "./mindmap-layout";
 import {
@@ -472,7 +473,10 @@ export function addCard(
 		workflow: opts.workflow ?? settings.workflow,
 	};
 	flow.nodes = [...flow.nodes, buildCardNode({ kind: "card", id, position, data })];
-	if (opts.parentId) flow.edges = [...flow.edges, childEdge(opts.parentId, id, true)];
+	if (opts.parentId) {
+		flow.edges = [...flow.edges, childEdge(opts.parentId, id, true)];
+		remapEdgeSides(new Set([id]));
+	}
 	return id;
 }
 
@@ -484,7 +488,10 @@ export function addWebCard(
 	const id = nextNodeId();
 	const data: WebData = { url, block: nextBlock() };
 	flow.nodes = [...flow.nodes, buildCardNode({ kind: "web", id, position, data })];
-	if (opts.parentId) flow.edges = [...flow.edges, childEdge(opts.parentId, id)];
+	if (opts.parentId) {
+		flow.edges = [...flow.edges, childEdge(opts.parentId, id)];
+		remapEdgeSides(new Set([id]));
+	}
 	return id;
 }
 
@@ -503,6 +510,7 @@ export function addFileCard(
 		path: opts.path,
 	};
 	flow.nodes = [...flow.nodes, buildCardNode({ kind: "file", id, position, data })];
+	startIndexing(id); // file cards spawn 'indexing' — register with the toolbar toast
 	return id;
 }
 
@@ -523,6 +531,7 @@ export function addSourceNote(fileId: string, page: number, text: string): strin
 	const data: TextData = { text, block: nextBlock(), sourceRef: { fileId, page } };
 	flow.nodes = [...flow.nodes, buildCardNode({ kind: "text", id, position, data })];
 	flow.edges = [...flow.edges, childEdge(fileId, id)];
+	remapEdgeSides(new Set([id]));
 	return id;
 }
 
@@ -575,6 +584,7 @@ export function addMindmap(fileId: string, nodes: MindNode[]): string | null {
 		buildCardNode({ kind: "mindmap", id, position: t, data }),
 	];
 	flow.edges = [...flow.edges, childEdge(fileId, id)];
+	remapEdgeSides(new Set([id]));
 	return id;
 }
 
@@ -654,6 +664,9 @@ export function pinMindmapBranch(nodeId: string, branchId: string): string | nul
 
 export function setFileStatus(id: string, status: FileData["status"]): void {
 	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, status } } : n));
+	// Keep the aggregate indexing toast in sync at the one status choke point.
+	if (status === "indexing") startIndexing(id);
+	else finishIndexing(id);
 }
 
 export function setFilePreview(id: string, preview: string): void {
@@ -791,10 +804,16 @@ export function nodeCenter(n: {
 	measured?: { width?: number; height?: number };
 	width?: number;
 	height?: number;
+	parentId?: string;
 }): { x: number; y: number } {
 	const w = n.measured?.width ?? n.width ?? 400;
 	const h = n.measured?.height ?? n.height ?? 200;
-	return { x: n.position.x + w / 2, y: n.position.y + h / 2 };
+	// Grouped nodes' position is relative to their group frame — add its offset
+	// (single-level nesting only; groups can't contain groups in this codebase).
+	const parent = n.parentId ? flow.nodes.find((p) => p.id === n.parentId) : undefined;
+	const ox = parent?.position.x ?? 0;
+	const oy = parent?.position.y ?? 0;
+	return { x: ox + n.position.x + w / 2, y: oy + n.position.y + h / 2 };
 }
 
 /** The side of `from` that faces `to` — picked by the dominant axis between centers. */

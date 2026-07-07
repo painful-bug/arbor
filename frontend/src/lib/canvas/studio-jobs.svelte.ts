@@ -16,7 +16,8 @@ export function isJobRunning(kind: "mindmap" | "study", fileId: string): boolean
 	return runningJobs[`${kind}:${fileId}`] === true;
 }
 
-function pushToast(message: string): void {
+// Shared bottom-centre toast (studio job errors + in-place edit failures). Auto-dismisses.
+export function pushToast(message: string): void {
 	const id = ++toastSeq;
 	studioToasts.push({ id, message });
 	setTimeout(() => {

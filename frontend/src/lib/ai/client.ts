@@ -176,6 +176,20 @@ export async function testConnection(provider: Provider): Promise<string | null>
 	}
 }
 
+// One-shot in-place rewrite of a selected passage (fix LaTeX, reword, etc.). Returns
+// the rewritten text, or throws with a user-facing message on failure.
+export async function editSelection(text: string, instruction: string): Promise<string> {
+	const { apiFetch } = await import("$lib/api");
+	const res = await apiFetch("/api/agent/edit-selection", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ text, instruction }),
+	});
+	const body = (await res.json().catch(() => ({}))) as { edited?: string; error?: string };
+	if (!res.ok || !body.edited) throw new Error(body.error ?? `Edit failed (${res.status})`);
+	return body.edited;
+}
+
 // ── Per-canvas knowledge base ────────────────────────────────────────────────
 
 // Clear all KB content for a canvas.

@@ -135,3 +135,19 @@ describe("group", () => {
 		expect(entry?.hint).toBe("⇧G");
 	});
 });
+
+describe("move to cluster", () => {
+	for (const surface of ["card", "file", "text", "multi"] as const) {
+		it(`${surface}: shown only when clusters exist`, () => {
+			expect(ids(surface, { ...base, selectionCount: 2 })).not.toContain("move-to-cluster");
+			expect(ids(surface, { ...base, selectionCount: 2, hasClusters: true })).toContain(
+				"move-to-cluster",
+			);
+		});
+	}
+	it("never offered on the pane surface", () => {
+		expect(ids("pane", { ...base, hasNodes: true, hasClusters: true })).not.toContain(
+			"move-to-cluster",
+		);
+	});
+});
