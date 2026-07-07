@@ -200,6 +200,32 @@ Biome is the formatter — never hand-format and never fight its output; run `--
 
 ---
 
+## Cross-platform (macOS + Windows)
+
+Arbor is one Tauri codebase for both OSes. **macOS is priority; Windows is
+secondary but mandatory** — every feature added, changed, or removed must work
+on both, without either platform's code path influencing the other's.
+
+**Rule: no raw OS branch inline.** Every divergence goes through exactly one
+named seam per layer:
+
+| Layer | Seam | Rule |
+|---|---|---|
+| Backend (TS) | `backend/src/platform.ts` | No inline `process.platform`, no hardcoded unix paths, no raw `":"`/`";"` PATH-join. Import `isWindows`/`isMac`/`isLinux`/`EXE`/`PATH_SEP`/`ollamaSearchDirs()` from here. |
+| Frontend (Svelte/TS) | `frontend/src/lib/platform.ts` | UI/CSS OS branches read `isMac` from here (e.g. macOS-only traffic-light chrome in `+layout.svelte`/`Sidebar.svelte`). No `navigator.platform` sniffing elsewhere. |
+| Rust shell | `#[cfg(target_os = "…")]` / `cfg!(...)` | Already the idiom (`backend.rs`'s `bun.exe` resolution, `lib.rs`'s macOS-only app-menu items). Keep OS-specific menu/window/process code behind it, never a runtime `if` that silently no-ops on the other OS. |
+| Packaging | `tauri.conf.json` `bundle.windows`/`bundle.macOS` blocks + separate `build-macos`/`build-windows` CI jobs (`.github/workflows/build.yml`) | Platform bundling stays in its own config block or CI job; never a shared step gated by an inline `if`. |
+
+`ci.yml`'s `quality` job runs on a `[macos-latest, windows-latest]` matrix
+(backend typecheck + tests both OSes; Biome lint stays macOS-only since
+formatting is OS-independent) specifically to catch a Windows-breaking path
+assumption before it reaches the installer build.
+
+Before landing any feature that touches paths, spawned processes, window
+chrome, or native menus: check it against the seam table above, and mentally
+run it on the *other* OS — if you can't say what happens there, it needs a
+branch through the seam, not an assumption baked into the shared code.
+
 ## Core directives (do not violate)
 
 1. **No feature may regress** — only improve.

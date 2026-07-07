@@ -12,6 +12,12 @@ dependent on any key. This eliminates transitive dependencies in a relational sc
 `.trim();
 
 describe("KB routes", () => {
+	// 20s: this is typically the first-ever KB call in the whole test run, which
+	// pays a one-time cold-start cost (dynamic `@xenova/transformers` import +
+	// native onnxruntime thread-pool init, see kb/embeddings.ts) on top of the
+	// actual embed. Under `bun test`'s default parallel-file execution that cost
+	// can exceed the 5s default timeout purely from CPU contention with other
+	// test files' own cold starts — not a logic bug.
 	it("POST /api/kb/:canvas/files → 200, chunks > 0 for plain text", async () => {
 		const res = await api("/api/kb/test-canvas/files", {
 			method: "POST",
@@ -22,7 +28,7 @@ describe("KB routes", () => {
 		const { chunks, error } = (await res.json()) as { chunks?: number; error?: string };
 		expect(error).toBeUndefined();
 		expect(chunks).toBeGreaterThan(0);
-	});
+	}, 20_000);
 
 	it("GET /api/kb/:canvas/search → 200, results array", async () => {
 		const res = await api("/api/kb/empty-canvas/search?q=anything&k=4");

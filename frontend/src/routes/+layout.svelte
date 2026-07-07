@@ -10,6 +10,7 @@
 	import { maybeCheckUpdates } from '$lib/update-check';
 	import { initPower } from '$lib/power.svelte';
 	import { routeContextMenu, type TargetLike } from '$lib/context-menu-route';
+	import { isMac } from '$lib/platform';
 
 	let { children } = $props();
 
@@ -74,8 +75,11 @@
 
 <!-- Full-width drag strip behind sidebar and toolbar (z-index 30).
      data-tauri-drag-region makes the empty titlebar area drag the window.
-     Double-click triggers macOS zoom/restore natively. -->
-<div class="titlebar-drag" data-tauri-drag-region></div>
+     Double-click triggers macOS zoom/restore natively. macOS-only: Windows has
+     its own native title bar and needs no reserved drag band underneath it. -->
+{#if isMac}
+	<div class="titlebar-drag" data-tauri-drag-region></div>
+{/if}
 
 <Sidebar />
 

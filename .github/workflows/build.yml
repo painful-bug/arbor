@@ -3,6 +3,8 @@ name: Build Installers
 on:
   push:
     branches: [main]
+  workflow_dispatch: {} # manual trigger — lets the Windows/macOS installers be
+    # built and inspected from any branch without pushing to main.
 
 permissions:
   contents: write
@@ -386,6 +388,8 @@ jobs:
             ## Install
 
             **macOS:** download `Arbor-${{ steps.version.outputs.version }}-macos.dmg`, open it, then drag `Arbor.app` into `/Applications`. (A `.zip` is also attached if you prefer.)
+
+            Arbor isn't notarized by Apple yet, so on first launch macOS may say it "cannot verify" the developer. If so: open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to Arbor — no Terminal needed, one-time per version.
 
             **Windows:** download `Arbor-${{ steps.version.outputs.version }}-windows-setup.exe` and run it.
           generate_release_notes: true

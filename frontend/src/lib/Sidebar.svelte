@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { ui, newCanvas } from '$lib/canvas/store.svelte';
 	import { hasUpdate } from '$lib/updates/store.svelte';
+	import { isMac } from '$lib/platform';
 	import { LayoutGrid, Library as LibraryIcon, Plus, Settings } from '@lucide/svelte';
 
 	const onCanvas = $derived($page.url.pathname === '/');
@@ -29,7 +30,7 @@
 <aside class="sidebar" class:expanded={ui.sidebarExpanded}>
 	<!-- Traffic-light safe zone — drag region so this strip drags the window.
 	     The toggle button sits inside and stays clickable (Tauri hit-tests buttons first). -->
-	<div class="tl-zone" data-tauri-drag-region>
+	<div class="tl-zone" class:mac={isMac} data-tauri-drag-region>
 	<!-- toggle -->
 	<button
 		class="nav-item toggle"
@@ -105,13 +106,17 @@
 
 	/* Traffic-light safe zone: reserves 48px for the native window controls.
 	   data-tauri-drag-region on this element lets the user drag the window by
-	   clicking the empty area above the toggle button. */
+	   clicking the empty area above the toggle button. Windows has its own
+	   native title bar (no overlay/traffic-lights), so this reservation only
+	   applies on macOS — .mac is toggled from isMac (frontend/src/lib/platform.ts). */
 	.tl-zone {
 		width: 100%;
-		/* 48px matches the drag strip in +layout.svelte */
-		padding-top: 48px;
 		box-sizing: border-box;
 		/* ponytail: no extra background — inherits sidebar transparency */
+	}
+	.tl-zone.mac {
+		/* 48px matches the drag strip in +layout.svelte */
+		padding-top: 48px;
 	}
 
 	/* toggle glyph keeps full-ink color; wordmark sits in its label slot */

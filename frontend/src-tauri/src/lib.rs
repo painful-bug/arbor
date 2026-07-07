@@ -64,6 +64,10 @@ pub fn run() {
             {
                 use tauri::menu::{MenuBuilder, SubmenuBuilder, PredefinedMenuItem};
 
+                // Services/Hide/Hide Others/Show All are a macOS-only app-menu idiom
+                // (NSApp services + app hiding). Windows has no equivalent concept,
+                // so its app menu keeps just About + Quit.
+                #[cfg(target_os = "macos")]
                 let app_menu = SubmenuBuilder::new(app, "Arbor")
                     .item(&PredefinedMenuItem::about(app, None, None)?)
                     .separator()
@@ -72,6 +76,12 @@ pub fn run() {
                     .item(&PredefinedMenuItem::hide(app, None)?)
                     .item(&PredefinedMenuItem::hide_others(app, None)?)
                     .item(&PredefinedMenuItem::show_all(app, None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::quit(app, None)?)
+                    .build()?;
+                #[cfg(not(target_os = "macos"))]
+                let app_menu = SubmenuBuilder::new(app, "Arbor")
+                    .item(&PredefinedMenuItem::about(app, None, None)?)
                     .separator()
                     .item(&PredefinedMenuItem::quit(app, None)?)
                     .build()?;

@@ -30,14 +30,6 @@ export const ARRANGE_REF_GAP = 8;
 /** Chunks contextualized per parallel LLM batch. */
 export const CONTEXTUALIZE_BATCH = 5;
 
-/** Common install locations searched for the ollama binary on macOS. */
-export const OLLAMA_SEARCH_PATHS: string[] = [
-	"/opt/homebrew/bin",
-	"/usr/local/bin",
-	"/usr/bin",
-	process.env.HOME ? `${process.env.HOME}/.local/bin` : "",
-].filter(Boolean);
-
 /** SSE comment-ping interval — under typical 30s proxy/TCP idle cutoffs. */
 export const HEARTBEAT_MS = 25_000;
 
