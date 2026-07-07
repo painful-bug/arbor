@@ -13,6 +13,7 @@
 	} from '$lib/updates/store.svelte';
 	import ProviderCard from './ProviderCard.svelte';
 	import OllamaPanel from './OllamaPanel.svelte';
+	import GoogleAccountCard from './GoogleAccountCard.svelte';
 
 	let appVersion = $state('');
 	onMount(async () => {
@@ -239,6 +240,25 @@
 					/>
 				</div>
 			{/if}
+			<label class="toggle-row">
+				<input type="checkbox" bind:checked={settings.highlightClusters} onchange={persistSettings} />
+				<span>Highlight clusters</span>
+			</label>
+			<p class="sub">Tints each Clean Up cluster with a soft background and an animated dotted border.</p>
+			{#if settings.highlightClusters}
+				<div class="field">
+					<label for="cluster-shape">Highlight shape</label>
+					<select
+						id="cluster-shape"
+						class="select"
+						bind:value={settings.clusterShape}
+						onchange={persistSettings}
+					>
+						<option value="squircle">Squircle</option>
+						<option value="circle">Circle</option>
+					</select>
+				</div>
+			{/if}
 		</section>
 
 		<!-- Tools -->
@@ -256,6 +276,9 @@
 
 		<!-- Ollama -->
 		<OllamaPanel />
+
+		<!-- Google Drive -->
+		<GoogleAccountCard />
 
 		<!-- Web Search -->
 		<section class="card">

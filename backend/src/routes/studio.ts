@@ -22,23 +22,26 @@ export interface MindNode {
 }
 
 const MINDMAP_SYSTEM =
-	"You are an expert at distilling documents into hierarchical mind maps. " +
-	"You reply with ONLY valid JSON, no prose, no markdown fences.";
+	"You are an expert knowledge cartographer. You turn a document into a precise, " +
+	"deeply-structured mind map that faithfully mirrors the document's own concepts " +
+	"and hierarchy. You reply with ONLY valid JSON — no prose, no markdown fences.";
 
 const MINDMAP_PROMPT = (source: string, text: string) =>
-	`Build a mind map of the document "${source}" from the content below.
+	`Build a detailed, precise mind map of the document "${source}" using ONLY the content below.
 
 <content>
 ${text}
 </content>
 
-Return JSON of this exact shape:
-{"root":"<the central topic, 2-5 words>","nodes":[{"title":"<branch topic>","summary":"<one sentence>","children":[{"title":"...","summary":"..."}]}]}
+Return JSON of this exact recursive shape (children nest to any depth):
+{"root":"<the document's central topic, 2-5 words>","nodes":[{"title":"<concept>","summary":"<one specific sentence grounded in the text>","children":[{"title":"...","summary":"...","children":[]}]}]}
 
-Rules:
-- 3 to 6 top-level branches; each with 2 to 5 children.
-- Titles are short (2-6 words). Summaries are one plain sentence.
-- Base it strictly on the content. Output ONLY the JSON object.`;
+Requirements:
+- Precision & scope: map every substantive concept the document actually discusses — no more, no less. Do not invent, generalize beyond the text, or pad with outside knowledge.
+- Structure: nest concepts to whatever depth the material warrants (typically 2-4 levels; go deeper when the document does). A node's children are its sub-concepts, parts, causes, steps, or examples exactly as the text presents them.
+- Coverage: use as many nodes and edges as the document requires — there is NO upper limit. A dense document yields a dense map.
+- Titles: short noun phrases (2-6 words). Summaries: one plain, specific sentence stating the actual fact or detail from the text (never "this section covers…").
+- Every node must trace to something in the content. Output ONLY the JSON object.`;
 
 // First 800 chars of model output for logs — enough to spot a malformed shape
 // without dumping a whole document into the log stream.
@@ -62,11 +65,16 @@ export function parseJson(raw: string): unknown {
 	return JSON.parse(s);
 }
 
-// Flatten the LLM's nested tree into id'd nodes with parent pointers.
-export function flatten(tree: {
-	root?: string;
-	nodes?: { title?: string; summary?: string; children?: { title?: string; summary?: string }[] }[];
-}): MindNode[] {
+// A node in the LLM's nested mind-map tree — recursive to any depth.
+interface TreeNode {
+	title?: string;
+	summary?: string;
+	children?: TreeNode[];
+}
+
+// Flatten the LLM's nested tree (arbitrary depth) into id'd nodes with parent
+// pointers. Titleless nodes (and their subtrees) are dropped.
+export function flatten(tree: { root?: string; nodes?: TreeNode[] }): MindNode[] {
 	const out: MindNode[] = [];
 	const rootId = "n0";
 	out.push({
@@ -76,25 +84,20 @@ export function flatten(tree: {
 		parent: null,
 	});
 	let counter = 1;
-	for (const branch of tree.nodes ?? []) {
-		if (!branch?.title) continue;
-		const bid = `n${counter++}`;
-		out.push({
-			id: bid,
-			title: branch.title.slice(0, 80),
-			summary: (branch.summary ?? "").slice(0, 240),
-			parent: rootId,
-		});
-		for (const child of branch.children ?? []) {
-			if (!child?.title) continue;
+	const walk = (children: TreeNode[] | undefined, parent: string) => {
+		for (const node of children ?? []) {
+			if (!node?.title) continue;
+			const id = `n${counter++}`;
 			out.push({
-				id: `n${counter++}`,
-				title: child.title.slice(0, 80),
-				summary: (child.summary ?? "").slice(0, 240),
-				parent: bid,
+				id,
+				title: node.title.slice(0, 80),
+				summary: (node.summary ?? "").slice(0, 240),
+				parent,
 			});
+			walk(node.children, id);
 		}
-	}
+	};
+	walk(tree.nodes, rootId);
 	return out;
 }
 
@@ -114,8 +117,10 @@ studioRoutes.post("/:canvas/mindmap", async (c) => {
 		chars: text.length,
 	});
 
-	const raw = await chatComplete(MINDMAP_PROMPT(source, text), 2000, MINDMAP_SYSTEM, {
+	// Generous token budget: detailed maps are the whole point, so don't clip the tree.
+	const raw = await chatComplete(MINDMAP_PROMPT(source, text), 4000, MINDMAP_SYSTEM, {
 		json: true,
+		tier: "small",
 	});
 	if (!raw.trim()) {
 		// No provider/key configured, or the model returned nothing.
@@ -234,7 +239,10 @@ studioRoutes.post("/:canvas/generate", async (c) => {
 		chars: text.length,
 	});
 
-	const raw = await chatComplete(STUDY_PROMPT(source, text), 2500, STUDY_SYSTEM, { json: true });
+	const raw = await chatComplete(STUDY_PROMPT(source, text), 2500, STUDY_SYSTEM, {
+		json: true,
+		tier: "small",
+	});
 	if (!raw.trim()) {
 		log.warn("studio", `study no output [${source}]`, { canvas });
 		return c.json({ error: "no_provider", items: [] }, 422);

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { SvelteFlow, Background, Controls, useSvelteFlow } from '@xyflow/svelte';
+	import type { XYPosition } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import { onMount, tick } from 'svelte';
 	import CardNode from './CardNode.svelte';
@@ -8,8 +9,10 @@
 	import UserTextCard from './UserTextCard.svelte';
 	import GroupNode from './GroupNode.svelte';
 	import UserTagCard from './UserTagCard.svelte';
+	import MindmapNode from './MindmapNode.svelte';
 	import TextView from './TextView.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
+	import ClusterHighlights from './ClusterHighlights.svelte';
 	import PromptBubble from './PromptBubble.svelte';
 	import CardExpand from './CardExpand.svelte';
 	import ConnectedEdge from './ConnectedEdge.svelte';
@@ -51,7 +54,10 @@
 		pushHistory,
 		undo,
 		redo,
+		canUndo,
+		canRedo,
 		groupNodes,
+		ungroupNodes,
 		cleanUp,
 		nodeCenter,
 		facingSide,
@@ -59,21 +65,40 @@
 		repositionTags,
 		settings,
 		init,
-		synthesizeSelection
+		synthesizeSelection,
+		retryCard,
+		deleteNodes,
+		setMindmapExpandAll,
+		pinMindmapBranch,
+		bringToFront,
+		sendToBack,
+		setLocked,
+		applyPositions
 	} from './store.svelte';
 	import Library from './Library.svelte';
 	import FilePanel from './FilePanel.svelte';
 	import FileToolbar from './FileToolbar.svelte';
 	import CardContextMenu, { type MenuItem } from './CardContextMenu.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
+	import DriveConnectDialog from './DriveConnectDialog.svelte';
+	import { importDriveUrl, isDriveUrl, resyncDriveNode } from './drive';
 	import NoteNotifications from './NoteNotifications.svelte';
 	import { splitView } from './split-view.svelte';
 	import type { PaneController } from './pane-controller.svelte';
 	import {
 		FileText, Columns2, Brain, Layers, MessageSquare, X, Copy, Combine, Trash2,
 		Sparkles, Maximize, Search, Hand, MousePointer2, Type, Spline, Palette,
-		Plus, Microscope, Hexagon, Undo2, Redo2, Download, SunMoon, Settings
+		Plus, Microscope, Hexagon, Undo2, Redo2, Download, SunMoon, Settings, Ungroup,
+		RotateCcw, RotateCw, ArrowUpRight, Pencil, Users, UnfoldVertical, FoldVertical,
+		Pin, Crosshair, RefreshCw, Group as GroupIcon, Scissors, ClipboardPaste,
+		BringToFront, SendToBack, Lock, LockOpen, AlignStartVertical, AlignEndVertical,
+		AlignStartHorizontal, AlignEndHorizontal, AlignCenterHorizontal, AlignCenterVertical,
+		AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter
 	} from '@lucide/svelte';
+	import { menuItemsFor, type MenuSurface, type MenuCtx, type MenuEntry } from './menu-items';
+	import { cardTitle, cardPlainText } from './cards';
+	import { copySelection, pasteAt, hasClipboard, isInternalPaste } from './clipboard';
+	import { align, distribute, type Box } from './align';
 	import { apiFetch } from '$lib/api';
 	import { asUrl } from '$lib/url';
 	import { putFileBlob, deleteFileBlob, kindOf, extractText, mimeFromExt, canUseFs, type FileKind } from '$lib/files';
@@ -89,9 +114,10 @@
 	import { reducedMotion } from '$lib/theme/motion.svelte';
 	import { swoop } from '$lib/theme/animations';
 	import { power } from '$lib/power.svelte';
+	import { openExternal } from '$lib/web';
 
 	const { screenToFlowPosition, fitView, setCenter, getZoom } = useSvelteFlow();
-	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode, tag: UserTagCard };
+	const nodeTypes = { card: CardNode, file: FileCard, web: WebCard, text: UserTextCard, group: GroupNode, tag: UserTagCard, mindmap: MindmapNode };
 	// 'bezier' isn't a built-in xyflow edge-type key (only 'default' is) — manual
 	// connect-tool edges and autolink semantic edges both set type:'bezier'
 	// explicitly (see addManualEdge / autolink.ts), so register it too.
@@ -492,10 +518,14 @@
 	}
 
 	// Frame a file's mind map — reuses the global-search swoop (animateViewport keeps
-	// culling suspended for a buttery tween). Fits just the map's tagged cards.
+	// culling suspended for a buttery tween). Covers both the current single-node
+	// mindmap (data.fileId) and legacy per-topic card blooms (data.mindmapOf).
 	function focusMindmap(fileId: string) {
 		const ids = flow.nodes
-			.filter((n) => (n.data as Record<string, unknown>)?.mindmapOf === fileId)
+			.filter((n) => {
+				const d = n.data as Record<string, unknown>;
+				return (n.type === 'mindmap' && d.fileId === fileId) || d.mindmapOf === fileId;
+			})
 			.map((n) => ({ id: n.id }));
 		if (!ids.length) return;
 		void animateViewport(() =>
@@ -511,11 +541,40 @@
 	function onPaste(e: ClipboardEvent) {
 		const tag = (e.target as HTMLElement)?.tagName;
 		if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-		const url = asUrl(e.clipboardData?.getData('text') ?? '');
+		const text = e.clipboardData?.getData('text') ?? '';
+		const pos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+		if (isInternalPaste(text)) {
+			e.preventDefault();
+			void pasteAt(pos).then((ids) => {
+				if (ids.length) flow.nodes = flow.nodes.map((n) => ({ ...n, selected: ids.includes(n.id) }));
+			});
+			return;
+		}
+		if (isDriveUrl(text)) {
+			e.preventDefault();
+			void handleDrivePaste(text, pos);
+			return;
+		}
+		const url = asUrl(text);
 		if (!url) return;
 		e.preventDefault();
-		const pos = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 		flow.selected = addWebCard(pos, url);
+	}
+
+	let showDriveConnect = $state(false);
+	let pendingDriveImport = $state<{ url: string; at: XYPosition } | null>(null);
+	let confirmResyncId = $state<string | null>(null);
+
+	async function handleDrivePaste(url: string, at: XYPosition) {
+		try {
+			const result = await importDriveUrl(url, at);
+			if (result === 'needs-connect') {
+				pendingDriveImport = { url, at };
+				showDriveConnect = true;
+			}
+		} catch (err) {
+			console.error('drive import failed', err);
+		}
 	}
 
 	// Keyboard: delegate to the pure shortcut handler with a state snapshot + actions.
@@ -535,6 +594,7 @@
 			toolActive: tool.active,
 			connectPending: !!tool.connectFrom,
 			selectionCount: selectedNodes.length,
+			hasDocSelection: !!window.getSelection()?.toString(),
 
 			toggleSearch: () => (searchState.open ? closeSearch() : openSearch()),
 			focusKbSearch: () => kbOverlayRef?.focusSearch(),
@@ -578,10 +638,17 @@
 				return true;
 			},
 			duplicateSelection: duplicateSelected,
+			copySelection: (cut) => void copySelection(cut),
 			undo: doUndo,
 			redo: doRedo,
 			fitView: doFitView,
 			groupSelection: () => groupNodes(flow.nodes.filter((n) => n.selected).map((n) => n.id)),
+			ungroupSelection: () => {
+				const g = flow.nodes.find((n) => n.selected && n.type === 'group');
+				if (!g) return false;
+				ungroupNodes(g.id);
+				return true;
+			},
 			cleanUp: () => void doCleanUp(),
 			openSettings: () => goto('/settings'),
 			toggleChat: () => (chatOpen = !chatOpen)
@@ -610,7 +677,8 @@
 		window.addEventListener('arbor:mindmap', onMindmapEvent);
 		window.addEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 		window.addEventListener('arbor:openfile', onOpenFileEvent);
-		window.addEventListener('arbor:filemenu', onFileMenuEvent);
+		window.addEventListener('arbor:nodemenu', onNodeMenuEvent);
+		window.addEventListener('arbor:panemenu', onPaneMenuEvent);
 		window.addEventListener('arbor:filechat', onFileChatEvent);
 		window.addEventListener('keydown', onKeydown);
 		document.addEventListener('mouseup', onDocSelect);
@@ -660,7 +728,8 @@
 			window.removeEventListener('arbor:mindmap', onMindmapEvent);
 			window.removeEventListener('arbor:focus-mindmap', onFocusMindmapEvent);
 			window.removeEventListener('arbor:openfile', onOpenFileEvent);
-			window.removeEventListener('arbor:filemenu', onFileMenuEvent);
+			window.removeEventListener('arbor:nodemenu', onNodeMenuEvent);
+			window.removeEventListener('arbor:panemenu', onPaneMenuEvent);
 			window.removeEventListener('arbor:filechat', onFileChatEvent);
 			window.removeEventListener('keydown', onKeydown);
 			document.removeEventListener('mouseup', onDocSelect);
@@ -765,26 +834,313 @@
 	}
 
 	// ── Right-click context menu ─────────────────────────────────────────────────
-	let cardMenu = $state<{ fileId: string; x: number; y: number } | null>(null);
-	function onFileMenuEvent(e: Event) {
-		const { fileId, x, y } = (e as CustomEvent).detail;
-		cardMenu = { fileId, x, y };
+	// One menu state for every surface (card/web/file/text/tag/mindmap/group/multi/
+	// pane); content comes from the pure menu-items.ts builder, icons are mapped
+	// here (Canvas is the only place that imports Svelte components).
+	const MENU_ICONS: Record<string, typeof FileText> = {
+		continue: MessageSquare,
+		retry: RotateCcw,
+		'copy-answer': Copy,
+		'copy-text': Copy,
+		duplicate: Copy,
+		rename: Pencil,
+		delete: Trash2,
+		reload: RotateCw,
+		'open-browser': ArrowUpRight,
+		clip: Download,
+		'copy-url': Copy,
+		open: FileText,
+		split: Columns2,
+		mindmap: Brain,
+		study: Layers,
+		reindex: RefreshCw,
+		resync: RefreshCw,
+		edit: Pencil,
+		'select-members': Users,
+		color: Palette,
+		ungroup: Ungroup,
+		'select-children': MousePointer2,
+		'expand-all': UnfoldVertical,
+		'collapse-all': FoldVertical,
+		focus: Crosshair,
+		'pin-branch': Pin,
+		group: GroupIcon,
+		synthesize: Combine,
+		'new-card': Plus,
+		'new-note': Type,
+		'select-all': MousePointer2,
+		undo: Undo2,
+		redo: Redo2,
+		cleanup: Sparkles,
+		fit: Maximize,
+		'export-png': Download,
+		'export-pdf': Download,
+		'export-md': Download,
+		copy: Copy,
+		scissors: Scissors,
+		paste: ClipboardPaste,
+		front: BringToFront,
+		back: SendToBack,
+		lock: Lock,
+		unlock: LockOpen,
+		'align-left': AlignStartVertical,
+		'align-right': AlignEndVertical,
+		'align-top': AlignStartHorizontal,
+		'align-bottom': AlignEndHorizontal,
+		'align-center-h': AlignCenterHorizontal,
+		'align-center-v': AlignCenterVertical,
+		'distribute-h': AlignHorizontalDistributeCenter,
+		'distribute-v': AlignVerticalDistributeCenter
+	};
+
+	let ctxMenu = $state<{ surface: MenuSurface; nodeId?: string; branchId?: string; x: number; y: number } | null>(null);
+
+	function onNodeMenuEvent(e: Event) {
+		const { nodeId, nodeType, branchId, x, y } = (e as CustomEvent).detail as
+			{ nodeId: string; nodeType: string; branchId?: string; x: number; y: number };
+		const node = flow.nodes.find((n) => n.id === nodeId);
+		if (!node) return;
+		// Right-click on an unselected node acts on that node alone, even if others
+		// are selected; only clicking a node that's ITSELF part of a multi-selection
+		// shows the bulk "multi" menu.
+		const surface: MenuSurface =
+			node.selected && selectedNodes.length > 1 ? 'multi' : (nodeType as MenuSurface);
+		ctxMenu = { surface, nodeId, branchId, x, y };
 	}
-	const menuItems = $derived<MenuItem[]>([
-		{ id: 'open', label: 'Open', icon: FileText },
-		{ id: 'split', label: 'Open in Split View', icon: Columns2, disabled: !openFileId || openFileId === cardMenu?.fileId },
-		{ id: 'mindmap', label: 'Generate Mind Map', icon: Brain },
-		{ id: 'study', label: 'Generate Flash Cards', icon: Layers }
-	]);
-	function onMenuSelect(action: string) {
-		const id = cardMenu?.fileId;
-		if (!id) return;
-		const filename = (flow.nodes.find((n) => n.id === id)?.data as { filename?: string })?.filename ?? '';
-		if (action === 'open') onOpenFileEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
-		else if (action === 'split') openInSplit(id);
-		else if (action === 'mindmap') runMindmap(id, filename);
-		else if (action === 'study') runStudy(id, filename);
+	function onPaneMenuEvent(e: Event) {
+		const { x, y } = (e as CustomEvent).detail;
+		ctxMenu = { surface: 'pane', x, y };
 	}
+
+	function buildMenuCtx(m: NonNullable<typeof ctxMenu>): MenuCtx {
+		const node = m.nodeId ? flow.nodes.find((n) => n.id === m.nodeId) : undefined;
+		return {
+			selectionCount: selectedNodes.length,
+			streaming: node?.type === 'card' ? !!(node.data as { streaming?: boolean }).streaming : undefined,
+			hasOpenFile: !!openFileId,
+			isOpenFile: openFileId === m.nodeId,
+			branchId: m.branchId,
+			locked: !!(node?.data as { locked?: boolean } | undefined)?.locked,
+			hasNodes: flow.nodes.length > 0,
+			canUndo: canUndo(),
+			canRedo: canRedo(),
+			canPaste: hasClipboard(),
+			isDriveLinked: !!(node?.data as { drive?: unknown } | undefined)?.drive,
+			caps: { clipboard: true, zorder: true, align: true }
+		};
+	}
+	const ctxSections = $derived(ctxMenu
+		? menuItemsFor(ctxMenu.surface, buildMenuCtx(ctxMenu)).map((sec) =>
+				sec.map((e): MenuItem => ({
+					id: e.id,
+					label: e.label,
+					icon: MENU_ICONS[e.icon] ?? FileText,
+					hint: e.hint,
+					danger: e.danger,
+					disabled: e.disabled
+				}))
+			)
+		: []);
+
+	async function reindexFile(id: string) {
+		const data = flow.nodes.find((n) => n.id === id)?.data as { filename?: string; mime?: string } | undefined;
+		if (!data?.filename) return;
+		setFileStatus(id, 'indexing');
+		try {
+			const canvas = currentCanvasId() || 'default';
+			const res = await apiFetch(`/api/blobs/${encodeURIComponent(`${canvas}:${id}`)}`);
+			if (!res.ok) throw new Error('blob not found');
+			const bytes = await res.arrayBuffer();
+			await kbRemove(canvas, data.filename);
+			const chunks = await kbAdd(canvas, data.filename, data.mime ?? 'application/octet-stream', bytes);
+			setFileStatus(id, chunks > 0 ? 'ready' : 'error');
+			if (chunks > 0) scheduleAutolink(id);
+		} catch (err) {
+			console.error('reindex failed', err);
+			setFileStatus(id, 'error');
+		}
+	}
+
+	function onCtxSelect(actionId: string) {
+		if (!ctxMenu) return;
+		const { surface, nodeId, branchId, x, y } = ctxMenu;
+		const node = nodeId ? flow.nodes.find((n) => n.id === nodeId) : undefined;
+
+		switch (actionId) {
+			case 'continue':
+				if (nodeId) bubble = { x, y, flow: screenToFlowPosition({ x, y }), continueId: nodeId };
+				return;
+			case 'retry':
+				if (nodeId) retryCard(nodeId);
+				return;
+			case 'copy-answer':
+			case 'copy-text':
+				if (node) void navigator.clipboard.writeText(cardPlainText(node));
+				return;
+			case 'rename':
+				if (nodeId) window.dispatchEvent(new CustomEvent('arbor:rename', { detail: { nodeId } }));
+				return;
+			case 'duplicate':
+				if (surface === 'multi') { duplicateSelected(); return; }
+				if (nodeId) { const dup = duplicateNode(nodeId); if (dup) flow.selected = dup; }
+				return;
+			case 'delete':
+				if (surface === 'multi') deleteSelected();
+				else if (nodeId) deleteNodes([nodeId]);
+				return;
+			case 'reload':
+			case 'clip':
+				if (nodeId) window.dispatchEvent(new CustomEvent('arbor:webcard', { detail: { id: nodeId, action: actionId } }));
+				return;
+			case 'open-browser':
+				if (node) openExternal((node.data as { url?: string }).url ?? '');
+				return;
+			case 'copy-url':
+				if (node) void navigator.clipboard.writeText((node.data as { url?: string }).url ?? '');
+				return;
+			case 'open':
+			case 'edit':
+				if (nodeId) onOpenFileEvent(new CustomEvent('arbor:openfile', { detail: { fileId: nodeId } }));
+				return;
+			case 'split':
+				if (nodeId) openInSplit(nodeId);
+				return;
+			case 'mindmap':
+				if (nodeId) runMindmap(nodeId, (node?.data as { filename?: string })?.filename ?? '');
+				return;
+			case 'study':
+				if (nodeId) runStudy(nodeId, (node?.data as { filename?: string })?.filename ?? '');
+				return;
+			case 'reindex':
+				if (nodeId) void reindexFile(nodeId);
+				return;
+			case 'resync':
+				if (!nodeId) return;
+				if (node?.type === 'text') confirmResyncId = nodeId; // guarded: overwrites local edits
+				else void resyncDriveNode(nodeId);
+				return;
+			case 'expand-all':
+				if (nodeId) setMindmapExpandAll(nodeId, true);
+				return;
+			case 'collapse-all':
+				if (nodeId) setMindmapExpandAll(nodeId, false);
+				return;
+			case 'pin-branch':
+				if (nodeId && branchId) pinMindmapBranch(nodeId, branchId);
+				return;
+			case 'focus':
+				if (nodeId) focusMindmap(nodeId);
+				return;
+			case 'select-members': {
+				const anchor = (node?.data as { anchor?: string[] } | undefined)?.anchor ?? [];
+				flow.nodes = flow.nodes.map((n) => ({ ...n, selected: anchor.includes(n.id) }));
+				return;
+			}
+			case 'color':
+				if (nodeId) cycleCardBlock(nodeId);
+				return;
+			case 'ungroup':
+				if (nodeId) ungroupNodes(nodeId);
+				return;
+			case 'select-children':
+				if (nodeId) flow.nodes = flow.nodes.map((n) => ({ ...n, selected: n.parentId === nodeId }));
+				return;
+			case 'group': {
+				const ids = selectedNodes.map((n) => n.id);
+				if (ids.length >= 2) groupNodes(ids);
+				return;
+			}
+			case 'synthesize':
+				doSynthesize();
+				return;
+			case 'new-card':
+				bubble = { x, y, flow: screenToFlowPosition({ x, y }) };
+				return;
+			case 'new-note': {
+				const pos = screenToFlowPosition({ x, y });
+				const id = addTextCard(pos);
+				flow.selected = id;
+				window.dispatchEvent(new CustomEvent('arbor:openfile', { detail: { fileId: id } }));
+				return;
+			}
+			case 'select-all':
+				flow.nodes = flow.nodes.map((n) => (n.type === 'group' ? n : { ...n, selected: true }));
+				return;
+			case 'undo':
+				doUndo();
+				return;
+			case 'redo':
+				doRedo();
+				return;
+			case 'cleanup':
+				void doCleanUp();
+				return;
+			case 'fit':
+				doFitView();
+				return;
+			case 'export-png':
+				void exportCanvas('png');
+				return;
+			case 'export-pdf':
+				void exportCanvas('pdf');
+				return;
+			case 'export-md':
+				void exportCanvas('md');
+				return;
+			case 'copy':
+				void copySelection(false);
+				return;
+			case 'cut':
+				void copySelection(true);
+				return;
+			case 'paste': {
+				const pos = screenToFlowPosition({ x, y });
+				void pasteAt(pos).then((ids) => {
+					if (ids.length) flow.nodes = flow.nodes.map((n) => ({ ...n, selected: ids.includes(n.id) }));
+				});
+				return;
+			}
+			case 'bring-front':
+				bringToFront(surface === 'multi' ? selectedNodes.map((n) => n.id) : nodeId ? [nodeId] : []);
+				return;
+			case 'send-back':
+				sendToBack(surface === 'multi' ? selectedNodes.map((n) => n.id) : nodeId ? [nodeId] : []);
+				return;
+			case 'lock':
+				setLocked(surface === 'multi' ? selectedNodes.map((n) => n.id) : nodeId ? [nodeId] : [], true);
+				return;
+			case 'unlock':
+				setLocked(surface === 'multi' ? selectedNodes.map((n) => n.id) : nodeId ? [nodeId] : [], false);
+				return;
+			case 'align-left':
+			case 'align-right':
+			case 'align-top':
+			case 'align-bottom':
+			case 'align-center-h':
+			case 'align-center-v': {
+				const op = actionId.slice('align-'.length) as Parameters<typeof align>[1];
+				applyPositions(align(selectionBoxes(), op));
+				return;
+			}
+			case 'distribute-h':
+				applyPositions(distribute(selectionBoxes(), 'h'));
+				return;
+			case 'distribute-v':
+				applyPositions(distribute(selectionBoxes(), 'v'));
+				return;
+		}
+	}
+
+	function selectionBoxes(): Box[] {
+		return selectedNodes.map((n) => ({
+			id: n.id,
+			x: n.position.x,
+			y: n.position.y,
+			w: n.measured?.width ?? n.width ?? 400,
+			h: n.measured?.height ?? n.height ?? 200
+		}));
+	}
+
 	function openInSplit(id: string) {
 		if (!openFileId || id === openFileId) { openFileId = id; return; }
 		secondaryFileId = id;
@@ -906,6 +1262,7 @@
 						onpaneclick={onPaneClick}
 						onnodeclick={({ node }) => onNodeClick(node)}
 					>
+						<ClusterHighlights />
 						<Background bgColor="var(--c-canvas)" patternColor="var(--c-pattern)" gap={28} />
 						<Controls showLock={false} />
 					</SvelteFlow>
@@ -953,7 +1310,7 @@
 
 					<div class="topbar">
 						<span class="topbar-spacer"></span>
-						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} onExport={exportCanvas} />
+						<CanvasToolbar onDeepResearch={startDeepResearch} onFit={doFitView} onUndo={doUndo} onRedo={doRedo} onKB={openKB} onCleanUp={() => doCleanUp()} />
 						<div class="canvas-actions">
 							<div class="theme-slot" class:hidden={chatOpen}>
 								<ThemeToggle />
@@ -1035,8 +1392,8 @@
 
 			<NoteNotifications />
 
-			{#if cardMenu}
-				<CardContextMenu x={cardMenu.x} y={cardMenu.y} items={menuItems} onselect={onMenuSelect} onclose={() => (cardMenu = null)} />
+			{#if ctxMenu}
+				<CardContextMenu x={ctxMenu.x} y={ctxMenu.y} sections={ctxSections} onselect={onCtxSelect} onclose={() => (ctxMenu = null)} />
 			{/if}
 
 			{#if confirmReplace}
@@ -1048,6 +1405,35 @@
 					onconfirm={async () => { await primarySave?.(); const p = confirmReplace?.proceed; confirmReplace = null; p?.(); }}
 					ondiscard={() => { primaryDirty = false; const p = confirmReplace?.proceed; confirmReplace = null; p?.(); }}
 					oncancel={() => (confirmReplace = null)}
+				/>
+			{/if}
+
+			{#if showDriveConnect}
+				<DriveConnectDialog
+					onconnected={() => {
+						showDriveConnect = false;
+						const p = pendingDriveImport;
+						pendingDriveImport = null;
+						if (p) void handleDrivePaste(p.url, p.at);
+					}}
+					oncancel={() => {
+						showDriveConnect = false;
+						pendingDriveImport = null;
+					}}
+				/>
+			{/if}
+
+			{#if confirmResyncId}
+				<ConfirmDialog
+					title="Re-sync from Drive?"
+					message="This replaces this note's content with the current version from Google Drive, discarding local edits."
+					confirmLabel="Re-sync"
+					onconfirm={() => {
+						const id = confirmResyncId;
+						confirmResyncId = null;
+						if (id) void resyncDriveNode(id);
+					}}
+					oncancel={() => (confirmResyncId = null)}
 				/>
 			{/if}
 

@@ -50,3 +50,26 @@ export const LLM_TIMEOUT_MS = 120_000;
 /** Bun.serve idleTimeout in seconds. Above LLM_TIMEOUT_MS so a slow completion
  *  times out upstream (clean 504) rather than getting its socket dropped. */
 export const SERVER_IDLE_TIMEOUT_S = 180;
+
+/** Timeout for outbound file downloads (Drive export/download can be large). */
+export const FETCH_BYTES_TIMEOUT_MS = HTTP_TIMEOUT_MS * 4;
+
+/**
+ * Fallback Google OAuth client, used when no user override (Settings) and no
+ * ARBOR_GOOGLE_CLIENT_ID/SECRET env var is set. Empty until a real Google
+ * Cloud OAuth client is provisioned for distribution — until then, users must
+ * supply their own client (Settings → Google account → "Use your own OAuth
+ * client") or set the env vars.
+ */
+export const GOOGLE_CLIENT_ID_DEFAULT = "";
+export const GOOGLE_CLIENT_SECRET_DEFAULT = "";
+
+/** Scopes requested for Drive read access + basic profile (shows connected email). */
+export const GOOGLE_OAUTH_SCOPES = [
+	"https://www.googleapis.com/auth/drive.readonly",
+	"openid",
+	"email",
+];
+
+/** How long the one-shot OAuth loopback listener waits for the browser redirect. */
+export const GOOGLE_OAUTH_LOOPBACK_TIMEOUT_MS = 5 * 60_000;

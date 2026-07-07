@@ -15,6 +15,21 @@ function safeId(id: string): boolean {
 	return !!id && !id.includes("/") && !id.includes("\\") && !id.includes("..");
 }
 
+/** Shared PUT body: write bytes to disk + upsert the metadata row. Used directly
+ *  by server-side importers (e.g. Drive) that never see an HTTP PUT request. */
+export async function writeBlob(
+	id: string,
+	bytes: Uint8Array,
+	mime: string,
+	name: string,
+): Promise<void> {
+	await Bun.write(join(BLOBS_DIR, id), bytes);
+	db.insert(blobMeta)
+		.values({ id, mime, name })
+		.onConflictDoUpdate({ target: blobMeta.id, set: { mime, name } })
+		.run();
+}
+
 export const blobRoutes = new Hono();
 
 // Store bytes + metadata. Filename in X-Filename, mime in Content-Type.
@@ -22,13 +37,9 @@ blobRoutes.put("/:id", async (c) => {
 	const id = c.req.param("id");
 	if (!safeId(id)) return c.json({ error: "bad id" }, 400);
 	const bytes = new Uint8Array(await c.req.arrayBuffer());
-	await Bun.write(join(BLOBS_DIR, id), bytes);
 	const mime = c.req.header("Content-Type") ?? "application/octet-stream";
 	const name = decodeURIComponent(c.req.header("X-Filename") ?? id);
-	db.insert(blobMeta)
-		.values({ id, mime, name })
-		.onConflictDoUpdate({ target: blobMeta.id, set: { mime, name } })
-		.run();
+	await writeBlob(id, bytes, mime, name);
 	return c.json({ ok: true });
 });
 

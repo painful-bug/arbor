@@ -349,6 +349,32 @@ export async function cleanupArrange(
 	}
 }
 
+export interface NameCluster {
+	id: string;
+	members: { id: string; source?: string; text?: string; kind?: string }[];
+}
+
+export async function cleanupName(
+	canvas: string,
+	clusters: NameCluster[],
+): Promise<Record<string, string>> {
+	const { apiFetch } = await import("$lib/api");
+	try {
+		const res = await apiFetch(`/api/cleanup/${encodeURIComponent(canvas)}/name`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ clusters }),
+			// Small models are often reasoning models — naming can take 30-40s.
+			signal: AbortSignal.timeout(60000),
+		});
+		if (!res.ok) return {};
+		const data = (await res.json()) as { names?: Record<string, string> };
+		return data.names ?? {};
+	} catch {
+		return {};
+	}
+}
+
 // Hybrid search over indexed KB chunks (same retrieval path used by the agent).
 export async function kbSearch(canvas: string, query: string, k = 8): Promise<string[]> {
 	const { apiFetch } = await import("$lib/api");

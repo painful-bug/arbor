@@ -53,11 +53,37 @@ fn bun_path() -> PathBuf {
     }
 }
 
+/// Set only when non-empty — release builds bake these in from CI secrets
+/// (.github/workflows/build.yml) so every shipped install can connect Google
+/// Drive with no user setup. Local/dev builds compile this as `None` and the
+/// spawned process falls back to inheriting the shell's own env vars, if any.
+fn baked_env(cmd: &mut Command, key: &str, val: Option<&str>) {
+    if let Some(v) = val {
+        if !v.is_empty() {
+            cmd.env(key, v);
+        }
+    }
+}
+
 pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<Backend, String> {
     let entry = entry_path(app);
     let bun = bun_path();
-    let mut child = Command::new(&bun)
-        .arg(&entry)
+    let mut cmd = Command::new(&bun);
+    cmd.arg(&entry);
+    // Dev: cwd = backend/ so Bun auto-loads backend/.env (the developer's own
+    // local ARBOR_GOOGLE_CLIENT_ID/SECRET etc.), same as `cd backend && bun run dev`.
+    if cfg!(debug_assertions) {
+        if let Some(backend_dir) = entry.parent().and_then(|p| p.parent()) {
+            cmd.current_dir(backend_dir);
+        }
+    }
+    baked_env(&mut cmd, "ARBOR_GOOGLE_CLIENT_ID", option_env!("ARBOR_GOOGLE_CLIENT_ID"));
+    baked_env(
+        &mut cmd,
+        "ARBOR_GOOGLE_CLIENT_SECRET",
+        option_env!("ARBOR_GOOGLE_CLIENT_SECRET"),
+    );
+    let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()

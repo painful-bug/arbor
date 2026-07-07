@@ -1,4 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { eq } from "drizzle-orm";
+import { db } from "../store/db.ts";
+import { settings } from "../store/schema.ts";
+import { buildNamingPrompt, parseNames, typeSummary } from "./cleanup.ts";
 import { makeTestApp } from "./test-utils.ts";
 
 const TOKEN = "test-cleanup-token";
@@ -53,5 +57,82 @@ describe("POST /api/cleanup/:canvas/arrange", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { layout: unknown };
 		expect(body.layout).toBeNull();
+	});
+});
+
+describe("buildNamingPrompt", () => {
+	it("includes every cluster id and the JSON shape line", () => {
+		const prompt = buildNamingPrompt([
+			{ id: "a", text: "notes about cats" },
+			{ id: "b", text: "notes about dogs" },
+		]);
+		expect(prompt).toContain('cluster id="a"');
+		expect(prompt).toContain('cluster id="b"');
+		expect(prompt).toContain("notes about cats");
+		expect(prompt).toContain('{"names":{"<cluster id>":"<label>", ...}}');
+	});
+});
+
+describe("typeSummary", () => {
+	it("counts kinds, most common first", () => {
+		const s = typeSummary([
+			{ id: "1", kind: "PDF" },
+			{ id: "2", kind: "PDF" },
+			{ id: "3", kind: "note" },
+		]);
+		expect(s).toBe("2 PDF, 1 note");
+	});
+	it("ignores members with no kind", () => {
+		expect(typeSummary([{ id: "1" }, { id: "2", kind: "PDF" }])).toBe("1 PDF");
+	});
+});
+
+describe("parseNames", () => {
+	it("keeps only known ids with string values, trimmed and capped", () => {
+		const out = parseNames({ names: { a: "  Neural Networks  ", b: 42, zz: "unknown id" } }, [
+			"a",
+			"b",
+		]);
+		expect(out).toEqual({ a: "Neural Networks" });
+	});
+
+	it("caps labels at 48 chars", () => {
+		const long = "x".repeat(80);
+		const out = parseNames({ names: { a: long } }, ["a"]);
+		expect(out.a.length).toBe(48);
+	});
+
+	it("returns {} for malformed input", () => {
+		expect(parseNames(null, ["a"])).toEqual({});
+		expect(parseNames({}, ["a"])).toEqual({});
+	});
+});
+
+describe("POST /api/cleanup/:canvas/name", () => {
+	it("returns {names:{}} for an empty body", async () => {
+		const { api } = makeTestApp(TOKEN);
+		const res = await api("/api/cleanup/default/name", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ names: {} });
+	});
+
+	it("returns {names:{}} when no provider is configured (graceful degradation)", async () => {
+		// Other test files may have written a real settings row to the shared test
+		// db — clear it so this assertion doesn't depend on file execution order.
+		db.delete(settings).where(eq(settings.id, 1)).run();
+		const { api } = makeTestApp(TOKEN);
+		const res = await api("/api/cleanup/default/name", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				clusters: [{ id: "c1", members: [{ id: "n1", text: "some note text" }] }],
+			}),
+		});
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ names: {} });
 	});
 });

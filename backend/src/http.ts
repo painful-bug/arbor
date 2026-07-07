@@ -1,4 +1,4 @@
-import { HTTP_TIMEOUT_MS } from "./config.ts";
+import { FETCH_BYTES_TIMEOUT_MS, HTTP_TIMEOUT_MS } from "./config.ts";
 import { AppError } from "./errors.ts";
 
 async function fetchOk(url: string, init?: RequestInit, timeoutMs = HTTP_TIMEOUT_MS) {
@@ -32,4 +32,14 @@ export async function fetchText(
 ): Promise<string> {
 	const res = await fetchOk(url, init, timeoutMs);
 	return res.text();
+}
+
+/** Same contract as fetchJson, but returns the raw response bytes (file downloads/exports). */
+export async function fetchBytes(
+	url: string,
+	init?: RequestInit,
+	timeoutMs = FETCH_BYTES_TIMEOUT_MS,
+): Promise<Uint8Array> {
+	const res = await fetchOk(url, init, timeoutMs);
+	return new Uint8Array(await res.arrayBuffer());
 }

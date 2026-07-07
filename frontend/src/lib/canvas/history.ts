@@ -38,6 +38,14 @@ export function createHistory<T>(limit: number) {
 			ptr++;
 			return JSON.parse(stack[ptr]) as T;
 		},
+		/** True when undo() would return a snapshot. */
+		canUndo(): boolean {
+			return ptr > 0;
+		},
+		/** True when redo() would return a snapshot. */
+		canRedo(): boolean {
+			return ptr < stack.length - 1;
+		},
 		/** True while pushes are suppressed. */
 		locked: (): boolean => locked,
 		/** Suppress pushes; auto-unlocks after `ms` when given. */

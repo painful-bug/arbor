@@ -101,6 +101,11 @@ import CardHandles from './CardHandles.svelte';
 		if (renaming && titleInput) titleInput.focus();
 	});
 
+	$effect(() => {
+		window.addEventListener('arbor:rename', onRenameEvent);
+		return () => window.removeEventListener('arbor:rename', onRenameEvent);
+	});
+
 	function startRename(e: MouseEvent) {
 		e.stopPropagation();
 		renaming = true;
@@ -110,6 +115,13 @@ import CardHandles from './CardHandles.svelte';
 	function commitRename() {
 		renaming = false;
 		if (titleDraft.trim() && titleDraft.trim() !== card.title) renameCard(id, titleDraft);
+	}
+
+	// Triggered by the "Rename" context-menu item (Canvas.svelte onCtxSelect).
+	function onRenameEvent(e: Event) {
+		if ((e as CustomEvent).detail?.nodeId !== id) return;
+		renaming = true;
+		titleDraft = card.title;
 	}
 
 	// Single-click → select; double-click → expand modal.

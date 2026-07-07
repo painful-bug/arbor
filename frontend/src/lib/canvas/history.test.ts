@@ -62,6 +62,19 @@ describe("createHistory", () => {
 		expect(h.undo()).toBe(1); // 2 never recorded
 	});
 
+	it("canUndo/canRedo reflect stack position", () => {
+		const h = createHistory<number>(10);
+		expect(h.canUndo()).toBe(false);
+		expect(h.canRedo()).toBe(false);
+		h.push(1);
+		h.push(2);
+		expect(h.canUndo()).toBe(true);
+		expect(h.canRedo()).toBe(false);
+		h.undo();
+		expect(h.canUndo()).toBe(false);
+		expect(h.canRedo()).toBe(true);
+	});
+
 	it("reset clears everything", () => {
 		const h = createHistory<number>(10);
 		h.push(1);

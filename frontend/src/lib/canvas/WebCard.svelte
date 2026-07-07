@@ -90,6 +90,19 @@ import CardHandles from './CardHandles.svelte';
 		}
 	}
 
+	// Triggered by the web context-menu items (Canvas.svelte onCtxSelect) — reload
+	// mirrors the toolbar button, clip mirrors the Clip button above.
+	function onWebCardEvent(e: Event) {
+		const { id: targetId, action } = (e as CustomEvent).detail as { id: string; action: string };
+		if (targetId !== id) return;
+		if (action === 'reload') reload();
+		else if (action === 'clip') void clip();
+	}
+	$effect(() => {
+		window.addEventListener('arbor:webcard', onWebCardEvent);
+		return () => window.removeEventListener('arbor:webcard', onWebCardEvent);
+	});
+
 	let overlayDownX = 0, overlayDownY = 0;
 	function overlayPointerDown(e: PointerEvent) {
 		overlayDownX = e.clientX; overlayDownY = e.clientY;

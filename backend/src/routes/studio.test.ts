@@ -44,9 +44,30 @@ describe("studio flatten", () => {
 		expect(dv.parent).toBe(routing.id);
 	});
 
-	it("skips nodes without a title", () => {
-		const nodes = flatten({ root: "X", nodes: [{ summary: "no title" }, { title: "Ok" }] });
+	it("skips nodes without a title (and their subtree)", () => {
+		const nodes = flatten({
+			root: "X",
+			nodes: [{ summary: "no title", children: [{ title: "orphan" }] }, { title: "Ok" }],
+		});
 		expect(nodes.map((n) => n.title)).toEqual(["X", "Ok"]);
+	});
+
+	it("recurses to arbitrary depth", () => {
+		const nodes = flatten({
+			root: "A",
+			nodes: [
+				{
+					title: "B",
+					summary: "b",
+					children: [{ title: "C", summary: "c", children: [{ title: "D", summary: "d" }] }],
+				},
+			],
+		});
+		expect(nodes.map((n) => n.title)).toEqual(["A", "B", "C", "D"]);
+		const chain = new Map(nodes.map((n) => [n.title, n]));
+		expect(chain.get("B")!.parent).toBe("n0");
+		expect(chain.get("C")!.parent).toBe(chain.get("B")!.id);
+		expect(chain.get("D")!.parent).toBe(chain.get("C")!.id);
 	});
 });
 
