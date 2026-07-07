@@ -131,8 +131,9 @@
 		background: transparent;
 		color: var(--c-ink);
 		cursor: pointer;
-		transition: all var(--ease-glass);
+		transition: background 160ms ease, border-color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 	}
+	.test-btn:active:not(:disabled) { transform: scale(0.96); }
 	.test-btn:disabled { opacity: 0.5; cursor: default; }
 	.test-btn.ok { background: var(--block-mint); border-color: transparent; }
 	.test-btn.fail { background: var(--block-coral); border-color: transparent; }
@@ -176,6 +177,7 @@
 	input[type='password']:focus,
 	input[type='text']:focus {
 		border-color: var(--c-ink);
+		box-shadow: 0 0 0 3px rgba(var(--ink-rgb), 0.08);
 	}
 	.btn-primary {
 		height: 36px;
@@ -188,8 +190,11 @@
 		font-weight: 500;
 		cursor: pointer;
 		white-space: nowrap;
-		transition: opacity var(--ease-glass);
+		transition: opacity var(--ease-glass), transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 		flex-shrink: 0;
+	}
+	.btn-primary:active:not(:disabled) {
+		transform: scale(0.97);
 	}
 	.btn-primary:disabled {
 		opacity: 0.3;

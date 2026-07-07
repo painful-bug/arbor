@@ -51,9 +51,12 @@
 		"android": {
 			"debugApplicationIdSuffix": ".debug"
 		},
+		"macOS": {
+			"signingIdentity": "-"
+		},
 		"windows": {
 			"nsis": {
-				"installMode": "perMachine",
+				"installMode": "currentUser",
 				"displayLanguageSelector": false
 			},
 			"webviewInstallMode": {

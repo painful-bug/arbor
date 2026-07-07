@@ -1,21 +1,21 @@
 // Ollama local model management: list downloaded models + pull new ones.
 import { Hono } from "hono";
-import { OLLAMA_SEARCH_PATHS } from "../config.ts";
+import { ollamaBinName, ollamaSearchDirs, PATH_SEP } from "../platform.ts";
 
 export const ollamaRoutes = new Hono();
 
 /**
  * Absolute path to the ollama binary, or null when not installed. Searches
- * ARBOR_OLLAMA_DIR (test hook), the common macOS install locations, then the
+ * ARBOR_OLLAMA_DIR (test hook), the common per-OS install locations, then the
  * inherited PATH — the backend may be spawned by Tauri with a minimal PATH.
  * Spawning the resolved binary directly (no shell wrapper) means proc.kill()
  * reaches ollama itself, not an intermediate sh.
  */
 function ollamaBin(): string | null {
-	const dirs = [process.env.ARBOR_OLLAMA_DIR, ...OLLAMA_SEARCH_PATHS, process.env.PATH].filter(
+	const dirs = [process.env.ARBOR_OLLAMA_DIR, ...ollamaSearchDirs(), process.env.PATH].filter(
 		Boolean,
 	);
-	return Bun.which("ollama", { PATH: dirs.join(":") });
+	return Bun.which(ollamaBinName, { PATH: dirs.join(PATH_SEP) });
 }
 
 // List models installed locally.

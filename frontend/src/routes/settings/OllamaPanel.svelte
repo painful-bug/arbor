@@ -171,6 +171,7 @@
 	}
 	input[type='text']:focus {
 		border-color: var(--c-ink);
+		box-shadow: 0 0 0 3px rgba(var(--ink-rgb), 0.08);
 	}
 	.select {
 		height: 36px;
@@ -205,8 +206,11 @@
 		font-weight: 500;
 		cursor: pointer;
 		white-space: nowrap;
-		transition: opacity var(--ease-glass);
+		transition: opacity var(--ease-glass), transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 		flex-shrink: 0;
+	}
+	.btn-primary:active:not(:disabled) {
+		transform: scale(0.97);
 	}
 	.btn-primary:disabled {
 		opacity: 0.3;

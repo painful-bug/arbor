@@ -8,7 +8,16 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: macos-latest
+    # macOS is the priority platform (full lint+typecheck+test); Windows runs
+    # backend+frontend typecheck/tests too so platform-specific regressions
+    # (path separators, process.platform branches) are caught here rather than
+    # only at Windows installer build time. Biome is OS-independent formatting,
+    # so it only needs to run once — kept on macOS.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
 
     steps:
@@ -37,6 +46,7 @@ jobs:
         run: cd frontend && npm ci
 
       - name: Lint (Biome)
+        if: matrix.os == 'macos-latest'
         run: npx biome check .
 
       - name: Typecheck backend
