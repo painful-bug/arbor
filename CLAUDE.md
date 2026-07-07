@@ -226,6 +226,31 @@ chrome, or native menus: check it against the seam table above, and mentally
 run it on the *other* OS — if you can't say what happens there, it needs a
 branch through the seam, not an assumption baked into the shared code.
 
+### PowerShell string ops are case-insensitive by default — a known trap
+
+`build.yml`'s `build-windows` job prunes `resources/backend/node_modules`
+with PowerShell (`-match`, `-in`), mirroring the bash `find`/`-name` pruning
+in `build-macos`. **`-match`/`-eq`/`-in` are case-insensitive by default in
+PowerShell; bash's `find -name` is case-sensitive.** This bit us once for
+real: the doc-file cleanup regex `'^(README|CHANGELOG|LICENSE)'` used
+`-match`, so it also deleted `@mariozechner/pi-coding-agent/dist/utils/
+changelog.js` (real source, lowercase) on Windows only. That file is a
+static import of `interactive-mode.js`, so the bundled Bun backend threw
+`Cannot find module` and exited before printing its `ARBOR_BACKEND` handshake
+line — which makes `backend::spawn()` in `backend.rs` return
+`Err("backend exited before handshake")`, which makes the `.setup()` hook
+return `Err`, which makes Tauri's `app.rs` **panic and abort the whole
+process**. Symptom on the installed Windows app: window flashes up blank/
+black, then the whole app crashes instantly — no dialog, no log (the
+`tauri_plugin_log` plugin is `debug_assertions`-only, so release builds are
+silent unless launched from a terminal that captures inherited stderr).
+
+**Rule:** any PowerShell string-matching step in the Windows build job that's
+meant to mirror bash's case-sensitive `find -name` must use `-cmatch`/`-ceq`/
+`-cin`, never the bare case-insensitive operator. Fixed in
+[build.yml](.github/workflows/build.yml) — grep for `-cmatch`/`-cin` there
+before touching that pruning block again.
+
 ## Core directives (do not violate)
 
 1. **No feature may regress** — only improve.

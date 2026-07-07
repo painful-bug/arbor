@@ -276,12 +276,24 @@ jobs:
             $legacy = Join-Path $NM "pdfjs-dist/legacy"
             if (Test-Path $legacy) { Remove-Item -Recurse -Force $legacy }
 
-            # Remove source maps, type declarations, docs, tests
+            # Remove source maps, type declarations, docs, tests.
+            # -cmatch (case-sensitive), not -match: PowerShell's -match is
+            # case-insensitive by default, so '^(README|CHANGELOG|LICENSE)'
+            # was also deleting real lowercase source files like
+            # @mariozechner/pi-coding-agent/dist/utils/changelog.js — which
+            # interactive-mode.js imports — crashing the Bun backend on
+            # startup (no handshake -> Tauri setup panics -> blank window,
+            # instant crash). bash's `find -name` on macOS is case-sensitive,
+            # so that side never hit this.
             Get-ChildItem -Path $NM -Recurse -File -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -match '\.(map|d\.ts|d\.mts|d\.cts|md)$' -or $_.Name -match '^(README|CHANGELOG|LICENSE)' } |
+              Where-Object { $_.Name -cmatch '\.(map|d\.ts|d\.mts|d\.cts|md)$' -or $_.Name -cmatch '^(README|CHANGELOG|LICENSE)' } |
               Remove-Item -Force -ErrorAction SilentlyContinue
+            # -cin (case-sensitive), not -in: same case-insensitivity trap as
+            # above — keep this an exact-case match like bash's `find -name`
+            # so a package dir like "Docs" or "Test" (real source, wrong case
+            # coincidence) can't be swept away.
             Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -in @("test","tests","__tests__","example","examples","benchmark","benchmarks","docs",".github") } |
+              Where-Object { $_.Name -cin @("test","tests","__tests__","example","examples","benchmark","benchmarks","docs",".github") } |
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
           $size = "{0:N0} MB" -f ((Get-ChildItem -Recurse "frontend/src-tauri/resources/backend" | Measure-Object -Property Length -Sum).Sum / 1MB)
