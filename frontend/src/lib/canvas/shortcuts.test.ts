@@ -27,6 +27,7 @@ function deps(over: Partial<CanvasShortcutDeps> = {}): CanvasShortcutDeps {
 		toolActive: "hand",
 		connectPending: false,
 		selectionCount: 0,
+		hasDocSelection: false,
 		toggleSearch: vi.fn(),
 		focusKbSearch: vi.fn(),
 		togglePalette: vi.fn(),
@@ -43,10 +44,12 @@ function deps(over: Partial<CanvasShortcutDeps> = {}): CanvasShortcutDeps {
 		deleteSelection: vi.fn(),
 		toggleSpaceTarget: vi.fn(() => false),
 		duplicateSelection: vi.fn(),
+		copySelection: vi.fn(),
 		undo: vi.fn(),
 		redo: vi.fn(),
 		fitView: vi.fn(),
 		groupSelection: vi.fn(),
+		ungroupSelection: vi.fn(() => false),
 		cleanUp: vi.fn(),
 		openSettings: vi.fn(),
 		toggleChat: vi.fn(),
@@ -89,10 +92,17 @@ describe("handleCanvasShortcut", () => {
 			[key({ key: "r" }), "redo", {}],
 			[key({ key: "f" }), "fitView", {}],
 			[key({ key: "g" }), "groupSelection", { selectionCount: 2 }],
+			[
+				key({ key: "G", shiftKey: true }),
+				"ungroupSelection",
+				{ ungroupSelection: vi.fn(() => true) },
+			],
 			[key({ key: ",", metaKey: true }), "openSettings", {}],
 			[key({ key: "\\", metaKey: true }), "toggleChat", {}],
 			[key({ key: "z", metaKey: true }), "undo", {}],
 			[key({ key: "z", metaKey: true, shiftKey: true }), "redo", {}],
+			[key({ key: "c", metaKey: true }), "copySelection", { selectionCount: 1 }],
+			[key({ key: "x", metaKey: true }), "copySelection", { selectionCount: 1 }],
 		];
 		for (const [e, action, over] of table) {
 			const d = deps(over);
@@ -134,5 +144,26 @@ describe("handleCanvasShortcut", () => {
 		expect(handleCanvasShortcut(key({ key: " " }), hit)).toBe(true);
 		const miss = deps();
 		expect(handleCanvasShortcut(key({ key: " " }), miss)).toBe(false);
+	});
+
+	it("⌘C is skipped with no selection, in an input, or with a doc text selection", () => {
+		expect(
+			handleCanvasShortcut(key({ key: "c", metaKey: true }), deps({ selectionCount: 0 })),
+		).toBe(false);
+		const inInput = deps({ selectionCount: 1, inInput: true });
+		expect(handleCanvasShortcut(key({ key: "c", metaKey: true }), inInput)).toBe(false);
+		expect(inInput.copySelection).not.toHaveBeenCalled();
+		const docSel = deps({ selectionCount: 1, hasDocSelection: true });
+		expect(handleCanvasShortcut(key({ key: "c", metaKey: true }), docSel)).toBe(false);
+		expect(docSel.copySelection).not.toHaveBeenCalled();
+	});
+
+	it("⌘C copies (not cut) and ⌘X cuts, regardless of doc text selection", () => {
+		const copy = deps({ selectionCount: 1 });
+		handleCanvasShortcut(key({ key: "c", metaKey: true }), copy);
+		expect(copy.copySelection).toHaveBeenCalledWith(false);
+		const cut = deps({ selectionCount: 1, hasDocSelection: true });
+		handleCanvasShortcut(key({ key: "x", metaKey: true }), cut);
+		expect(cut.copySelection).toHaveBeenCalledWith(true);
 	});
 });

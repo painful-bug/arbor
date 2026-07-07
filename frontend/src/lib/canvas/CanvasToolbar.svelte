@@ -2,12 +2,9 @@
 	import type { Component } from 'svelte';
 	import {
 		Hand, MousePointer2, Type, Copy, Spline, Palette,
-		Undo2, Redo2, Maximize, Sparkles, MoveHorizontal, Tag, Microscope, Hexagon, Download
+		Undo2, Redo2, Maximize, Sparkles, Microscope, Hexagon
 	} from '@lucide/svelte';
-	import { tool, settings, setClusterSpacing, addClusterTags, type Tool } from './store.svelte';
-
-	let showSpacing = $state(false);
-	let showExport = $state(false);
+	import { tool, type Tool } from './store.svelte';
 
 	let {
 		onDeepResearch,
@@ -15,8 +12,7 @@
 		onUndo,
 		onRedo,
 		onKB,
-		onCleanUp,
-		onExport
+		onCleanUp
 	}: {
 		onDeepResearch: () => void;
 		onFit: () => void;
@@ -24,13 +20,7 @@
 		onRedo: () => void;
 		onKB: () => void;
 		onCleanUp: () => void;
-		onExport: (format: 'md' | 'canvas' | 'png' | 'pdf') => void;
 	} = $props();
-
-	function pickExport(format: 'md' | 'canvas' | 'png' | 'pdf') {
-		showExport = false;
-		onExport(format);
-	}
 
 	const tools: { id: Tool; label: string; icon: Component; key: string; title: string }[] = [
 		{ id: 'hand',      label: 'Hand',      icon: Hand,          key: 'H', title: 'Hand tool -- pan canvas (H)' },
@@ -88,40 +78,6 @@
 			<span class="label">Clean Up</span>
 			<span class="key">CC</span>
 		</button>
-		<div class="spacing-wrap">
-			<button
-				class="action secondary spacing-btn"
-				class:active={showSpacing}
-				onclick={() => (showSpacing = !showSpacing)}
-				title="Cluster spacing — drag to space the Clean Up clusters apart"
-				aria-label="Cluster spacing"
-				aria-pressed={showSpacing}
-			>
-				<span class="icon"><MoveHorizontal size={15} /></span>
-			</button>
-			{#if showSpacing}
-				<div class="spacing-pop">
-					<input
-						type="range"
-						min="0"
-						max="24"
-						step="1"
-						value={settings.clusterSpacing}
-						oninput={(e) => setClusterSpacing(+e.currentTarget.value)}
-						aria-label="Cluster spacing"
-					/>
-					<span class="spacing-val">{settings.clusterSpacing}</span>
-				</div>
-			{/if}
-		</div>
-		<button
-			class="action secondary spacing-btn"
-			onclick={addClusterTags}
-			title="Label clusters — drop an editable tag on each Clean Up cluster"
-			aria-label="Label clusters"
-		>
-			<span class="icon"><Tag size={15} /></span>
-		</button>
 		<button class="action secondary" onclick={onDeepResearch} title="Deep Research -- plan and search real papers">
 			<span class="icon"><Microscope size={15} /></span>
 			<span class="label">Research</span>
@@ -130,26 +86,6 @@
 			<span class="icon"><Hexagon size={15} /></span>
 			<span class="label">KB</span>
 		</button>
-		<div class="spacing-wrap">
-			<button
-				class="action secondary spacing-btn"
-				class:active={showExport}
-				onclick={() => (showExport = !showExport)}
-				title="Export this canvas"
-				aria-pressed={showExport}
-			>
-				<span class="icon"><Download size={15} /></span>
-				<span class="label">Export</span>
-			</button>
-			{#if showExport}
-				<div class="spacing-pop export-pop">
-					<button class="export-item" onclick={() => pickExport('md')}>Markdown (.md)</button>
-					<button class="export-item" onclick={() => pickExport('canvas')}>Obsidian Canvas (.canvas)</button>
-					<button class="export-item" onclick={() => pickExport('png')}>Image (.png)</button>
-					<button class="export-item" onclick={() => pickExport('pdf')}>PDF (.pdf)</button>
-				</div>
-			{/if}
-		</div>
 	</div>
 </div>
 
@@ -203,61 +139,6 @@
 		font-size: 13px;
 		line-height: 1;
 	}
-	.spacing-wrap {
-		position: relative;
-		display: inline-flex;
-	}
-	.spacing-btn.active {
-		background: rgba(var(--ink-rgb), 0.1);
-	}
-	/* Popover hangs below the toolbar pill, holding a native range slider. */
-	.spacing-pop {
-		position: absolute;
-		top: calc(100% + 8px);
-		right: 0;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 8px 12px;
-		border-radius: var(--r-pill, 999px);
-		background: var(--c-canvas, #fff);
-		border: 1px solid var(--c-hairline, rgba(0, 0, 0, 0.08));
-		box-shadow: var(--elev-2, 0 6px 24px rgba(0, 0, 0, 0.12));
-		z-index: 10;
-	}
-	.spacing-pop input[type='range'] {
-		width: 140px;
-		accent-color: var(--c-ink);
-		cursor: pointer;
-	}
-	.spacing-val {
-		font-size: 11px;
-		font-family: var(--font-mono);
-		opacity: 0.6;
-		min-width: 16px;
-		text-align: right;
-	}
-	.export-pop {
-		flex-direction: column;
-		align-items: stretch;
-		gap: 2px;
-		padding: 4px;
-	}
-	.export-item {
-		border: none;
-		background: transparent;
-		border-radius: var(--r-md, 8px);
-		padding: 7px 12px;
-		font-size: 12px;
-		font-weight: 500;
-		color: var(--c-ink);
-		cursor: pointer;
-		text-align: left;
-		white-space: nowrap;
-	}
-	.export-item:hover {
-		background: rgba(var(--ink-rgb), 0.06);
-	}
 	.key {
 		font-size: 10px;
 		font-family: var(--font-mono);
@@ -267,6 +148,16 @@
 	.tool.active .key {
 		opacity: 0.65;
 	}
+	/* Safety net so the pill never clips a button — squeezes via container
+	   queries first, then scrolls horizontally as a last resort. */
+	.toolbar {
+		max-width: min(100%, calc(100cqw - 24px));
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.toolbar::-webkit-scrollbar {
+		display: none;
+	}
 	/* Progressive squeeze driven by the canvas area width (shrinks as the chat
 	   panel widens). Container query — not viewport — so it tracks the live drag. */
 	@container canvasarea (max-width: 1040px) {
@@ -274,7 +165,10 @@
 		.tool, .action { padding: 6px 8px; }
 	}
 	@container canvasarea (max-width: 760px) {
-		.secondary { display: none; }
 		.sep { display: none; }
+		.toolbar { gap: 2px; padding: 3px 4px; }
+	}
+	@container canvasarea (max-width: 520px) {
+		.secondary { display: none; }
 	}
 </style>

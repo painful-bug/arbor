@@ -16,7 +16,9 @@ export async function contextualize(source: string, chunks: string[]): Promise<s
 		const results = await Promise.all(
 			batch.map((chunk) =>
 				// justified: headers are best-effort — a failed call degrades to no header.
-				chatComplete(CONTEXT_PROMPT(source, chunk.slice(0, 1500)), 200).catch(() => ""),
+				chatComplete(CONTEXT_PROMPT(source, chunk.slice(0, 1500)), 200, undefined, {
+					tier: "small",
+				}).catch(() => ""),
 			),
 		);
 		for (let j = 0; j < results.length; j++) {

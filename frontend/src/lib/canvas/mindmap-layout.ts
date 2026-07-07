@@ -1,5 +1,5 @@
-// Pure geometry for the Studio mind-map bloom: radial layout in local coords +
-// a spiral free-space finder. Kept free of Svelte runes/store so it's unit-testable.
+// Pure geometry for placing a mindmap node in open canvas space: a spiral
+// free-space finder. Kept free of Svelte runes/store so it's unit-testable.
 
 export interface XY {
 	x: number;
@@ -17,51 +17,8 @@ export interface Box {
 	maxX: number;
 	maxY: number;
 }
-export interface TreeNode {
-	id: string;
-	parent: string | null;
-}
 
-const R1 = 360; // root → main-branch radius
-const R2 = 700; // root → leaf radius
 const TAU = Math.PI * 2;
-
-// Radial 2-level bloom with the root at the origin (local coords).
-// Deeper levels reuse their parent's angle — fine for the 3-6 × 2-5 trees the
-// generator produces.
-export function bloomLocalLayout(nodes: TreeNode[]): Map<string, XY> {
-	const local = new Map<string, XY>();
-	const root = nodes.find((n) => n.parent === null);
-	if (!root) return local;
-	const childrenOf = (pid: string) => nodes.filter((n) => n.parent === pid);
-	local.set(root.id, { x: 0, y: 0 });
-	const mains = childrenOf(root.id);
-	mains.forEach((m, i) => {
-		const ang = (i / Math.max(mains.length, 1)) * TAU - Math.PI / 2;
-		local.set(m.id, { x: R1 * Math.cos(ang), y: R1 * Math.sin(ang) });
-		const subs = childrenOf(m.id);
-		subs.forEach((s, j) => {
-			const sa = ang + (j - (subs.length - 1) / 2) * 0.4;
-			local.set(s.id, { x: R2 * Math.cos(sa), y: R2 * Math.sin(sa) });
-		});
-	});
-	return local;
-}
-
-// Bounding box of the laid-out points, each extended by one card's footprint.
-export function bboxOf(points: Iterable<XY>, cardW: number, cardH: number): Box {
-	let minX = Infinity;
-	let minY = Infinity;
-	let maxX = -Infinity;
-	let maxY = -Infinity;
-	for (const p of points) {
-		minX = Math.min(minX, p.x);
-		minY = Math.min(minY, p.y);
-		maxX = Math.max(maxX, p.x + cardW);
-		maxY = Math.max(maxY, p.y + cardH);
-	}
-	return { minX, minY, maxX, maxY };
-}
 
 // Translate the bloom so its box (+margin) clears every occupied rect. Starts at
 // the preferred anchor, then spirals outward in fixed steps.
@@ -95,4 +52,65 @@ export function findFreeOffset(
 		}
 	}
 	return { x: prefX, y: prefY };
+}
+
+// ── Mind-map graph layout ────────────────────────────────────────────────────
+// A left-to-right tidy tree over only the *visible* nodes (NotebookLM style):
+// root on the left, children fan out to the right, a node's children shown only
+// when `isExpanded(id)` is true — including the root, so clicking it collapses the
+// whole tree. Pure + runes-free so it's unit-testable and cheap to recompute.
+
+export interface TreeItem {
+	id: string;
+	parent: string | null;
+}
+
+export interface TreeLayout {
+	pos: Map<string, XY>; // top-left of each visible node
+	width: number;
+	height: number;
+}
+
+export function layoutTree(
+	nodes: TreeItem[],
+	rootId: string,
+	isExpanded: (id: string) => boolean,
+	opts: { nodeW?: number; nodeH?: number; dx?: number; dy?: number } = {},
+): TreeLayout {
+	const nodeW = opts.nodeW ?? 156;
+	const nodeH = opts.nodeH ?? 40;
+	const colW = nodeW + (opts.dx ?? 64); // column pitch (node + edge gap)
+	const rowH = nodeH + (opts.dy ?? 14); // row pitch (node + vertical gap)
+
+	const kids = new Map<string, TreeItem[]>();
+	for (const n of nodes) {
+		if (n.parent === null) continue;
+		(kids.get(n.parent) ?? kids.set(n.parent, []).get(n.parent)!).push(n);
+	}
+
+	const pos = new Map<string, XY>();
+	let cursor = 0; // running top edge for the next leaf row
+	let maxX = 0;
+
+	// Returns the node's vertical center; positions it + its visible subtree.
+	const walk = (id: string, depth: number): number => {
+		const x = depth * colW;
+		maxX = Math.max(maxX, x + nodeW);
+		const children = isExpanded(id) ? (kids.get(id) ?? []) : [];
+		if (children.length === 0) {
+			const y = cursor;
+			cursor += rowH;
+			pos.set(id, { x, y });
+			return y + nodeH / 2;
+		}
+		const centers = children.map((c) => walk(c.id, depth + 1));
+		const cy = (centers[0] + centers[centers.length - 1]) / 2;
+		pos.set(id, { x, y: cy - nodeH / 2 });
+		return cy;
+	};
+	if (nodes.some((n) => n.id === rootId)) walk(rootId, 0);
+
+	// Height = last leaf's bottom (cursor advanced one rowH past it).
+	const height = Math.max(0, cursor - (rowH - nodeH));
+	return { pos, width: maxX, height };
 }

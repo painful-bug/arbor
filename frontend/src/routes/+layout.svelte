@@ -9,6 +9,7 @@
 	import { checkForUpdates, registerOnAction } from '$lib/updates/store.svelte';
 	import { maybeCheckUpdates } from '$lib/update-check';
 	import { initPower } from '$lib/power.svelte';
+	import { routeContextMenu, type TargetLike } from '$lib/context-menu-route';
 
 	let { children } = $props();
 
@@ -19,17 +20,19 @@
 	// Override the native WKWebView/WebView2 right-click menu (Tauri v2 has no config
 	// flag for this — the supported path is preventDefault on the contextmenu event).
 	// Contextual: keep the native menu inside editable fields (copy/paste survives),
-	// show Arbor's custom menu on file cards, suppress it everywhere else.
+	// show Arbor's custom menu on every canvas surface, suppress it everywhere else.
 	onMount(() => {
 		function onContextMenu(e: MouseEvent) {
-			const t = e.target as HTMLElement | null;
-			if (t?.closest('input, textarea, [contenteditable="true"]')) return; // native menu
-			const node = t?.closest('.svelte-flow__node') as HTMLElement | null;
-			const fileId = node?.querySelector<HTMLElement>('[data-file-id]')?.dataset.fileId;
+			const r = routeContextMenu(e.target as unknown as TargetLike);
+			if (r.kind === 'native') return;
 			e.preventDefault();
-			if (fileId) {
+			if (r.kind === 'node') {
 				window.dispatchEvent(
-					new CustomEvent('arbor:filemenu', { detail: { fileId, x: e.clientX, y: e.clientY } })
+					new CustomEvent('arbor:nodemenu', { detail: { ...r, x: e.clientX, y: e.clientY } })
+				);
+			} else if (r.kind === 'pane') {
+				window.dispatchEvent(
+					new CustomEvent('arbor:panemenu', { detail: { x: e.clientX, y: e.clientY } })
 				);
 			}
 		}

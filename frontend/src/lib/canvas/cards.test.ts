@@ -20,6 +20,12 @@ describe("buildCardNode", () => {
 
 		const tag = buildCardNode({ kind: "tag", id: "n5", position: pos, data: {} });
 		expect(tag).toMatchObject({ type: "tag", width: 120 });
+
+		const mindmap = buildCardNode({ kind: "mindmap", id: "n6", position: pos, data: {} });
+		// No fixed frame — the mind-map node auto-sizes to its graph.
+		expect(mindmap).toMatchObject({ type: "mindmap" });
+		expect(mindmap.width).toBeUndefined();
+		expect(mindmap.height).toBeUndefined();
 	});
 
 	it("passes data through untouched", () => {
@@ -73,5 +79,23 @@ describe("cardTitle / cardPlainText", () => {
 	it("web: title prefers explicit title, falls back to url", () => {
 		expect(cardTitle(node("web", { url: "https://x.com", title: "X" }))).toBe("X");
 		expect(cardTitle(node("web", { url: "https://x.com" }))).toBe("https://x.com");
+	});
+
+	it("mindmap: title is the root topic; plain text is an indented outline", () => {
+		const mindNodes = [
+			{ id: "n0", title: "Photosynthesis", summary: "", parent: null },
+			{ id: "n1", title: "Light Reactions", summary: "Happens in thylakoid.", parent: "n0" },
+			{ id: "n2", title: "Chlorophyll", summary: "Absorbs light.", parent: "n1" },
+		];
+		const n = node("mindmap", { nodes: mindNodes });
+		expect(cardTitle(n)).toBe("Photosynthesis");
+		expect(cardPlainText(n)).toBe(
+			"Photosynthesis\n  Light Reactions — Happens in thylakoid.\n    Chlorophyll — Absorbs light.",
+		);
+	});
+
+	it("mindmap: falls back to 'Mind map' when there is no root", () => {
+		expect(cardTitle(node("mindmap", { nodes: [] }))).toBe("Mind map");
+		expect(cardPlainText(node("mindmap", { nodes: [] }))).toBe("");
 	});
 });

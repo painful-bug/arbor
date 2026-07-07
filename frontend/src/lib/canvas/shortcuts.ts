@@ -17,6 +17,8 @@ export interface CanvasShortcutDeps {
 	toolActive: Tool;
 	connectPending: boolean;
 	selectionCount: number;
+	/** True while the user has a text selection inside a card (native copy should win). */
+	hasDocSelection: boolean;
 
 	// Actions
 	toggleSearch(): void;
@@ -36,10 +38,13 @@ export interface CanvasShortcutDeps {
 	/** Space: toggle expand/preview of the single selected node; false if none. */
 	toggleSpaceTarget(): boolean;
 	duplicateSelection(): void;
+	copySelection(cut: boolean): void;
 	undo(): void;
 	redo(): void;
 	fitView(): void;
 	groupSelection(): void;
+	/** ⇧G: dissolve the selected group; false if no group is selected. */
+	ungroupSelection(): boolean;
 	cleanUp(): void;
 	openSettings(): void;
 	toggleChat(): void;
@@ -203,7 +208,12 @@ export function handleCanvasShortcut(e: KeyboardEvent, a: CanvasShortcutDeps): b
 				return true;
 			}
 			if (k === "g") {
-				if (a.selectionCount >= 2) {
+				if (e.shiftKey) {
+					if (a.ungroupSelection()) {
+						e.preventDefault();
+						return true;
+					}
+				} else if (a.selectionCount >= 2) {
 					a.groupSelection();
 					e.preventDefault();
 					return true;
@@ -226,6 +236,23 @@ export function handleCanvasShortcut(e: KeyboardEvent, a: CanvasShortcutDeps): b
 		e.preventDefault();
 		if (e.shiftKey) a.redo();
 		else a.undo();
+		return true;
+	}
+	if (
+		mod &&
+		!e.shiftKey &&
+		(key === "c" || key === "C") &&
+		!a.inInput &&
+		a.selectionCount &&
+		!a.hasDocSelection
+	) {
+		e.preventDefault();
+		a.copySelection(false);
+		return true;
+	}
+	if (mod && !e.shiftKey && (key === "x" || key === "X") && !a.inInput && a.selectionCount) {
+		e.preventDefault();
+		a.copySelection(true);
 		return true;
 	}
 	return false;

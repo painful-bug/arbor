@@ -16,6 +16,7 @@ import { blobRoutes } from "./routes/blobs.ts";
 import { canvasRoutes } from "./routes/canvases.ts";
 import { cleanupRoutes } from "./routes/cleanup.ts";
 import { fileRoutes } from "./routes/files.ts";
+import { googleRoutes } from "./routes/google.ts";
 import { kbRoutes } from "./routes/kb.ts";
 import { keyRoutes } from "./routes/keys.ts";
 import { mcpRoutes } from "./routes/mcp.ts";
@@ -66,6 +67,7 @@ export function createApp(token: string) {
 	app.route("/api/cleanup", cleanupRoutes);
 	app.route("/api/mcp", mcpRoutes);
 	app.route("/api/studio", studioRoutes);
+	app.route("/api/google", googleRoutes);
 
 	return app;
 }

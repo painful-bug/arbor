@@ -32,6 +32,27 @@ const OPENAI_COMPAT_BASES: Record<string, string> = {
 	ollama: "http://localhost:11434/v1",
 };
 
+// Two-tier model routing: "small" = cheap hardcoded model for background
+// helper tasks (cluster naming, chunk contextualization, studio generation);
+// "user" = whatever the user picked in settings for that provider. Agent runs
+// never go through this file — they use the frontend-supplied ladder directly.
+export type Tier = "small" | "user";
+
+export const SMALL_MODELS: Record<string, string> = {
+	anthropic: "claude-haiku-4-5",
+	google: "gemini-2.0-flash",
+	openai: "gpt-4o-mini",
+	groq: "openai/gpt-oss-20b",
+	openrouter: "meta-llama/llama-3.3-70b-instruct:free",
+	nim: "nvidia/nvidia-nemotron-nano-9b-v2",
+	ollama: "llama3.2",
+};
+
+export function pickModel(provider: string, userModel: string | undefined, tier: Tier): string {
+	if (tier === "user" && userModel) return userModel;
+	return SMALL_MODELS[provider] ?? userModel ?? "";
+}
+
 function buildReq(
 	provider: string,
 	model: string,
@@ -42,39 +63,14 @@ function buildReq(
 	json?: boolean,
 ): CompleteReq | null {
 	if (provider === "anthropic") {
-		return {
-			provider: "anthropic",
-			model: model || "claude-haiku-4-5-20251001",
-			apiKey,
-			prompt,
-			system,
-			maxTokens,
-			json,
-		};
+		return { provider: "anthropic", model, apiKey, prompt, system, maxTokens, json };
 	}
 	if (provider === "google") {
-		return {
-			provider: "google",
-			model: model || "gemini-2.0-flash",
-			apiKey,
-			prompt,
-			system,
-			maxTokens,
-			json,
-		};
+		return { provider: "google", model, apiKey, prompt, system, maxTokens, json };
 	}
 	const baseUrl = OPENAI_COMPAT_BASES[provider];
 	if (!baseUrl) return null;
-	return {
-		provider: "openai-compat",
-		baseUrl,
-		model: model || "gpt-4o-mini",
-		apiKey,
-		prompt,
-		system,
-		maxTokens,
-		json,
-	};
+	return { provider: "openai-compat", baseUrl, model, apiKey, prompt, system, maxTokens, json };
 }
 
 /**
@@ -87,6 +83,7 @@ export async function resolveCompletion(
 	maxTokens = 1024,
 	system?: string,
 	json?: boolean,
+	tier: Tier = "small",
 ): Promise<CompleteReq | null> {
 	const s = getSettings();
 	if (!s) {
@@ -107,7 +104,7 @@ export async function resolveCompletion(
 			log.info("llm", `resolveCompletion: skip ${provider} (no key)`);
 			continue; // no key → try next rung
 		}
-		const model = s.models?.[provider] ?? "";
+		const model = pickModel(provider, s.models?.[provider], tier);
 		const req = buildReq(provider, model, apiKey ?? "", prompt, maxTokens, system, json);
 		if (req) {
 			log.info("llm", "resolveCompletion: using", { provider, model: req.model });
@@ -125,9 +122,9 @@ export async function chatComplete(
 	prompt: string,
 	maxTokens = 1024,
 	system?: string,
-	opts: { json?: boolean } = {},
+	opts: { json?: boolean; tier?: Tier } = {},
 ): Promise<string> {
-	const req = await resolveCompletion(prompt, maxTokens, system, opts.json);
+	const req = await resolveCompletion(prompt, maxTokens, system, opts.json, opts.tier ?? "small");
 	if (!req) return "";
 	return completeText(req);
 }

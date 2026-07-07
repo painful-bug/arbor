@@ -6,23 +6,25 @@ import type { Edge, Node, XYPosition } from "@xyflow/svelte";
 import type { ArrangeLayout } from "$lib/ai/client";
 import { kbClear, PROVIDERS, type Provider } from "$lib/ai/client";
 import { apiFetch, apiJson, apiPut } from "$lib/api";
-import { debounce } from "$lib/debounce";
 import {
 	buildCardNode,
 	type CardData,
 	childEdge,
 	cycleBlock,
 	type FileData,
+	type MindmapData,
+	type MindNode,
 	nextBlock,
 	type TagData,
 	type TextData,
 	type Turn,
 	type WebData,
 } from "./cards";
+import { clusterColor, clusterKey, matchCluster } from "./cluster-tags";
 import { snippetOf } from "./context";
 import { createHistory } from "./history";
 import { cleanupFileNodes, createKbSync } from "./kb-sync";
-import { bboxOf, bloomLocalLayout, findFreeOffset } from "./mindmap-layout";
+import { findFreeOffset } from "./mindmap-layout";
 import {
 	type CanvasDoc,
 	type CanvasMeta,
@@ -32,8 +34,19 @@ import {
 	writeDoc,
 	writeIndex,
 } from "./persistence";
+import { nextZ, prevZ } from "./zorder";
 
-export type { CardData, FileData, PdfHL, TagData, TextData, Turn, WebData } from "./cards";
+export type {
+	CardData,
+	FileData,
+	MindmapData,
+	MindNode,
+	PdfHL,
+	TagData,
+	TextData,
+	Turn,
+	WebData,
+} from "./cards";
 // ── Frozen public API: re-export moved pieces ────────────────────────────────
 export { lastTurn } from "./cards";
 export type { ConnectedItem } from "./context";
@@ -87,6 +100,19 @@ function normalize(nodes: Node[]): Node[] {
 		if (n.type === "card" || n.type === "file") {
 			if (!n.width) n.width = 400;
 			delete n.height;
+		}
+		// Mind maps auto-size to their graph — drop any persisted fixed frame so the
+		// whole map fits in view (xyflow measures the content instead).
+		if (n.type === "mindmap") {
+			n.width = undefined;
+			n.height = undefined;
+			// Root now obeys `expanded` (so it can collapse the whole tree); default
+			// it open for maps saved before that change, else they'd load root-only.
+			const d = n.data as MindmapData | undefined;
+			const rootId = d?.nodes?.find((x) => x.parent === null)?.id;
+			if (d && rootId && d.expanded?.[rootId] === undefined) {
+				d.expanded = { ...(d.expanded ?? {}), [rootId]: true };
+			}
 		}
 		if (n.data && n.type === "card" && !Array.isArray(n.data.turns)) {
 			n.data.title = n.data.title ?? n.data.prompt ?? "";
@@ -247,6 +273,14 @@ export function redo(): void {
 	saveCanvas();
 }
 
+export function canUndo(): boolean {
+	return hist.canUndo();
+}
+
+export function canRedo(): boolean {
+	return hist.canRedo();
+}
+
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 export const DEFAULT_MODELS = Object.fromEntries(
@@ -278,6 +312,8 @@ interface Settings {
 	theme: "light" | "dark";
 	clusterSpacing: number; // Clean Up inter-cluster gutter (avg-radius units)
 	autoCleanup: { enabled: boolean; intervalMin: number }; // periodic Clean Up (Cmd-C) while canvas open
+	highlightClusters: boolean; // tint + animated border behind each named cluster
+	clusterShape: "squircle" | "circle"; // highlight hull shape (only when highlightClusters)
 }
 
 const FALLBACK_SETTINGS: Settings = {
@@ -291,6 +327,8 @@ const FALLBACK_SETTINGS: Settings = {
 	theme: "dark",
 	clusterSpacing: 8,
 	autoCleanup: { enabled: false, intervalMin: 30 },
+	highlightClusters: true,
+	clusterShape: "squircle",
 };
 
 const LS_KEY = "arbor:settings";
@@ -340,6 +378,9 @@ function applySettings(p: Record<string, unknown>): void {
 		if (typeof ac.intervalMin === "number" && ac.intervalMin >= 1)
 			settings.autoCleanup.intervalMin = ac.intervalMin;
 	}
+	if (typeof p.highlightClusters === "boolean") settings.highlightClusters = p.highlightClusters;
+	if (p.clusterShape === "squircle" || p.clusterShape === "circle")
+		settings.clusterShape = p.clusterShape;
 }
 
 // Apply any localStorage-cached settings immediately (synchronous, before backend responds).
@@ -379,6 +420,8 @@ export function persistSettings(): void {
 		theme: settings.theme,
 		clusterSpacing: settings.clusterSpacing,
 		autoCleanup: { ...settings.autoCleanup },
+		highlightClusters: settings.highlightClusters,
+		clusterShape: settings.clusterShape,
 	};
 	try {
 		if (typeof localStorage !== "undefined") localStorage.setItem(LS_KEY, JSON.stringify(payload));
@@ -483,17 +526,12 @@ export function addSourceNote(fileId: string, page: number, text: string): strin
 	return id;
 }
 
-// Mind map (Studio 4a): lay out an LLM topic tree as linked text cards in a radial
-// bloom, placed in open space near the source file (spiral scan avoids overlapping
-// existing nodes), and draw parent→child edges. Tags every card with `mindmapOf` and
-// records the root on the file node (`mindmapRootId`) so the file can offer a jump.
-// Returns the root card id. `nodes` is the flattened tree (parent=null for the root).
-// ponytail: 2-level radial bloom; deeper levels reuse their parent's angle. Fine for
-// the 3-6 branch × 2-5 child maps the generator produces; revisit if trees get deep.
-export function addMindmap(
-	fileId: string,
-	nodes: { id: string; title: string; summary: string; parent: string | null }[],
-): string | null {
+// Mind map (Studio 4a): ONE interactive canvas node holding the whole LLM topic
+// tree, placed in open space near the source file (spiral scan avoids overlapping
+// existing nodes). Collapsed by default — branches expand on click inside the
+// node (see MindmapNode.svelte). Records the map on the file node (`mindmapRootId`)
+// so it can offer an "Open mindmap" jump. Returns the mindmap node's id.
+export function addMindmap(fileId: string, nodes: MindNode[]): string | null {
 	const root = nodes.find((n) => n.parent === null);
 	if (!root) return null;
 	const measuredW = (n?: Node) =>
@@ -501,21 +539,12 @@ export function addMindmap(
 	const measuredH = (n?: Node) =>
 		(n as (Node & { measured?: { height?: number } }) | undefined)?.measured?.height ?? n?.height;
 
-	// 1. Lay the bloom out in LOCAL coords (root at origin) + its padded bounding box.
-	const CARD_W = 320;
-	const CARD_H = 150;
-	const local = bloomLocalLayout(nodes);
-	const box = bboxOf(local.values(), CARD_W, CARD_H);
-
-	// 2. Pick a translation so the bloom lands in open space. Preferred spot: just
-	//    right of the source file, vertically centred on it; spiral out if it overlaps.
 	const src = flow.nodes.find((n) => n.id === fileId);
 	const base = src?.position ?? { x: 400, y: 300 };
 	const fileW = measuredW(src) ?? 220;
-	const fileH = measuredH(src) ?? 280;
-	const GAP = 220;
-	const prefX = base.x + fileW + GAP - box.minX;
-	const prefY = base.y + fileH / 2 - (box.minY + box.maxY) / 2;
+	const W = 380;
+	const H = 260; // collapsed footprint estimate — grows once measured
+	const GAP = 160;
 	const occupied = flow.nodes
 		.filter((n) => n.type !== "group")
 		.map((n) => {
@@ -523,37 +552,104 @@ export function addMindmap(
 			const h = measuredH(n) ?? 200;
 			return { x1: n.position.x, y1: n.position.y, x2: n.position.x + w, y2: n.position.y + h };
 		});
-	const t = findFreeOffset(box, occupied, prefX, prefY);
+	const t = findFreeOffset(
+		{ minX: 0, minY: 0, maxX: W, maxY: H },
+		occupied,
+		base.x + fileW + GAP,
+		base.y,
+	);
 
-	// 3. Build the cards (tagged with mindmapOf) + parent→child edges.
-	const idMap = new Map<string, string>();
-	const newNodes: Node[] = [];
-	for (const n of nodes) {
-		const id = nextNodeId();
-		idMap.set(n.id, id);
-		const lp = local.get(n.id) ?? { x: 0, y: 0 };
-		const text = n.summary ? `**${n.title}**\n\n${n.summary}` : `**${n.title}**`;
-		const data: TextData = { text, block: nextBlock(), mindmapOf: fileId };
-		newNodes.push(
-			buildCardNode({ kind: "text", id, position: { x: lp.x + t.x, y: lp.y + t.y }, data }),
-		);
-	}
-	const newEdges: Edge[] = [];
-	for (const n of nodes) {
-		if (n.parent && idMap.has(n.parent)) {
-			newEdges.push(childEdge(idMap.get(n.parent)!, idMap.get(n.id)!));
-		}
-	}
-	const rootRealId = idMap.get(root.id) ?? null;
-	// Record the map's root on the file node so it can offer an "Open mindmap" jump.
+	const id = nextNodeId();
+	const data: MindmapData = {
+		fileId,
+		source: (src?.data as FileData | undefined)?.filename ?? "",
+		nodes,
+		// Root open by default so the first level shows; clicking root collapses all.
+		expanded: { [root.id]: true },
+		block: nextBlock(),
+	};
 	flow.nodes = [
 		...flow.nodes.map((n) =>
-			n.id === fileId ? { ...n, data: { ...n.data, mindmapRootId: rootRealId } } : n,
+			n.id === fileId ? { ...n, data: { ...n.data, mindmapRootId: id } } : n,
 		),
-		...newNodes,
+		buildCardNode({ kind: "mindmap", id, position: t, data }),
 	];
-	flow.edges = [...flow.edges, ...newEdges];
-	return rootRealId;
+	flow.edges = [...flow.edges, childEdge(fileId, id)];
+	return id;
+}
+
+/** Toggle whether a mind-map node's children are revealed (any node, any depth). */
+export function toggleMindmapBranch(nodeId: string, branchId: string): void {
+	flow.nodes = flow.nodes.map((n) => {
+		if (n.id !== nodeId) return n;
+		const d = n.data as MindmapData;
+		return {
+			...n,
+			data: { ...d, expanded: { ...d.expanded, [branchId]: !d.expanded?.[branchId] } },
+		};
+	});
+}
+
+/** Rename a mind map — edits the root topic's title (shown as the card name). */
+export function renameMindmap(nodeId: string, title: string): void {
+	flow.nodes = flow.nodes.map((n) => {
+		if (n.id !== nodeId) return n;
+		const d = n.data as MindmapData;
+		return {
+			...n,
+			data: { ...d, nodes: d.nodes.map((x) => (x.parent === null ? { ...x, title } : x)) },
+		};
+	});
+}
+
+/** Expand (reveal every internal node's children) or collapse the whole map. */
+export function setMindmapExpandAll(nodeId: string, open: boolean): void {
+	flow.nodes = flow.nodes.map((n) => {
+		if (n.id !== nodeId) return n;
+		const d = n.data as MindmapData;
+		const expanded: Record<string, boolean> = {};
+		if (open) {
+			const parents = new Set(d.nodes.map((x) => x.parent).filter(Boolean) as string[]);
+			for (const pid of parents) expanded[pid] = true;
+		}
+		return { ...n, data: { ...d, expanded } };
+	});
+}
+
+/** Lift one node + its whole subtree out of a mindmap node as a standalone text card. */
+export function pinMindmapBranch(nodeId: string, branchId: string): string | null {
+	const mm = flow.nodes.find((n) => n.id === nodeId);
+	if (!mm) return null;
+	const d = mm.data as MindmapData;
+	const branch = d.nodes.find((x) => x.id === branchId);
+	if (!branch) return null;
+	const lines: string[] = [];
+	const walk = (node: MindNode, depth: number) => {
+		if (depth === 0) {
+			lines.push(`**${node.title}**`);
+			if (node.summary) lines.push(node.summary);
+		} else {
+			const indent = "  ".repeat(depth - 1);
+			lines.push(`${indent}- **${node.title}**${node.summary ? ` — ${node.summary}` : ""}`);
+		}
+		for (const c of d.nodes.filter((x) => x.parent === node.id)) walk(c, depth + 1);
+	};
+	walk(branch, 0);
+	const text = lines.join("\n");
+	const id = nextNodeId();
+	const w = mm.measured?.width ?? mm.width ?? 380;
+	const data: TextData = { text, block: nextBlock() };
+	flow.nodes = [
+		...flow.nodes,
+		buildCardNode({
+			kind: "text",
+			id,
+			position: { x: mm.position.x + w + 48, y: mm.position.y },
+			data,
+		}),
+	];
+	flow.edges = [...flow.edges, childEdge(nodeId, id)];
+	return id;
 }
 
 export function setFileStatus(id: string, status: FileData["status"]): void {
@@ -568,6 +664,11 @@ export function setFileHighlights(id: string, highlights: import("./cards").PdfH
 	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, highlights } } : n));
 }
 
+/** Record Drive provenance on a file/text node once an import lands (enables Re-sync). */
+export function setFileDrive(id: string, drive: import("./cards").DriveRef): void {
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, drive } } : n));
+}
+
 export function setCardText(id: string, text: string): void {
 	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, text } } : n));
 	kbSync.onTextChanged(id, text);
@@ -575,6 +676,23 @@ export function setCardText(id: string, text: string): void {
 
 function setCardBlock(id: string, block: string): void {
 	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, block } } : n));
+}
+
+export function bringToFront(ids: string[]): void {
+	const z = nextZ(flow.nodes);
+	flow.nodes = flow.nodes.map((n) => (ids.includes(n.id) ? { ...n, zIndex: z } : n));
+}
+
+export function sendToBack(ids: string[]): void {
+	const z = prevZ(flow.nodes);
+	flow.nodes = flow.nodes.map((n) => (ids.includes(n.id) ? { ...n, zIndex: z } : n));
+}
+
+/** Lock = position lock only (Miro-style): dragging is blocked, delete/edit still work. */
+export function setLocked(ids: string[], locked: boolean): void {
+	flow.nodes = flow.nodes.map((n) =>
+		ids.includes(n.id) ? { ...n, draggable: !locked, data: { ...n.data, locked } } : n,
+	);
 }
 
 export function cycleCardBlock(id: string): void {
@@ -757,15 +875,30 @@ export function groupNodes(ids: string[]): string {
 
 	// Group must appear before its children in the array
 	flow.nodes = [...rest, groupNode, ...reparented];
+	void nameClusters([{ id: groupId, members: ids }]);
 	return groupId;
 }
 
-// ── Clean Up — semantic force-clustering ───────────────────────────────────
+// Dissolve a group: children keep their absolute position (relative pos + group
+// origin) and lose their parent; the group frame node is removed.
+export function ungroupNodes(groupId: string): void {
+	const group = flow.nodes.find((n) => n.id === groupId && n.type === "group");
+	if (!group) return;
+	const gx = group.position.x;
+	const gy = group.position.y;
+	flow.nodes = flow.nodes
+		.filter((n) => n.id !== groupId)
+		.map((n) => {
+			if (n.parentId !== groupId) return n;
+			return {
+				...n,
+				parentId: undefined,
+				position: { x: gx + n.position.x, y: gy + n.position.y },
+			};
+		});
+}
 
-// Last Clean Up layout, cached so the spacing slider can re-place cards instantly
-// (no re-embed). Keyed only implicitly by the current node set — invalidated when
-// a referenced id is gone.
-let cleanupLayout: ArrangeLayout | null = null;
+// ── Clean Up — semantic force-clustering ───────────────────────────────────
 
 // place(layout, gap) → pixel positions. Mirror of the backend helper; clusters are
 // decoupled so a bigger gap just rescales the grid (ponytail: 4 lines, no shared pkg).
@@ -781,7 +914,7 @@ function placeLayout(layout: ArrangeLayout, gap: number): Record<string, { x: nu
 
 // Apply a set of positions to the canvas and re-anchor the affected edges. Rebuilds
 // moved nodes as fresh objects so SvelteFlow reacts (in-place mutation isn't picked up).
-function applyPositions(positions: Record<string, { x: number; y: number }>): void {
+export function applyPositions(positions: Record<string, { x: number; y: number }>): void {
 	const moved = new Set(Object.keys(positions));
 	if (!moved.size) return;
 	flow.nodes = flow.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));
@@ -796,11 +929,16 @@ function applyPositions(positions: Record<string, { x: number; y: number }>): vo
 export async function cleanUp(ids?: string[]): Promise<void> {
 	// Scope: selected subset (2+) or all top-level non-group nodes.
 	let targets: Node[];
+	const unlocked = (n: Node) => !(n.data as { locked?: boolean }).locked;
 	if (ids && ids.length >= 2) {
 		const idSet = new Set(ids);
-		targets = flow.nodes.filter((n) => idSet.has(n.id) && n.type !== "group" && n.type !== "tag");
+		targets = flow.nodes.filter(
+			(n) => idSet.has(n.id) && n.type !== "group" && n.type !== "tag" && unlocked(n),
+		);
 	} else {
-		targets = flow.nodes.filter((n) => !n.parentId && n.type !== "group" && n.type !== "tag");
+		targets = flow.nodes.filter(
+			(n) => !n.parentId && n.type !== "group" && n.type !== "tag" && unlocked(n),
+		);
 	}
 	if (targets.length < 2) return;
 
@@ -822,8 +960,7 @@ export async function cleanUp(ids?: string[]): Promise<void> {
 	const layout = await cleanupArrange(canvas, payload, edges);
 	if (!layout || Object.keys(layout.nodes).length === 0) return;
 
-	cleanupLayout = layout;
-	// Cache cluster membership (cards sharing a grid cell) so the user can tag them.
+	// Cache cluster membership (cards sharing a grid cell) so tags can be synced to it.
 	const cells = new Map<string, string[]>();
 	for (const id in layout.nodes) {
 		const { col, row } = layout.nodes[id];
@@ -834,61 +971,160 @@ export async function cleanUp(ids?: string[]): Promise<void> {
 
 	pushHistory();
 	applyPositions(placeLayout(layout, settings.clusterSpacing));
+	syncClusterTags(cleanupClusters);
+	void nameClusters();
 }
 
 // ── Cluster tags ──────────────────────────────────────────────────────────────
-// Manual labels the user drops on Clean Up clusters to identify them at a glance.
-// Each is a normal 'tag' node (so it persists, undoes, pans/zooms for free) anchored
-// to its cluster's member ids; repositionTags() floats it above their bounding box.
+// Every Clean Up cluster (and every manual group) gets an auto-named 'tag' node
+// anchored to its member ids — persists, undoes, pans/zooms for free (a normal
+// node). repositionTags() floats it above the cluster's current bounding box.
 let cleanupClusters: string[][] = [];
-const clusterKey = (ids: string[]) => [...ids].sort().join("|");
 
-function clusterBox(ids: string[]): { minX: number; minY: number; maxX: number } | null {
+function clusterBox(
+	ids: string[],
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
 	const set = new Set(ids);
 	let minX = Infinity,
 		minY = Infinity,
 		maxX = -Infinity,
+		maxY = -Infinity,
 		found = false;
 	for (const n of flow.nodes) {
 		if (!set.has(n.id)) continue;
 		found = true;
 		const w = n.measured?.width ?? n.width ?? 400;
+		const h = n.measured?.height ?? n.height ?? 200;
 		minX = Math.min(minX, n.position.x);
 		minY = Math.min(minY, n.position.y);
 		maxX = Math.max(maxX, n.position.x + w);
+		maxY = Math.max(maxY, n.position.y + h);
 	}
-	return found ? { minX, minY, maxX } : null;
+	return found ? { minX, minY, maxX, maxY } : null;
 }
 
-/** Drop one empty editable tag above each Clean Up cluster that isn't already tagged. */
-export function addClusterTags(): void {
-	if (!cleanupClusters.length) return;
-	const tagged = new Set(
-		flow.nodes
-			.filter((n) => n.type === "tag")
-			.map((n) => clusterKey((n.data as TagData).anchor ?? [])),
-	);
+// Reconcile tag nodes with a fresh cluster set: reuse a tag whose old membership
+// overlaps ≥50% (carrying its color and any user-given name), create one for a
+// genuinely new cluster, and drop auto tags that matched nothing. Louvain output
+// isn't stable across re-runs, so this is what lets renamed clusters survive CC.
+function syncClusterTags(clusters: string[][]): void {
+	const oldTags = flow.nodes.filter((n) => n.type === "tag");
+	const old = oldTags.map((n) => {
+		const d = n.data as TagData;
+		return { key: clusterKey(d.anchor ?? []), ids: d.anchor ?? [] };
+	});
+	const keep = new Set<string>();
 	const created: Node[] = [];
-	for (const members of cleanupClusters) {
-		if (members.length < 1 || tagged.has(clusterKey(members))) continue;
+	let next = flow.nodes;
+	clusters.forEach((members, i) => {
+		if (members.length < 2) return;
 		const bb = clusterBox(members);
-		if (!bb) continue;
-		created.push(
-			buildCardNode({
-				kind: "tag",
-				id: nextNodeId(),
-				position: { x: Math.round((bb.minX + bb.maxX) / 2 - 60), y: Math.round(bb.minY - 46) },
-				data: { text: "", anchor: [...members] } as TagData,
-			}),
-		);
+		if (!bb) return;
+		const m = matchCluster(members, old);
+		if (m >= 0) {
+			const t = oldTags[m];
+			keep.add(t.id);
+			const d = t.data as TagData;
+			next = next.map((n) =>
+				n.id === t.id
+					? {
+							...n,
+							data: {
+								...n.data,
+								anchor: [...members],
+								color: d.color ?? clusterColor(i),
+								pending: d.userEdited ? d.pending : true,
+							},
+						}
+					: n,
+			);
+		} else {
+			created.push(
+				buildCardNode({
+					kind: "tag",
+					id: nextNodeId(),
+					position: { x: Math.round((bb.minX + bb.maxX) / 2 - 60), y: Math.round(bb.minY - 46) },
+					data: {
+						text: "",
+						anchor: [...members],
+						color: clusterColor(i),
+						auto: true,
+						pending: true,
+					} as TagData,
+				}),
+			);
+		}
+	});
+	// Drop auto tags that matched nothing this round; hand-made tags are left alone.
+	const stale = oldTags.filter((n) => (n.data as TagData).auto && !keep.has(n.id)).map((n) => n.id);
+	flow.nodes = [...next.filter((n) => !stale.includes(n.id)), ...created];
+	repositionTags();
+}
+
+// Human-readable content type of a member node, so the namer can reflect it
+// (e.g. "Data Mining PDFs"). Files → uppercased extension; others → their kind.
+function memberKind(n: Node): string {
+	if (n.type === "file") {
+		const name = ((n.data as FileData).filename as string) ?? "";
+		const ext = name.split(".").pop();
+		return ext && ext !== name ? ext.toUpperCase() : "file";
 	}
-	if (!created.length) return;
-	pushHistory();
-	flow.nodes = [...flow.nodes, ...created];
+	if (n.type === "text") return "note";
+	if (n.type === "card") return "chat";
+	if (n.type === "web") return "web page";
+	if (n.type === "mindmap") return "mind map";
+	return "note";
+}
+
+// Batch-name every pending cluster/group tag via the small-tier backend endpoint.
+// Fire-and-forget: called right after Clean Up / grouping, doesn't block the UI.
+async function nameClusters(extra?: { id: string; members: string[] }[]): Promise<void> {
+	const targets = [
+		...flow.nodes
+			.filter((n) => n.type === "tag" && (n.data as TagData).pending)
+			.map((n) => ({ id: n.id, members: (n.data as TagData).anchor ?? [] })),
+		...(extra ?? []),
+	];
+	if (!targets.length) return;
+	const byId = new Map(flow.nodes.map((n) => [n.id, n]));
+	const payload = targets.map((t) => ({
+		id: t.id,
+		members: t.members.flatMap((mid) => {
+			const n = byId.get(mid);
+			if (!n) return [];
+			return [
+				{
+					id: mid,
+					text: snippetOf(n),
+					source: n.type === "file" ? ((n.data as FileData).filename as string) : undefined,
+					kind: memberKind(n),
+				},
+			];
+		}),
+	}));
+	const { cleanupName } = await import("$lib/ai/client");
+	const names = await cleanupName(currentCanvasId() || "default", payload);
+	flow.nodes = flow.nodes.map((n) => {
+		const t = targets.find((x) => x.id === n.id);
+		if (!t) return n;
+		if (n.type === "tag") {
+			const d = n.data as TagData;
+			if (d.userEdited) return { ...n, data: { ...d, pending: false } };
+			return { ...n, data: { ...d, text: names[n.id] ?? d.text, pending: false } };
+		}
+		return names[n.id] ? { ...n, data: { ...n.data, label: names[n.id] } } : n;
+	});
+	repositionTags();
 }
 
 export function setTagText(id: string, text: string): void {
-	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, text } } : n));
+	flow.nodes = flow.nodes.map((n) =>
+		n.id === id ? { ...n, data: { ...n.data, text, userEdited: true } } : n,
+	);
+}
+
+export function setGroupLabel(id: string, label: string): void {
+	flow.nodes = flow.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, label } } : n));
 }
 
 // Float every cluster tag above its anchor cluster's current bounding box. Called
@@ -909,22 +1145,6 @@ export function repositionTags(): void {
 	});
 	if (changed) flow.nodes = next;
 }
-
-// Spacing slider → re-place the last Clean Up at a new inter-cluster gap. Pure
-// client-side rescale of the cached layout: instant, no backend call. No history
-// push per tick — the CC press already recorded one undo point.
-export function setClusterSpacing(gap: number): void {
-	settings.clusterSpacing = gap;
-	persistSettingsDebounced();
-	if (
-		cleanupLayout?.nodes &&
-		Object.keys(cleanupLayout.nodes).every((id) => flow.nodes.some((n) => n.id === id))
-	)
-		applyPositions(placeLayout(cleanupLayout, gap));
-}
-
-// Coalesce the rapid-fire slider writes into one settings save.
-const persistSettingsDebounced = debounce(() => persistSettings(), 400);
 
 export function renameCard(id: string, title: string): void {
 	const t = title.trim();
