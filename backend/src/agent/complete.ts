@@ -53,7 +53,8 @@ export function pickModel(provider: string, userModel: string | undefined, tier:
 	return SMALL_MODELS[provider] ?? userModel ?? "";
 }
 
-function buildReq(
+/** Build a CompleteReq for a known provider id, or null if the provider/shape is unrecognized. */
+export function buildReq(
 	provider: string,
 	model: string,
 	apiKey: string,
