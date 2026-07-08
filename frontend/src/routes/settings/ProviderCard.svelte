@@ -30,7 +30,9 @@
 	async function save() {
 		saveStatus = 'saving';
 		try {
-			await apiPut(`/api/keys/${provider.id}`, { key });
+			// Trim whitespace/newlines a paste can carry along — an untrimmed key
+			// saves "successfully" but fails every real call.
+			await apiPut(`/api/keys/${provider.id}`, { key: key.trim() });
 			keyExists = true;
 			saveStatus = 'saved';
 		} catch {

@@ -4,6 +4,7 @@
 	import { PROVIDERS, type Provider } from '$lib/ai/client';
 	import { WORKFLOWS } from '$lib/ai/workflows';
 	import { apiJson, apiPut } from '$lib/api';
+	import { isMac } from '$lib/platform';
 	import {
 		updateState,
 		checkForUpdates,
@@ -288,7 +289,7 @@
 
 						<section class="card">
 							<h2>API Keys & Models</h2>
-							<p class="sub">Keys stored in macOS Keychain — never leave your device. Model name persists locally.</p>
+							<p class="sub">Keys stored in {isMac ? 'macOS Keychain' : 'Windows Credential Manager'} — never leave your device. Model name persists locally.</p>
 							<div class="key-grid">
 								{#each keyed as p (p.id)}
 									<ProviderCard provider={p} />
