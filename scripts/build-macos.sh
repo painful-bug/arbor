@@ -111,29 +111,11 @@ if [ -d "$REPO_ROOT/packages/mosaic" ]; then
   (cd "$REPO_ROOT/packages/mosaic" && bun install && bun run build)
 fi
 
-# --- Stage backend into tauri resources ---
-echo "--- Staging backend ---"
-rm -rf "$RESOURCES_DIR/backend" "$RESOURCES_DIR/packages"
-mkdir -p "$RESOURCES_DIR/backend"
-cp -r "$REPO_ROOT/backend/src" "$RESOURCES_DIR/backend/src"
-cp "$REPO_ROOT/backend/package.json" "$RESOURCES_DIR/backend/"
-cp "$REPO_ROOT/backend/bun.lock" "$RESOURCES_DIR/backend/" 2>/dev/null || true
-[ -d "$REPO_ROOT/backend/native" ] && cp -r "$REPO_ROOT/backend/native" "$RESOURCES_DIR/backend/native"
-
-if [ -d "$REPO_ROOT/packages" ]; then
-  cp -r "$REPO_ROOT/packages" "$RESOURCES_DIR/packages"
-  find "$RESOURCES_DIR/packages" -name node_modules -type d -exec rm -rf {} + 2>/dev/null || true
-fi
-
-(cd "$RESOURCES_DIR/backend" && bun install --frozen-lockfile)
-
-echo "--- Pruning non-darwin / wrong-arch native binaries ---"
-NM="$RESOURCES_DIR/backend/node_modules"
-OTHER_ARCH=$([ "$ARCH" = "arm64" ] && echo x64 || echo arm64)
-find "$NM" -type d \( -name linux -o -name win32 -o -name win -o -name "$OTHER_ARCH" \) -exec rm -rf {} + 2>/dev/null || true
-find "$NM" -type f -name "*$OTHER_ARCH*" \( -name "*.node" -o -name "*.dylib" -o -name "*.so" \) -delete 2>/dev/null || true
-find "$NM" -type f \( -name "*.d.ts" -o -name "*.d.mts" -o -name "*.d.cts" -o -name "*.map" -o -name "README*" -o -name "CHANGELOG*" -o -name "LICENSE*" \) -delete 2>/dev/null || true
-echo "Backend staged: $(du -sh "$RESOURCES_DIR/backend" | cut -f1)"
+# --- Stage + prune backend into tauri resources ---
+# Single cross-platform script shared with the Windows build + CI so the two OS
+# paths can't drift. Stages backend/src + packages, runs `bun install
+# --production`, and prunes node_modules (case-sensitive matching on every OS).
+bun "$REPO_ROOT/scripts/stage-backend.ts"
 
 # --- Bun sidecar ---
 echo "--- Copying bun sidecar ---"

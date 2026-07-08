@@ -83,6 +83,15 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) -> Result<Backend, String> {
         "ARBOR_GOOGLE_CLIENT_SECRET",
         option_env!("ARBOR_GOOGLE_CLIENT_SECRET"),
     );
+    // Bun is a console-subsystem binary; a GUI app (main.rs sets
+    // `windows_subsystem = "windows"`) spawning it makes Windows allocate a
+    // fresh console window on launch. CREATE_NO_WINDOW (0x0800_0000) suppresses
+    // it so only the app window shows. cfg-gated → compiled out off Windows.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
