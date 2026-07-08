@@ -31,65 +31,14 @@ if (Test-Path $MosaicSrc) {
     } finally { Pop-Location }
 }
 
-# --- 2. Stage backend into tauri resources ---
-Write-Host "--- Staging backend ---"
-$BackendDest = Join-Path $ResourcesDir "backend"
-if (Test-Path $BackendDest) { Remove-Item -Recurse -Force $BackendDest }
-New-Item -ItemType Directory -Path $BackendDest -Force | Out-Null
-
-$BackendSrc = Join-Path $RepoRoot "backend"
-Copy-Item -Recurse (Join-Path $BackendSrc "src") (Join-Path $BackendDest "src")
-Copy-Item (Join-Path $BackendSrc "package.json") $BackendDest
-if (Test-Path (Join-Path $BackendSrc "bun.lock")) {
-    Copy-Item (Join-Path $BackendSrc "bun.lock") $BackendDest
-}
-if (Test-Path (Join-Path $BackendSrc "native")) {
-    Copy-Item -Recurse (Join-Path $BackendSrc "native") (Join-Path $BackendDest "native")
-}
-
-# Copy workspace packages so the backend's file:../packages/* dep resolves
-# once it's staged into resources/backend (a different relative location).
-if (Test-Path $PackagesSrc) {
-    Copy-Item -Recurse $PackagesSrc (Join-Path $ResourcesDir "packages")
-    Get-ChildItem -Path (Join-Path $ResourcesDir "packages") -Recurse -Directory -Filter "node_modules" -ErrorAction SilentlyContinue |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-Write-Host "Installing production deps..."
-Push-Location $BackendDest
-try {
-    & bun install --frozen-lockfile 2>$null
-    if ($LASTEXITCODE -ne 0) { & bun install }
-} finally { Pop-Location }
-
-# Prune non-Windows native binaries
-Write-Host "Pruning non-Windows binaries..."
-$NM = Join-Path $BackendDest "node_modules"
-if (Test-Path $NM) {
-    # Remove linux/darwin platform dirs from native packages
-    Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -in @("linux", "darwin", "macos") } |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
-    # Remove non-matching arch dirs
-    if ($Arch -eq "x86_64") {
-        Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq "arm64" } |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    # Remove .d.ts, README, CHANGELOG (not needed at runtime)
-    Get-ChildItem -Path $NM -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '\.(d\.ts|d\.mts|d\.cts)$' -or $_.Name -match '^(README|CHANGELOG|LICENSE)' } |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-
-    Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -eq "docs" } |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-$BackendSize = "{0:N1} MB" -f ((Get-ChildItem -Recurse $BackendDest | Measure-Object -Property Length -Sum).Sum / 1MB)
-Write-Host "Backend staged: $BackendSize"
+# --- 2. Stage + prune backend into tauri resources ---
+# Single cross-platform script shared with the macOS build + CI, so the two OS
+# paths can't drift. It stages backend/src + packages, runs `bun install
+# --production`, and prunes node_modules with case-SENSITIVE matching (this used
+# to be inline PowerShell whose case-insensitive -match deleted a real lowercase
+# source file and crashed the app — see scripts/stage-backend.ts).
+& bun (Join-Path $RepoRoot "scripts/stage-backend.ts")
+if ($LASTEXITCODE -ne 0) { throw "stage-backend failed" }
 
 # --- 2. Copy bun as sidecar ---
 Write-Host "--- Copying bun sidecar ---"

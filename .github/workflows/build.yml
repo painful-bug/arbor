@@ -57,60 +57,10 @@ jobs:
             cd packages/mosaic && bun install && bun run build && cd ../..
           fi
 
-      - name: Stage backend
-        run: |
-          RESOURCES_DIR=frontend/src-tauri/resources
-          rm -rf "$RESOURCES_DIR/backend"
-          mkdir -p "$RESOURCES_DIR/backend"
-          cp -r backend/src "$RESOURCES_DIR/backend/src"
-          cp backend/package.json "$RESOURCES_DIR/backend/"
-          cp backend/bun.lock "$RESOURCES_DIR/backend/" 2>/dev/null || true
-          if [ -d backend/native ]; then cp -r backend/native "$RESOURCES_DIR/backend/native"; fi
-          # Copy local workspace packages so file: deps resolve correctly
-          if [ -d packages ]; then
-            cp -r packages "$RESOURCES_DIR/packages"
-            find "$RESOURCES_DIR/packages" -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
-          fi
-          cd "$RESOURCES_DIR/backend" && bun install --frozen-lockfile
-
-      - name: Prune bundled node_modules
-        run: |
-          NM=frontend/src-tauri/resources/backend/node_modules
-          ARCH=$(uname -m)
-
-          # Remove other-platform native binaries
-          find "$NM" -type d \( -name "linux" -o -name "win32" -o -name "win" \) -exec rm -rf {} + 2>/dev/null || true
-          case "$ARCH" in
-            arm64)
-              find "$NM" -type f -name "*x64*" \( -name "*.node" -o -name "*.dylib" -o -name "*.so" \) -delete 2>/dev/null || true
-              find "$NM" -type d -name "x64" -exec rm -rf {} + 2>/dev/null || true
-              ;;
-            x86_64)
-              find "$NM" -type f -name "*arm64*" \( -name "*.node" -o -name "*.dylib" -o -name "*.so" \) -delete 2>/dev/null || true
-              find "$NM" -type d -name "arm64" -exec rm -rf {} + 2>/dev/null || true
-              ;;
-          esac
-
-          # Remove .bin symlinks (bun resolves modules directly, broken symlinks crash Tauri bundler)
-          rm -rf "$NM/.bin" 2>/dev/null || true
-
-          # Remove packages not needed at runtime (~100MB+).
-          # NOTE: onnxruntime-web/onnx-proto must stay — @xenova/transformers'
-          # onnx.js does an unconditional `import * as ONNX_WEB from 'onnxruntime-web'`
-          # at module load even on Bun/Node, so deleting it crashes backend startup.
-          rm -rf "$NM/playwright-core" 2>/dev/null || true
-
-          # Remove pdfjs-dist legacy build (not used)
-          rm -rf "$NM/pdfjs-dist/legacy" 2>/dev/null || true
-
-          # Remove source maps, type declarations, docs, tests
-          find "$NM" -type f \( -name "*.map" -o -name "*.d.ts" -o -name "*.d.mts" -o -name "*.d.cts" -o -name "README*" -o -name "CHANGELOG*" -o -name "LICENSE*" -o -name "*.md" \) -delete 2>/dev/null || true
-          find "$NM" -type d \( -name "test" -o -name "tests" -o -name "__tests__" -o -name "example" -o -name "examples" -o -name "benchmark" -o -name "benchmarks" -o -name "docs" -o -name ".github" \) -exec rm -rf {} + 2>/dev/null || true
-
-          # Remove any remaining broken symlinks
-          find "$NM" -xtype l -delete 2>/dev/null || true
-
-          echo "Backend size after pruning: $(du -sh frontend/src-tauri/resources/backend | cut -f1)"
+      # Stage + prune are unified in one cross-platform script (shared with the
+      # Windows job and the local build scripts) so the two OS paths can't drift.
+      - name: Stage + prune backend
+        run: bun scripts/stage-backend.ts
 
       - name: Copy Bun sidecar
         run: |
@@ -229,75 +179,13 @@ jobs:
             Pop-Location
           }
 
-      - name: Stage backend
-        shell: pwsh
-        run: |
-          $ResourcesDir = "frontend/src-tauri/resources"
-          if (Test-Path "$ResourcesDir/backend") { Remove-Item -Recurse -Force "$ResourcesDir/backend" }
-          New-Item -ItemType Directory -Path "$ResourcesDir/backend" -Force | Out-Null
-          Copy-Item -Recurse "backend/src" "$ResourcesDir/backend/src"
-          Copy-Item "backend/package.json" "$ResourcesDir/backend/"
-          if (Test-Path "backend/bun.lock") { Copy-Item "backend/bun.lock" "$ResourcesDir/backend/" }
-          if (Test-Path "backend/native") { Copy-Item -Recurse "backend/native" "$ResourcesDir/backend/native" }
-          # Copy local workspace packages so file: deps resolve correctly
-          if (Test-Path "packages") {
-            Copy-Item -Recurse "packages" "$ResourcesDir/packages"
-            Get-ChildItem -Path "$ResourcesDir/packages" -Recurse -Directory -Filter "node_modules" |
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          }
-          Push-Location "$ResourcesDir/backend"
-          bun install --frozen-lockfile
-          Pop-Location
-
-      - name: Prune bundled node_modules
-        shell: pwsh
-        run: |
-          $NM = "frontend/src-tauri/resources/backend/node_modules"
-          if (Test-Path $NM) {
-            # Remove .bin (bun resolves modules directly, broken symlinks crash Tauri bundler)
-            $binDir = Join-Path $NM ".bin"
-            if (Test-Path $binDir) { Remove-Item -Recurse -Force $binDir }
-
-            # Remove other-platform dirs
-            Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -in @("linux","darwin","macos") } |
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
-            # Remove packages not needed at runtime.
-            # NOTE: onnxruntime-web/onnx-proto must stay — @xenova/transformers'
-            # onnx.js does an unconditional `import * as ONNX_WEB from 'onnxruntime-web'`
-            # at module load even on Bun/Node, so deleting it crashes backend startup.
-            @("playwright-core") | ForEach-Object {
-              $p = Join-Path $NM $_
-              if (Test-Path $p) { Remove-Item -Recurse -Force $p }
-            }
-
-            # Remove pdfjs-dist legacy
-            $legacy = Join-Path $NM "pdfjs-dist/legacy"
-            if (Test-Path $legacy) { Remove-Item -Recurse -Force $legacy }
-
-            # Remove source maps, type declarations, docs, tests.
-            # -cmatch (case-sensitive), not -match: PowerShell's -match is
-            # case-insensitive by default, so '^(README|CHANGELOG|LICENSE)'
-            # was also deleting real lowercase source files like
-            # @mariozechner/pi-coding-agent/dist/utils/changelog.js — which
-            # interactive-mode.js imports — crashing the Bun backend on
-            # startup (no handshake -> Tauri setup panics -> blank window,
-            # instant crash). bash's `find -name` on macOS is case-sensitive,
-            # so that side never hit this.
-            Get-ChildItem -Path $NM -Recurse -File -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -cmatch '\.(map|d\.ts|d\.mts|d\.cts|md)$' -or $_.Name -cmatch '^(README|CHANGELOG|LICENSE)' } |
-              Remove-Item -Force -ErrorAction SilentlyContinue
-            # -cin (case-sensitive), not -in: same case-insensitivity trap as
-            # above — keep this an exact-case match like bash's `find -name`
-            # so a package dir like "Docs" or "Test" (real source, wrong case
-            # coincidence) can't be swept away.
-            Get-ChildItem -Path $NM -Recurse -Directory -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -cin @("test","tests","__tests__","example","examples","benchmark","benchmarks","docs",".github") } |
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          }
-          $size = "{0:N0} MB" -f ((Get-ChildItem -Recurse "frontend/src-tauri/resources/backend" | Measure-Object -Property Length -Sum).Sum / 1MB)
-          Write-Host "Backend size after pruning: $size"
+      # Stage + prune are unified in one cross-platform script (shared with the
+      # macOS job and the local build scripts). The script uses case-SENSITIVE
+      # JS string matching, so the PowerShell case-insensitivity bug that once
+      # deleted pi-coding-agent's changelog.js and blank-screen-crashed the app
+      # is now structurally impossible.
+      - name: Stage + prune backend
+        run: bun scripts/stage-backend.ts
 
       - name: Copy Bun sidecar
         shell: pwsh

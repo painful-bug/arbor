@@ -23,7 +23,13 @@ ollamaRoutes.get("/models", async (c) => {
 	try {
 		const bin = ollamaBin();
 		if (!bin) return c.json({ models: [] });
-		const proc = Bun.spawnSync([bin, "list"], { stdout: "pipe", stderr: "pipe" });
+		// windowsHide: ollama is a console binary; without this it flashes a
+		// console window on Windows (no-op on macOS/Linux).
+		const proc = Bun.spawnSync([bin, "list"], {
+			stdout: "pipe",
+			stderr: "pipe",
+			windowsHide: true,
+		});
 		if (proc.exitCode !== 0) return c.json({ models: [] });
 		const models = proc.stdout
 			.toString()
@@ -64,6 +70,8 @@ ollamaRoutes.post("/pull", async (c) => {
 			proc = Bun.spawn([bin, "pull", model.trim()], {
 				stdout: "pipe",
 				stderr: "pipe",
+				// windowsHide: no console-window flash on Windows (no-op elsewhere).
+				windowsHide: true,
 			});
 			// Client gone (cancel, window closed) → stop the download immediately.
 			c.req.raw.signal.addEventListener("abort", () => proc?.kill());

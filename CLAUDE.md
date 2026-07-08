@@ -226,30 +226,48 @@ chrome, or native menus: check it against the seam table above, and mentally
 run it on the *other* OS — if you can't say what happens there, it needs a
 branch through the seam, not an assumption baked into the shared code.
 
-### PowerShell string ops are case-insensitive by default — a known trap
+### Backend staging + node_modules prune: one script, not four
 
-`build.yml`'s `build-windows` job prunes `resources/backend/node_modules`
-with PowerShell (`-match`, `-in`), mirroring the bash `find`/`-name` pruning
-in `build-macos`. **`-match`/`-eq`/`-in` are case-insensitive by default in
-PowerShell; bash's `find -name` is case-sensitive.** This bit us once for
-real: the doc-file cleanup regex `'^(README|CHANGELOG|LICENSE)'` used
-`-match`, so it also deleted `@mariozechner/pi-coding-agent/dist/utils/
-changelog.js` (real source, lowercase) on Windows only. That file is a
-static import of `interactive-mode.js`, so the bundled Bun backend threw
-`Cannot find module` and exited before printing its `ARBOR_BACKEND` handshake
-line — which makes `backend::spawn()` in `backend.rs` return
-`Err("backend exited before handshake")`, which makes the `.setup()` hook
-return `Err`, which makes Tauri's `app.rs` **panic and abort the whole
-process**. Symptom on the installed Windows app: window flashes up blank/
-black, then the whole app crashes instantly — no dialog, no log (the
-`tauri_plugin_log` plugin is `debug_assertions`-only, so release builds are
-silent unless launched from a terminal that captures inherited stderr).
+Staging the backend into `frontend/src-tauri/resources/backend` and pruning its
+`node_modules` for shipping is done by **one cross-platform script**,
+[scripts/stage-backend.ts](scripts/stage-backend.ts), invoked by both
+`build.yml` jobs and both local build scripts (`scripts/build-windows.ps1`,
+`scripts/build-macos.sh`). It also runs `bun install --production` (drops
+dev-only `typescript`/`@types/*`, never imported at runtime). Do **not**
+reintroduce inline bash/PowerShell prune logic — the point is that macOS and
+Windows share the exact same code path so they can't drift.
 
-**Rule:** any PowerShell string-matching step in the Windows build job that's
-meant to mirror bash's case-sensitive `find -name` must use `-cmatch`/`-ceq`/
-`-cin`, never the bare case-insensitive operator. Fixed in
-[build.yml](.github/workflows/build.yml) — grep for `-cmatch`/`-cin` there
-before touching that pruning block again.
+**Why it's a single script (a real crash it prevents):** the prune used to be
+copy-pasted as bash (macOS) and PowerShell (Windows). **PowerShell's
+`-match`/`-eq`/`-in` are case-insensitive by default; bash's `find -name` is
+case-sensitive.** The doc-cleanup regex `'^(README|CHANGELOG|LICENSE)'` under
+`-match` therefore also deleted `@mariozechner/pi-coding-agent/dist/utils/
+changelog.js` (real lowercase source) on Windows only. That file is a static
+import of `interactive-mode.js`, so the Bun backend threw `Cannot find module`
+and exited before printing its `ARBOR_BACKEND` handshake — making
+`backend::spawn()` in `backend.rs` return `Err("backend exited before
+handshake")`, the `.setup()` hook return `Err`, and Tauri's `app.rs` **panic and
+abort the whole process**. Symptom: the installed Windows app flashed blank/black
+then crashed instantly, with no log (`tauri_plugin_log` is
+`debug_assertions`-only). `stage-backend.ts` uses case-**sensitive** JS string
+comparison (`startsWith`/`endsWith`/`===`, no `/i` regex), matching bash's
+`find -name` on every OS, so that whole bug class is structurally impossible —
+locked in by [scripts/stage-backend.test.ts](scripts/stage-backend.test.ts).
+
+**Rule:** if you ever add a PowerShell string-matching step elsewhere in the
+Windows build meant to mirror bash's case-sensitive `find -name`, use
+`-cmatch`/`-ceq`/`-cin`, never the bare case-insensitive operator.
+
+### No console window on the installed Windows app
+
+`main.rs` sets `windows_subsystem = "windows"` so the app itself has no console,
+but the Bun backend it spawns is a **console-subsystem** binary — a GUI process
+spawning it makes Windows pop a console window on launch. `backend::spawn()` in
+`backend.rs` uses raw `std::process::Command` (not Tauri's sidecar API, which
+would set this automatically), so it sets `CREATE_NO_WINDOW` (`0x0800_0000`) via
+`creation_flags` behind `#[cfg(target_os = "windows")]`. Child processes the
+backend itself spawns (e.g. `ollama` in `routes/ollama.ts`) pass
+`windowsHide: true` for the same reason. Keep both when touching process spawns.
 
 ## Core directives (do not violate)
 
